@@ -1,0 +1,21 @@
+{
+  "_comment": "Optional symbol metadata reference. SignalBridge currently uses ALLOWED_SYMBOLS from .env for gating; this file is for future per-symbol tuning.",
+  "symbols": [
+    {
+      "ticker": "MES1!",
+      "exchange": "CME_MINI",
+      "description": "Micro E-mini S&P 500 continuous front month",
+      "tick_size": 0.25,
+      "tick_value": 1.25,
+      "max_contracts": 1
+    },
+    {
+      "ticker": "MNQ1!",
+      "exchange": "CME_MINI",
+      "description": "Micro E-mini Nasdaq-100 continuous front month",
+      "tick_size": 0.25,
+      "tick_value": 0.50,
+      "max_contracts": 1
+    }
+  ]
+}
