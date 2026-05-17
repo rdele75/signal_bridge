@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Risk · SignalBridge{% endblock %}
+{% block content %}
+<h1>Risk settings</h1>
+
+<p class="muted">
+  Read-only view of the active risk configuration. Edit <code>.env</code>
+  and restart SignalBridge to change these values.
+</p>
+
+<section class="grid grid-2">
+  <div class="card">
+    <h3>Limits</h3>
+    <dl class="kv">
+      <dt>MAX_CONTRACTS_PER_TRADE</dt><dd>{{ risk.max_contracts_per_trade }}</dd>
+      <dt>MAX_OPEN_POSITIONS</dt><dd>{{ risk.max_open_positions }}</dd>
+      <dt>MAX_DAILY_LOSS</dt><dd>{{ '%.2f' % risk.max_daily_loss }}</dd>
+      <dt>DUPLICATE_ORDER_COOLDOWN_SECONDS</dt><dd>{{ risk.duplicate_order_cooldown_seconds }}</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h3>Toggles</h3>
+    <dl class="kv">
+      <dt>ENABLE_LONGS</dt><dd>{{ 'yes' if risk.enable_longs else 'no' }}</dd>
+      <dt>ENABLE_SHORTS</dt><dd>{{ 'yes' if risk.enable_shorts else 'no' }}</dd>
+      <dt>ENABLE_KILL_SWITCH</dt><dd>{{ 'yes' if risk.enable_kill_switch else 'no' }}</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Allowed symbols</h3>
+  {% if risk.allowed_symbols %}
+    <ul class="chips">{% for s in risk.allowed_symbols %}<li>{{ s }}</li>{% endfor %}</ul>
+  {% else %}
+    <div class="muted">none</div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>Kill switch</h3>
+  <p>Currently:
+    {% if kill_switch_active %}<span class="bad">ACTIVE (halted)</span>
+    {% else %}<span class="good">inactive</span>{% endif %}
+  </p>
+  <button id="btn-ks-enable" class="btn">Enable kill switch</button>
+  <button id="btn-ks-disable" class="btn">Disable kill switch</button>
+  <pre id="ks-out" class="output">…</pre>
+</section>
+
+<script>
+async function call(path) {
+  const out = document.getElementById('ks-out');
+  out.textContent = 'working…';
+  try {
+    const r = await fetch(path, { method: 'POST' });
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+    setTimeout(() => location.reload(), 600);
+  } catch (e) { out.textContent = 'failed: ' + e; }
+}
+document.getElementById('btn-ks-enable').addEventListener('click', () => call('/api/kill-switch/enable'));
+document.getElementById('btn-ks-disable').addEventListener('click', () => call('/api/kill-switch/disable'));
+</script>
+{% endblock %}

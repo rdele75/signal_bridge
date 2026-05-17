@@ -58,6 +58,12 @@ class Settings(BaseModel):
     execution_mode: str = Field(
         default_factory=lambda: os.getenv("EXECUTION_MODE", "paper").lower()
     )
+    # `broker_provider` is the canonical selector. `broker` is kept for
+    # backwards compatibility — if `broker_provider` is unset, signal_router
+    # falls back to `broker`. Both default to "paper".
+    broker_provider: str = Field(
+        default_factory=lambda: os.getenv("BROKER_PROVIDER", "").lower()
+    )
     broker: str = Field(default_factory=lambda: os.getenv("BROKER", "paper").lower())
 
     webhook_secret: str = Field(
@@ -94,16 +100,56 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("LOG_LEVEL", "INFO").upper()
     )
 
-    broker_username: str = Field(default_factory=lambda: os.getenv("BROKER_USERNAME", ""))
-    broker_password: str = Field(default_factory=lambda: os.getenv("BROKER_PASSWORD", ""))
-    broker_account_id: str = Field(
-        default_factory=lambda: os.getenv("BROKER_ACCOUNT_ID", "")
+    # Topstep / TopstepX placeholders — not used until the adapter is implemented.
+    topstep_username: str = Field(default_factory=lambda: os.getenv("TOPSTEP_USERNAME", ""))
+    topstep_password: str = Field(default_factory=lambda: os.getenv("TOPSTEP_PASSWORD", ""))
+    topstep_api_key: str = Field(default_factory=lambda: os.getenv("TOPSTEP_API_KEY", ""))
+    topstep_account_id: str = Field(
+        default_factory=lambda: os.getenv("TOPSTEP_ACCOUNT_ID", "")
+    )
+    topstep_env: str = Field(default_factory=lambda: os.getenv("TOPSTEP_ENV", "demo"))
+
+    # Tradovate placeholders — not used until the adapter is implemented.
+    tradovate_username: str = Field(
+        default_factory=lambda: os.getenv("TRADOVATE_USERNAME", "")
+    )
+    tradovate_password: str = Field(
+        default_factory=lambda: os.getenv("TRADOVATE_PASSWORD", "")
+    )
+    tradovate_app_id: str = Field(
+        default_factory=lambda: os.getenv("TRADOVATE_APP_ID", "")
+    )
+    tradovate_app_version: str = Field(
+        default_factory=lambda: os.getenv("TRADOVATE_APP_VERSION", "")
+    )
+    tradovate_cid: str = Field(default_factory=lambda: os.getenv("TRADOVATE_CID", ""))
+    tradovate_sec: str = Field(default_factory=lambda: os.getenv("TRADOVATE_SEC", ""))
+    tradovate_account_id: str = Field(
+        default_factory=lambda: os.getenv("TRADOVATE_ACCOUNT_ID", "")
+    )
+    tradovate_env: str = Field(default_factory=lambda: os.getenv("TRADOVATE_ENV", "demo"))
+
+    # Optional symbol-mapping file (provider-aware mappings). Resolved
+    # relative to the project root if not absolute.
+    symbols_map_path: str = Field(
+        default_factory=lambda: os.getenv("SYMBOLS_MAP_PATH", "config/symbols.json")
     )
 
     # Duplicate order_id rejection window (seconds).
     duplicate_order_cooldown_seconds: int = Field(
         default_factory=lambda: _int("DUPLICATE_ORDER_COOLDOWN_SECONDS", 60)
     )
+
+    @property
+    def resolved_provider(self) -> str:
+        """The provider to actually use. Prefers BROKER_PROVIDER, falls back
+        to BROKER (legacy), defaults to 'paper'."""
+        return (self.broker_provider or self.broker or "paper").lower()
+
+    @property
+    def symbols_map_abs_path(self) -> Path:
+        p = Path(self.symbols_map_path)
+        return p if p.is_absolute() else PROJECT_ROOT / p
 
     @property
     def database_abs_path(self) -> Path:

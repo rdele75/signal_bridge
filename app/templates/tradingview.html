@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}TradingView · SignalBridge{% endblock %}
+{% block content %}
+<h1>TradingView setup</h1>
+
+<div class="card">
+  <h3>Webhook URL</h3>
+  <p>Point your TradingView alert at:</p>
+  <pre class="output">{{ webhook_url }}</pre>
+  <p class="muted">
+    Your laptop is on <code>{{ host }}:{{ port }}</code> — to reach it from
+    TradingView's servers, expose it with <strong>ngrok</strong> or
+    <strong>Cloudflare Tunnel</strong> and use the public URL instead.
+  </p>
+</div>
+
+<div class="card">
+  <h3>Shared secret</h3>
+  <p>
+    Set in <code>.env</code> as <code>TRADINGVIEW_WEBHOOK_SECRET</code>.
+    Currently:
+    <strong>
+      {% if secret_set %}configured ({{ secret_preview }}){% else %}<span class="bad">unset / default — change this</span>{% endif %}
+    </strong>
+  </p>
+</div>
+
+<div class="card">
+  <h3>Alert JSON body template</h3>
+  <p>Paste this into your TradingView alert's "Message" field, then replace the secret:</p>
+  <pre class="output">{{ alert_template }}</pre>
+</div>
+
+<div class="card">
+  <h3>Allowed symbols</h3>
+  <p>SignalBridge will reject any alert whose <code>symbol</code> isn't in this list:</p>
+  {% if allowed_symbols %}
+    <ul class="chips">{% for s in allowed_symbols %}<li>{{ s }}</li>{% endfor %}</ul>
+  {% else %}
+    <div class="muted">none configured</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Field reference</h3>
+  <table class="mini">
+    <thead><tr><th>Field</th><th>Required</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>secret</td><td>yes</td><td>must match <code>TRADINGVIEW_WEBHOOK_SECRET</code></td></tr>
+      <tr><td>symbol</td><td>yes</td><td>must be on allow-list (e.g. <code>MES1!</code>)</td></tr>
+      <tr><td>action</td><td>yes</td><td>buy / long / sell / short / cover / exit / close</td></tr>
+      <tr><td>contracts</td><td>no</td><td>string or number; defaults to 1</td></tr>
+      <tr><td>price</td><td>yes (paper)</td><td>string or number; paper requires it for fill</td></tr>
+      <tr><td>order_id</td><td>no</td><td>used for duplicate suppression</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}

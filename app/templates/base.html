@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{% block title %}SignalBridge{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="/">SignalBridge</a>
+      <span class="pill pill-{{ 'on' if not kill_switch_active else 'off' }}">
+        {{ 'live' if not kill_switch_active else 'halted' }}
+      </span>
+      <span class="pill pill-mode">{{ execution_mode }}</span>
+      <span class="pill pill-broker">{{ broker_provider }}</span>
+    </div>
+    <nav>
+      <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Dashboard</a>
+      <a href="/journal" class="{{ 'active' if request.url.path == '/journal' else '' }}">Journal</a>
+      <a href="/metrics" class="{{ 'active' if request.url.path == '/metrics' else '' }}">Metrics</a>
+      <a href="/logs" class="{{ 'active' if request.url.path == '/logs' else '' }}">Logs</a>
+      <a href="/settings/broker" class="{{ 'active' if request.url.path == '/settings/broker' else '' }}">Broker</a>
+      <a href="/settings/risk" class="{{ 'active' if request.url.path == '/settings/risk' else '' }}">Risk</a>
+      <a href="/tradingview" class="{{ 'active' if request.url.path == '/tradingview' else '' }}">TradingView</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span>SignalBridge — private local trading bridge</span>
+    <span>{{ broker_provider }} · {{ execution_mode }}</span>
+  </footer>
+</body>
+</html>

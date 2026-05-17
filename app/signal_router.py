@@ -1,41 +1,45 @@
-"""Pick the broker adapter to use based on configuration."""
+"""Pick the broker adapter to use based on configuration.
+
+The provider is resolved from `BROKER_PROVIDER` first, then the legacy
+`BROKER` env var, defaulting to "paper". Unknown provider names fall
+back to paper — the safe default for a single-user bot.
+"""
 from __future__ import annotations
 
 from .config import Settings
 from .execution.broker_base import BrokerBase
 from .execution.paper import PaperBroker
-from .execution.tradovate_demo import TradovateDemoBroker
-from .execution.tradovate_live import TradovateLiveBroker
+from .execution.topstep import TopstepBroker
+from .execution.tradovate import TradovateBroker
 from .journal import Journal
 
 
 def build_broker(settings: Settings, journal: Journal) -> BrokerBase:
-    """Construct the broker adapter named in settings.
+    provider = settings.resolved_provider
 
-    Live trading is intentionally disabled — selecting it raises
-    NotImplementedError from the adapter constructor.
-    """
-    broker = (settings.broker or "paper").lower()
-    mode = (settings.execution_mode or "paper").lower()
-
-    if broker == "paper" or mode == "paper":
+    if provider == "paper":
         return PaperBroker(journal=journal)
 
-    if broker == "tradovate_demo":
-        return TradovateDemoBroker(
-            username=settings.broker_username,
-            password=settings.broker_password,
-            account_id=settings.broker_account_id,
+    if provider == "topstep":
+        return TopstepBroker(
+            username=settings.topstep_username,
+            password=settings.topstep_password,
+            api_key=settings.topstep_api_key,
+            account_id=settings.topstep_account_id,
+            env=settings.topstep_env,
         )
 
-    if broker == "tradovate_live":
-        # Constructor raises NotImplementedError by design.
-        return TradovateLiveBroker(
-            username=settings.broker_username,
-            password=settings.broker_password,
-            account_id=settings.broker_account_id,
+    if provider == "tradovate":
+        return TradovateBroker(
+            username=settings.tradovate_username,
+            password=settings.tradovate_password,
+            app_id=settings.tradovate_app_id,
+            app_version=settings.tradovate_app_version,
+            cid=settings.tradovate_cid,
+            sec=settings.tradovate_sec,
+            account_id=settings.tradovate_account_id,
+            env=settings.tradovate_env,
         )
 
-    # Unknown broker — fall back to paper rather than failing closed,
-    # since paper is the safe default for a single-user bot.
+    # Unknown provider — fall back to paper rather than failing closed.
     return PaperBroker(journal=journal)

@@ -102,3 +102,6 @@ After saving the alert, TradingView's **"Send test"** button on the alert will f
 | `longs_disabled` / `shorts_disabled` | Toggle the corresponding flag in `.env`. |
 | `max_open_positions_reached ...` | Close existing positions or raise the cap. |
 | `missing_or_invalid_price` | The paper broker needs a numeric price — fix the alert JSON. |
+| `broker_not_implemented: topstep_...` | `BROKER_PROVIDER=topstep` selected, but the Topstep adapter is a placeholder — switch to `paper` until the adapter ships. |
+| `broker_not_implemented: tradovate_...` | Same as above for `tradovate`. |
+| `malformed_payload: ...` | Non-numeric `contracts` or `price`, or otherwise invalid JSON shape. |

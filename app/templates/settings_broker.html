@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Broker · SignalBridge{% endblock %}
+{% block content %}
+<h1>Broker</h1>
+
+<div class="card">
+  <div class="card-label">Active provider</div>
+  <div class="card-value">{{ broker_provider }}</div>
+  <div class="card-sub">
+    Change <code>BROKER_PROVIDER</code> in <code>.env</code> and restart to switch.
+  </div>
+</div>
+
+<section class="card">
+  <h2>Test connection</h2>
+  <p class="muted">
+    Probes the currently-loaded broker adapter. Paper always succeeds.
+    Topstep and Tradovate are placeholders and return "not implemented".
+  </p>
+  <button id="btn-test" class="btn">Test {{ broker_provider }} connection</button>
+  <pre id="test-out" class="output">click the button…</pre>
+</section>
+
+<section class="grid grid-2">
+  <div class="card">
+    <h3>Topstep / TopstepX</h3>
+    <p class="muted">Primary future broker. Adapter is a placeholder.</p>
+    <dl class="kv">
+      <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username or '—' }}</dd>
+      <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>
+      <dt>TOPSTEP_ENV</dt><dd>{{ topstep.env or '—' }}</dd>
+      <dt>TOPSTEP_API_KEY</dt><dd>{{ '••• set' if topstep.api_key else '—' }}</dd>
+      <dt>TOPSTEP_PASSWORD</dt><dd>{{ '••• set' if topstep.password else '—' }}</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h3>Tradovate</h3>
+    <p class="muted">Optional future broker. Adapter is a placeholder.</p>
+    <dl class="kv">
+      <dt>TRADOVATE_USERNAME</dt><dd>{{ tradovate.username or '—' }}</dd>
+      <dt>TRADOVATE_ACCOUNT_ID</dt><dd>{{ tradovate.account_id or '—' }}</dd>
+      <dt>TRADOVATE_ENV</dt><dd>{{ tradovate.env or '—' }}</dd>
+      <dt>TRADOVATE_APP_ID</dt><dd>{{ tradovate.app_id or '—' }}</dd>
+      <dt>TRADOVATE_CID</dt><dd>{{ tradovate.cid or '—' }}</dd>
+      <dt>TRADOVATE_PASSWORD</dt><dd>{{ '••• set' if tradovate.password else '—' }}</dd>
+      <dt>TRADOVATE_SEC</dt><dd>{{ '••• set' if tradovate.sec else '—' }}</dd>
+    </dl>
+  </div>
+</section>
+
+<script>
+document.getElementById('btn-test').addEventListener('click', async () => {
+  const out = document.getElementById('test-out');
+  out.textContent = 'testing…';
+  try {
+    const r = await fetch('/api/broker/test-connection', { method: 'POST' });
+    const body = await r.json();
+    out.textContent = JSON.stringify(body, null, 2);
+  } catch (e) {
+    out.textContent = 'request failed: ' + e;
+  }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Journal · SignalBridge{% endblock %}
+{% block content %}
+<h1>Journal</h1>
+
+<section class="card">
+  <h3>Recent signals ({{ signals|length }})</h3>
+  {% if signals %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>#</th><th>received_at</th><th>symbol</th><th>broker_symbol</th>
+        <th>action</th><th>qty</th><th>price</th><th>broker</th>
+        <th>decision</th><th>reason</th><th>order_id</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in signals %}
+      <tr class="row-{{ s.decision }}">
+        <td>{{ s.id }}</td>
+        <td>{{ s.received_at }}</td>
+        <td>{{ s.symbol or '—' }}</td>
+        <td>{{ s.broker_symbol or '—' }}</td>
+        <td>{{ s.action or '—' }}</td>
+        <td>{{ s.contracts if s.contracts is not none else '—' }}</td>
+        <td>{{ '%.4f' % s.price if s.price is not none else '—' }}</td>
+        <td>{{ s.broker_provider or '—' }}</td>
+        <td>
+          {% if s.decision == 'accepted' %}<span class="good">accepted</span>
+          {% else %}<span class="bad">rejected</span>{% endif %}
+        </td>
+        <td class="muted">{{ s.rejection_reason or '' }}</td>
+        <td>{{ s.order_id or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="muted">no signals recorded yet</div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>Recent closed trades ({{ closed_trades|length }})</h3>
+  {% if closed_trades %}
+  <table class="data">
+    <thead>
+      <tr><th>#</th><th>closed_at</th><th>symbol</th><th>side</th><th>qty</th>
+          <th>entry</th><th>exit</th><th>pnl (pts)</th><th>broker</th></tr>
+    </thead>
+    <tbody>
+      {% for t in closed_trades %}
+      <tr>
+        <td>{{ t.id }}</td>
+        <td>{{ t.closed_at }}</td>
+        <td>{{ t.symbol }}</td>
+        <td>{{ t.side }}</td>
+        <td>{{ t.contracts }}</td>
+        <td>{{ '%.4f' % t.entry_price if t.entry_price is not none else '—' }}</td>
+        <td>{{ '%.4f' % t.exit_price if t.exit_price is not none else '—' }}</td>
+        <td class="{{ 'good' if t.realized_pnl_points > 0 else ('bad' if t.realized_pnl_points < 0 else '') }}">
+          {{ '%+.4f' % t.realized_pnl_points }}
+        </td>
+        <td>{{ t.broker_provider or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="muted">no closed trades yet</div>
+  {% endif %}
+</section>
+{% endblock %}

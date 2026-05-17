@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS signals (
     action TEXT,
     contracts INTEGER,
     price REAL,
+    broker_provider TEXT,
+    broker_symbol TEXT,
     order_id TEXT,
     raw_payload TEXT,
     decision TEXT,
@@ -43,6 +45,20 @@ CREATE TABLE IF NOT EXISTS daily_pnl (
     trade_date TEXT PRIMARY KEY,
     realized_pnl REAL NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS closed_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    closed_at TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    contracts INTEGER NOT NULL,
+    entry_price REAL,
+    exit_price REAL,
+    realized_pnl_points REAL NOT NULL DEFAULT 0,
+    broker_provider TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_closed_trades_closed_at ON closed_trades(closed_at);
 """
 
 
@@ -70,6 +86,15 @@ class Journal:
     def _init_schema(self) -> None:
         with self._lock, self._conn() as conn:
             conn.executescript(_SCHEMA)
+            # Add columns that may be missing on older databases. SQLite
+            # has no IF NOT EXISTS for ADD COLUMN, so we check pragma first.
+            existing = {row["name"] for row in conn.execute("PRAGMA table_info(signals)")}
+            for col, ddl in (
+                ("broker_provider", "ALTER TABLE signals ADD COLUMN broker_provider TEXT"),
+                ("broker_symbol", "ALTER TABLE signals ADD COLUMN broker_symbol TEXT"),
+            ):
+                if col not in existing:
+                    conn.execute(ddl)
 
     # ----- Signal log -----
 
@@ -88,15 +113,17 @@ class Journal:
         rejection_reason: Optional[str],
         execution_mode: str,
         execution_result: Optional[dict[str, Any]] = None,
+        broker_provider: Optional[str] = None,
+        broker_symbol: Optional[str] = None,
     ) -> int:
         with self._lock, self._conn() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO signals (
                     received_at, source, strategy, symbol, action, contracts,
-                    price, order_id, raw_payload, decision, rejection_reason,
-                    execution_mode, execution_result
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    price, broker_provider, broker_symbol, order_id, raw_payload,
+                    decision, rejection_reason, execution_mode, execution_result
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _utcnow_iso(),
@@ -106,6 +133,8 @@ class Journal:
                     action,
                     contracts,
                     price,
+                    broker_provider,
+                    broker_symbol,
                     order_id,
                     json.dumps(raw_payload, default=str),
                     decision,
@@ -210,9 +239,151 @@ class Journal:
                 (trade_date, amount),
             )
 
+    # ----- Closed trades (basic paper PnL in price-points) -----
+
+    def record_closed_trade(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        contracts: int,
+        entry_price: Optional[float],
+        exit_price: Optional[float],
+        realized_pnl_points: float,
+        broker_provider: Optional[str] = None,
+    ) -> int:
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO closed_trades (
+                    closed_at, symbol, side, contracts,
+                    entry_price, exit_price, realized_pnl_points,
+                    broker_provider
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow_iso(),
+                    symbol,
+                    side,
+                    int(contracts),
+                    entry_price,
+                    exit_price,
+                    float(realized_pnl_points),
+                    broker_provider,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_recent_closed_trades(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                "SELECT * FROM closed_trades ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def closed_trade_stats(self) -> dict[str, Any]:
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                """
+                SELECT
+                    COUNT(*)               AS total,
+                    SUM(CASE WHEN realized_pnl_points > 0 THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE WHEN realized_pnl_points < 0 THEN 1 ELSE 0 END) AS losses,
+                    COALESCE(SUM(realized_pnl_points), 0) AS total_points
+                FROM closed_trades
+                """
+            )
+            row = cur.fetchone() or {}
+            total = int(row["total"] or 0)
+            wins = int(row["wins"] or 0)
+            losses = int(row["losses"] or 0)
+            total_points = float(row["total_points"] or 0.0)
+            return {
+                "total": total,
+                "wins": wins,
+                "losses": losses,
+                "total_points": total_points,
+            }
+
+    # ----- Reporting / dashboard aggregations -----
+
+    def list_recent_signals(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                """
+                SELECT id, received_at, source, strategy, symbol, broker_symbol,
+                       action, contracts, price, broker_provider, order_id,
+                       decision, rejection_reason, execution_mode
+                FROM signals
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def latest_signal(self, *, decision: Optional[str] = None) -> Optional[dict[str, Any]]:
+        sql = (
+            "SELECT * FROM signals "
+            + ("WHERE decision = ? " if decision else "")
+            + "ORDER BY id DESC LIMIT 1"
+        )
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(sql, (decision,) if decision else ())
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def count_today(self, *, decision: Optional[str] = None) -> int:
+        with self._lock, self._conn() as conn:
+            params: list[Any] = []
+            sql = (
+                "SELECT COUNT(*) AS c FROM signals "
+                "WHERE date(received_at) = date('now')"
+            )
+            if decision is not None:
+                sql += " AND decision = ?"
+                params.append(decision)
+            cur = conn.execute(sql, params)
+            return int(cur.fetchone()["c"])
+
+    def rejection_reasons(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                """
+                SELECT rejection_reason AS reason, COUNT(*) AS count
+                FROM signals
+                WHERE decision = 'rejected' AND rejection_reason IS NOT NULL
+                GROUP BY rejection_reason
+                ORDER BY count DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def trades_by_symbol(self) -> list[dict[str, Any]]:
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                """
+                SELECT symbol,
+                       SUM(CASE WHEN decision='accepted' THEN 1 ELSE 0 END) AS accepted,
+                       SUM(CASE WHEN decision='rejected' THEN 1 ELSE 0 END) AS rejected,
+                       COUNT(*) AS total
+                FROM signals
+                WHERE symbol IS NOT NULL
+                GROUP BY symbol
+                ORDER BY total DESC
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
+
     def reset(self) -> None:
         """Wipe all tables. Test/dev helper."""
         with self._lock, self._conn() as conn:
             conn.executescript(
-                "DELETE FROM signals; DELETE FROM positions; DELETE FROM daily_pnl;"
+                "DELETE FROM signals; "
+                "DELETE FROM positions; "
+                "DELETE FROM daily_pnl; "
+                "DELETE FROM closed_trades;"
             )

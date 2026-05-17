@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Logs · SignalBridge{% endblock %}
+{% block content %}
+<h1>Recent logs</h1>
+
+<div class="card">
+  <div class="card-label">log file</div>
+  <div class="card-value mono">{{ log_path }}</div>
+  <div class="card-sub">last {{ lines|length }} lines</div>
+</div>
+
+<section class="card">
+  {% if lines %}
+    <pre class="output logs">{% for line in lines %}{{ line }}
+{% endfor %}</pre>
+  {% else %}
+    <div class="muted">log file is empty or hasn't been created yet</div>
+  {% endif %}
+</section>
+{% endblock %}

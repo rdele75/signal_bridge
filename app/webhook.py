@@ -20,6 +20,7 @@ from .schemas import (
     TradingViewAlert,
     WebhookResponse,
 )
+from .symbol_map import SymbolMap
 
 log = logging.getLogger("signalbridge.webhook")
 
@@ -34,11 +35,13 @@ class WebhookHandler:
         journal: Journal,
         risk: RiskEngine,
         broker: BrokerBase,
+        symbol_map: SymbolMap | None = None,
     ) -> None:
         self.settings = settings
         self.journal = journal
         self.risk = risk
         self.broker = broker
+        self.symbol_map = symbol_map
 
     # ------------------------------------------------------------------
 
@@ -93,10 +96,17 @@ class WebhookHandler:
         contracts = parse_int(alert.contracts, default=1) or 0
         price = parse_float(alert.price)
 
+        broker_symbol = (
+            self.symbol_map.resolve(alert.symbol, self.broker.provider)
+            if self.symbol_map is not None
+            else alert.symbol
+        )
+
         signal = NormalizedSignal(
             source=alert.source or "tradingview",
             strategy=alert.strategy,
             symbol=alert.symbol,
+            broker_symbol=broker_symbol,
             exchange=alert.exchange,
             action=normalized_action,
             contracts=contracts,
@@ -122,6 +132,8 @@ class WebhookHandler:
                 rejection_reason=decision.reason,
                 execution_mode=self.broker.execution_mode,
                 execution_result=None,
+                broker_provider=self.broker.provider,
+                broker_symbol=signal.broker_symbol,
             )
             log.info(
                 "REJECTED symbol=%s action=%s reason=%s",
@@ -135,12 +147,18 @@ class WebhookHandler:
                 rejection_reason=decision.reason,
             )
 
-        # 7. Execute.
+        # 7. Execute. Placeholder adapters (topstep/tradovate today) raise
+        # NotImplementedError so we never silently no-op real trading.
         try:
             result: ExecutionResult = self.broker.execute(signal)
         except NotImplementedError as exc:
             reason = f"broker_not_implemented: {exc}"
-            self._record_rejection(raw=raw_payload, reason=reason, symbol=signal.symbol)
+            self._record_rejection(
+                raw=raw_payload,
+                reason=reason,
+                symbol=signal.symbol,
+                broker_symbol=signal.broker_symbol,
+            )
             return WebhookResponse(
                 accepted=False, decision="rejected", rejection_reason=reason
             )
@@ -160,6 +178,8 @@ class WebhookHandler:
                 rejection_reason=reason,
                 execution_mode=self.broker.execution_mode,
                 execution_result=result.model_dump(),
+                broker_provider=self.broker.provider,
+                broker_symbol=signal.broker_symbol,
             )
             log.info(
                 "BROKER_REJECTED symbol=%s action=%s reason=%s",
@@ -187,6 +207,8 @@ class WebhookHandler:
             rejection_reason=None,
             execution_mode=self.broker.execution_mode,
             execution_result=result.model_dump(),
+            broker_provider=self.broker.provider,
+            broker_symbol=signal.broker_symbol,
         )
         log.info(
             "ACCEPTED symbol=%s action=%s contracts=%s price=%s",
@@ -211,6 +233,7 @@ class WebhookHandler:
         raw: dict,
         reason: str,
         symbol: str | None = None,
+        broker_symbol: str | None = None,
     ) -> None:
         self.journal.record_signal(
             source=raw.get("source") if isinstance(raw, dict) else None,
@@ -225,5 +248,7 @@ class WebhookHandler:
             rejection_reason=reason,
             execution_mode=self.broker.execution_mode,
             execution_result=None,
+            broker_provider=self.broker.provider,
+            broker_symbol=broker_symbol,
         )
         log.info("REJECTED reason=%s", reason)

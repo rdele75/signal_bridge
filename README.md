@@ -1,35 +1,54 @@
 # SignalBridge
 
-**SignalBridge** is a single-user TradingView webhook execution gateway.
+**SignalBridge** is a private, local trading dashboard and webhook bridge.
 
-It is **not** a centralized platform, **not** SaaS, and **not** multi-user. You download your own copy, supply your own credentials, point your own TradingView alert at it, and it trades only your account.
+It runs on your own machine, exposes a small web UI you open in a browser, accepts TradingView alerts at a webhook endpoint, applies your risk rules, and executes them through a broker adapter. Today the only functional adapter is **paper trading**; **Topstep / TopstepX** and **Tradovate** are stubbed out for the future.
 
-The default mode is **paper trading**. Live trading is intentionally disabled in this build — the live broker adapter is a placeholder that raises `NotImplementedError`.
+> Not SaaS. Not multi-user. Not packaged for distribution. Not live yet.
+
+```
+TradingView alert
+   │
+   ▼
+SignalBridge webhook (POST /webhooks/tradingview)
+   │  validate secret → parse → normalize action
+   ▼
+Risk engine (allow-list, caps, kill switch, dupes, daily loss…)
+   │
+   ▼
+Broker adapter (paper today; topstep / tradovate planned)
+   │
+   ▼
+Journal / metrics / logs   ←—   visible in the local dashboard
+```
 
 ---
 
-## What it does
+## What you see when you open it
 
-1. Exposes a FastAPI HTTP endpoint at `POST /webhooks/tradingview`.
-2. Validates the alert against a shared secret you control.
-3. Normalizes TradingView's action values (`buy`, `sell`, `long`, `short`, `exit`, `close`) into a small internal vocabulary (`BUY`, `SELL`, `SHORT`, `COVER`, `EXIT`).
-4. Runs a risk engine (symbol allow-list, contract caps, kill switch, daily loss limit, duplicate-order cooldown, long/short toggles, max open positions).
-5. Routes the signal to a broker adapter:
-   - `paper` — simulates fills locally and tracks open positions.
-   - `tradovate_demo` — placeholder, not yet implemented.
-   - `tradovate_live` — disabled placeholder.
-6. Records every signal and decision into SQLite at `data/signalbridge.db`.
-7. Writes a rotating log file at `logs/signalbridge.log`.
+`http://127.0.0.1:8000/` — local dashboard with:
+
+| Page | What it shows |
+| --- | --- |
+| `/`                | app status, broker, kill switch, allowed symbols, open positions, today's accepted/rejected counts, last signal, last rejection, paper P&L |
+| `/settings/broker` | active provider, configured Topstep / Tradovate fields, "Test connection" button |
+| `/settings/risk`   | read-only view of risk limits + kill-switch toggle |
+| `/tradingview`     | your webhook URL, secret status, alert JSON template, allowed symbols |
+| `/journal`         | recent signals (accepted/rejected) + recent closed paper trades |
+| `/metrics`         | accepted/rejected counts, rejection reasons, trades by symbol, basic paper P&L, win rate |
+| `/logs`            | tail of `logs/signalbridge.log` |
+
+All pages share a top bar showing **execution mode**, **broker provider**, and a **live / halted** pill driven by the kill switch.
 
 ---
 
 ## Quick start
 
 ```bash
-git clone <your fork or local copy> signalbridge
+git clone <local copy> signalbridge
 cd signalbridge
 cp .env.example .env
-# edit .env — at minimum set a long random TRADINGVIEW_WEBHOOK_SECRET
+# edit .env — set a long random TRADINGVIEW_WEBHOOK_SECRET
 
 # Linux / macOS
 ./run.sh
@@ -38,62 +57,73 @@ cp .env.example .env
 run.bat
 ```
 
-The server starts on `http://127.0.0.1:8000` by default.
+Server boots on `http://127.0.0.1:8000`. Open it in a browser.
 
-Check it:
+Smoke checks:
 
 ```bash
 curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/status
+curl http://127.0.0.1:8000/api/status
 ```
 
 ---
 
-## How it works
+## How a signal flows through
 
-TradingView fires an alert with a JSON body. SignalBridge:
+1. **Receive** — TradingView posts JSON to `/webhooks/tradingview`.
+2. **Authenticate** — `secret` field is compared (constant-time) against `TRADINGVIEW_WEBHOOK_SECRET`.
+3. **Parse** — Pydantic schema accepts numeric fields as **either** strings (TradingView's normal output) **or** unquoted numbers.
+4. **Normalize action** — `buy`/`long` → `BUY`, `sell` → `SELL`, `short` → `SHORT`, `cover` → `COVER`, `exit`/`close` → `EXIT`.
+5. **Risk engine** runs every check:
+   - kill switch active?
+   - symbol on allow-list?
+   - contracts above cap?
+   - direction allowed (longs/shorts toggles)?
+   - daily loss limit reached?
+   - duplicate `order_id` inside cooldown window?
+   - already at max open positions?
+6. **Broker adapter** executes:
+   - `paper` — simulates a fill at the alert's `price`, updates the position, records realized PnL (in price-points) when a fill closes / reduces the position.
+   - `topstep` — rejects with `broker_not_implemented`. (Adapter loads so the app can boot, but `execute()` raises `NotImplementedError` — caught by the webhook handler and turned into a labeled rejection.)
+   - `tradovate` — same placeholder behavior.
+7. **Journal** writes one row per signal (accepted or rejected) to SQLite.
+8. **Dashboard** picks up the new row on the next page load.
 
-1. Receives the request at `/webhooks/tradingview`.
-2. Compares the `secret` field against `TRADINGVIEW_WEBHOOK_SECRET`.
-3. Parses and normalizes the payload.
-4. Runs every risk check in `app/risk_engine.py`.
-5. If accepted, calls the configured broker adapter from `app/execution/`.
-6. Writes a row to the `signals` table with the full decision and result.
-7. Returns a JSON response describing what happened.
-
-A rejection at any stage returns `{"accepted": false, "decision": "rejected", "rejection_reason": "..."}` and is still journaled.
+A rejection at any step returns `{"accepted": false, "decision": "rejected", "rejection_reason": "..."}` and is still written to the journal.
 
 ---
 
 ## Configuration
 
-All config lives in `.env`. See `.env.example` for the full list.
+All config lives in `.env` (see `.env.example` for the full list).
 
 | Variable | Purpose |
 | --- | --- |
-| `APP_HOST`, `APP_PORT` | bind address |
-| `EXECUTION_MODE` | `paper` (default) / `demo` / `live` |
-| `BROKER` | `paper` / `tradovate_demo` / `tradovate_live` |
-| `TRADINGVIEW_WEBHOOK_SECRET` | shared secret in alert body |
-| `ALLOWED_SYMBOLS` | comma-separated allow-list |
-| `MAX_CONTRACTS_PER_TRADE` | hard cap per signal |
-| `MAX_DAILY_LOSS` | absolute USD floor on daily realized PnL |
-| `MAX_OPEN_POSITIONS` | concurrent open positions cap |
-| `ENABLE_LONGS`, `ENABLE_SHORTS` | direction toggles |
-| `ENABLE_KILL_SWITCH` | turn the kill switch feature on/off |
-| `DATABASE_PATH`, `LOG_PATH` | storage paths |
+| `APP_HOST`, `APP_PORT`              | bind address (default `127.0.0.1:8000`) |
+| `EXECUTION_MODE`                    | `paper` today; `demo` / `live` reserved for the future |
+| `BROKER_PROVIDER`                   | `paper` (default), `topstep`, `tradovate` |
+| `BROKER`                            | legacy alias for `BROKER_PROVIDER` |
+| `TRADINGVIEW_WEBHOOK_SECRET`        | shared secret in the alert body |
+| `ALLOWED_SYMBOLS`                   | comma-separated allow-list |
+| `MAX_CONTRACTS_PER_TRADE`           | hard cap per signal |
+| `MAX_DAILY_LOSS`                    | daily realized PnL floor |
+| `MAX_OPEN_POSITIONS`                | concurrent open positions cap |
+| `ENABLE_LONGS`, `ENABLE_SHORTS`     | direction toggles |
+| `ENABLE_KILL_SWITCH`                | turn the kill switch feature on/off |
+| `DUPLICATE_ORDER_COOLDOWN_SECONDS`  | reject re-sent `order_id`s inside this window |
+| `DATABASE_PATH`, `LOG_PATH`         | storage paths |
+| `TOPSTEP_*`                         | placeholders — not used until the adapter ships |
+| `TRADOVATE_*`                       | placeholders — not used until the adapter ships |
 
 ---
 
 ## TradingView setup
 
-See [`docs/TRADINGVIEW_ALERTS.md`](docs/TRADINGVIEW_ALERTS.md) for the alert JSON body template and how to wire it up.
-
-The minimum body shape is:
+In the dashboard, open **TradingView** to see the alert JSON template prefilled with your webhook URL and a status indicator for the secret. The minimum body shape is:
 
 ```json
 {
-  "secret": "<your secret>",
+  "secret": "<your TRADINGVIEW_WEBHOOK_SECRET>",
   "source": "tradingview",
   "strategy": "orb_200ema_confluence",
   "symbol": "{{ticker}}",
@@ -101,54 +131,69 @@ The minimum body shape is:
   "action": "{{strategy.order.action}}",
   "contracts": "{{strategy.order.contracts}}",
   "price": "{{strategy.order.price}}",
-  "position_size": "{{strategy.position_size}}",
-  "market_position": "{{strategy.market_position}}",
-  "order_id": "{{strategy.order.id}}",
-  "comment": "{{strategy.order.comment}}",
-  "bar_time": "{{time}}",
-  "fire_time": "{{timenow}}"
+  "order_id": "{{strategy.order.id}}"
 }
 ```
 
-To make `127.0.0.1` reachable from TradingView, expose it with **ngrok** or **Cloudflare Tunnel** — see `app/tunnel/ngrok_notes.py` and `app/tunnel/cloudflare_notes.py`.
+To make `127.0.0.1` reachable from TradingView's servers, expose it with **ngrok** or **Cloudflare Tunnel**. See `app/tunnel/ngrok_notes.py` and `app/tunnel/cloudflare_notes.py` for notes, and [`docs/TRADINGVIEW_ALERTS.md`](docs/TRADINGVIEW_ALERTS.md) for the full alert template.
+
+---
+
+## REST API (used by the dashboard JS, also fine to curl)
+
+| Method + path | Purpose |
+| --- | --- |
+| `GET  /health`                        | liveness probe |
+| `GET  /status`                        | top-level status (same shape as `/api/status`) |
+| `GET  /api/status`                    | app + broker + open positions |
+| `GET  /api/metrics`                   | accepted/rejected counts, rejection reasons, by-symbol, win rate |
+| `GET  /api/journal/recent?limit=50`   | recent signals + closed trades |
+| `GET  /api/positions`                 | open positions only |
+| `POST /api/kill-switch/enable`        | activate the kill switch (halts execution) |
+| `POST /api/kill-switch/disable`       | deactivate the kill switch |
+| `POST /api/broker/test-connection`    | probe the active broker adapter |
+| `POST /webhooks/tradingview`          | the inbound alert endpoint |
+
+`POST /api/broker/test-connection` returns `200` with `ok: true` for paper and `501` with `ok: false` and `status: "not_implemented"` for topstep / tradovate.
 
 ---
 
 ## Local testing
 
-See [`docs/LOCAL_TESTING.md`](docs/LOCAL_TESTING.md) for ready-to-paste `curl` commands covering valid alerts, bad secrets, unknown symbols, too many contracts, disabled shorts, and duplicate `order_id`.
+See [`docs/LOCAL_TESTING.md`](docs/LOCAL_TESTING.md) for ready-to-paste `curl` recipes covering valid alerts, bad secrets, unknown symbols, oversized orders, invalid prices, disabled shorts, and duplicate `order_id`.
 
 Run the test suite:
 
 ```bash
 pip install -r requirements.txt
-pytest
+pytest -q
 ```
 
 ---
 
 ## Logs and database
 
-- Logs: `logs/signalbridge.log` (rotating, 5 MB × 3 backups).
-- Database: `data/signalbridge.db` (SQLite). Tables: `signals`, `positions`, `daily_pnl`.
+- Logs: `logs/signalbridge.log` (rotating, 5 MB × 3 backups). Tail in the dashboard at `/logs`.
+- Database: `data/signalbridge.db` (SQLite). Tables: `signals`, `positions`, `daily_pnl`, `closed_trades`.
 
-You can inspect the journal with any SQLite browser:
+Inspect from the CLI:
 
 ```bash
-sqlite3 data/signalbridge.db "select id, received_at, symbol, action, decision, rejection_reason from signals order by id desc limit 20;"
+sqlite3 data/signalbridge.db \
+  "select id, received_at, broker_provider, symbol, action, decision, rejection_reason
+   from signals order by id desc limit 20;"
+
+sqlite3 data/signalbridge.db \
+  "select id, closed_at, symbol, side, contracts, entry_price, exit_price,
+          realized_pnl_points from closed_trades order by id desc limit 20;"
 ```
-
----
-
-## Future packaging
-
-Packaging is intentionally not implemented yet. See [`docs/PACKAGING.md`](docs/PACKAGING.md) for the options under consideration (zip folder, PyInstaller `.exe`, Windows service, Linux systemd).
 
 ---
 
 ## Safety notes
 
-- Live execution is disabled in this build.
+- Live execution is **not** implemented. Topstep + Tradovate adapters raise `NotImplementedError` on `execute()`.
 - Paper mode is the default and cannot place real orders.
-- The kill switch is on by default. Create the sentinel file `data/kill_switch.active` to halt all execution immediately. Delete the file to resume.
+- The kill switch is on by default — create `data/kill_switch.active` (or click the button on `/settings/risk`) to halt all execution. Delete the file (or click again) to resume.
 - The webhook secret is the only authentication. Use a long random string and never commit it.
+- This is a single-user local app. There is no auth in front of the dashboard — bind to `127.0.0.1` and don't expose the dashboard port publicly.

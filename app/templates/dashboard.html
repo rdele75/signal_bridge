@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · SignalBridge{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<section class="grid grid-3">
+  <div class="card">
+    <div class="card-label">Status</div>
+    <div class="card-value">
+      {% if kill_switch_active %}
+        <span class="bad">HALTED (kill switch)</span>
+      {% else %}
+        <span class="good">RUNNING</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">Kill switch: {{ 'enabled' if kill_switch_enabled else 'disabled' }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Execution mode</div>
+    <div class="card-value">{{ execution_mode }}</div>
+    <div class="card-sub">Broker: <strong>{{ broker_provider }}</strong></div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Broker account</div>
+    <div class="card-value">
+      {% if broker_account_id %}{{ broker_account_id }}{% else %}<span class="muted">none configured</span>{% endif %}
+    </div>
+    <div class="card-sub"><a href="/settings/broker">Configure</a></div>
+  </div>
+</section>
+
+<section class="grid grid-4">
+  <div class="card">
+    <div class="card-label">Trades today</div>
+    <div class="card-value">{{ trades_today }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Accepted today</div>
+    <div class="card-value good">{{ accepted_today }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Rejected today</div>
+    <div class="card-value bad">{{ rejected_today }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Paper P&amp;L today</div>
+    <div class="card-value">{{ daily_pnl_display }}</div>
+    <div class="card-sub">closed trades: {{ closed_trade_total }}</div>
+  </div>
+</section>
+
+<section class="grid grid-2">
+  <div class="card">
+    <div class="card-label">Allowed symbols</div>
+    {% if allowed_symbols %}
+      <ul class="chips">
+        {% for s in allowed_symbols %}<li>{{ s }}</li>{% endfor %}
+      </ul>
+    {% else %}
+      <div class="muted">none</div>
+    {% endif %}
+    <div class="card-sub"><a href="/settings/risk">Configure risk</a></div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Open positions ({{ open_position_count }})</div>
+    {% if open_positions %}
+      <table class="mini">
+        <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg</th></tr></thead>
+        <tbody>
+          {% for p in open_positions %}
+            <tr>
+              <td>{{ p.symbol }}</td>
+              <td>{{ p.side or '—' }}</td>
+              <td>{{ p.quantity }}</td>
+              <td>{{ '%.4f' % p.avg_price if p.avg_price is not none else '—' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">no open positions</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="grid grid-2">
+  <div class="card">
+    <div class="card-label">Last signal</div>
+    {% if last_signal %}
+      <div><strong>{{ last_signal.symbol }}</strong> {{ last_signal.action }} × {{ last_signal.contracts }}</div>
+      <div class="muted">{{ last_signal.received_at }}</div>
+      <div>decision:
+        {% if last_signal.decision == 'accepted' %}<span class="good">accepted</span>
+        {% else %}<span class="bad">rejected</span>{% endif %}
+      </div>
+      {% if last_signal.rejection_reason %}<div class="muted">{{ last_signal.rejection_reason }}</div>{% endif %}
+    {% else %}
+      <div class="muted">none yet — fire a TradingView alert to populate</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-label">Last rejection</div>
+    {% if last_rejection %}
+      <div><strong>{{ last_rejection.symbol or '—' }}</strong> {{ last_rejection.action or '' }}</div>
+      <div class="muted">{{ last_rejection.received_at }}</div>
+      <div class="bad">{{ last_rejection.rejection_reason }}</div>
+    {% else %}
+      <div class="muted">no rejections recorded</div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

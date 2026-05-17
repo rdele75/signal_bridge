@@ -20,6 +20,7 @@ def _build(tmp_path: Path, **overrides) -> tuple[RiskEngine, Journal, KillSwitch
         app_host="127.0.0.1",
         app_port=8000,
         execution_mode="paper",
+        broker_provider="paper",
         broker="paper",
         webhook_secret="s",
         allowed_symbols=["MES1!", "MNQ1!"],
@@ -32,9 +33,6 @@ def _build(tmp_path: Path, **overrides) -> tuple[RiskEngine, Journal, KillSwitch
         database_path=str(db),
         log_path=str(log),
         log_level="WARNING",
-        broker_username="",
-        broker_password="",
-        broker_account_id="",
         duplicate_order_cooldown_seconds=60,
     )
     base.update(overrides)

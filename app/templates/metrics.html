@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Metrics · SignalBridge{% endblock %}
+{% block content %}
+<h1>Metrics</h1>
+
+<section class="grid grid-4">
+  <div class="card"><div class="card-label">Accepted today</div><div class="card-value good">{{ m.accepted_today }}</div></div>
+  <div class="card"><div class="card-label">Rejected today</div><div class="card-value bad">{{ m.rejected_today }}</div></div>
+  <div class="card"><div class="card-label">Total today</div><div class="card-value">{{ m.total_today }}</div></div>
+  <div class="card">
+    <div class="card-label">Paper P&amp;L today (pts)</div>
+    <div class="card-value">
+      {% if m.closed_total > 0 %}{{ '%+.4f' % m.daily_pnl }}{% else %}N/A{% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="grid grid-3">
+  <div class="card"><div class="card-label">Closed trades</div><div class="card-value">{{ m.closed_total }}</div></div>
+  <div class="card"><div class="card-label">Win rate</div><div class="card-value">{{ m.win_rate }}</div></div>
+  <div class="card"><div class="card-label">Total points</div><div class="card-value">{{ '%+.4f' % m.total_points }}</div></div>
+</section>
+
+<section class="grid grid-2">
+  <div class="card">
+    <h3>Rejection reasons</h3>
+    {% if m.rejection_reasons %}
+      <table class="mini">
+        <thead><tr><th>reason</th><th>count</th></tr></thead>
+        <tbody>
+          {% for r in m.rejection_reasons %}
+            <tr><td>{{ r.reason }}</td><td>{{ r.count }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">none</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Trades by symbol</h3>
+    {% if m.trades_by_symbol %}
+      <table class="mini">
+        <thead><tr><th>symbol</th><th>accepted</th><th>rejected</th><th>total</th></tr></thead>
+        <tbody>
+          {% for r in m.trades_by_symbol %}
+            <tr>
+              <td>{{ r.symbol }}</td>
+              <td class="good">{{ r.accepted }}</td>
+              <td class="bad">{{ r.rejected }}</td>
+              <td>{{ r.total }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">none</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <h3>Open positions</h3>
+  {% if m.open_positions %}
+    <table class="mini">
+      <thead><tr><th>symbol</th><th>side</th><th>qty</th><th>avg</th><th>updated_at</th></tr></thead>
+      <tbody>
+        {% for p in m.open_positions %}
+          <tr>
+            <td>{{ p.symbol }}</td>
+            <td>{{ p.side or '—' }}</td>
+            <td>{{ p.quantity }}</td>
+            <td>{{ '%.4f' % p.avg_price if p.avg_price is not none else '—' }}</td>
+            <td class="muted">{{ p.updated_at }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="muted">no open positions</div>
+  {% endif %}
+</section>
+{% endblock %}
