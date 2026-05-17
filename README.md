@@ -31,9 +31,9 @@ Journal / metrics / logs   ←—   visible in the local dashboard
 | Page | What it shows |
 | --- | --- |
 | `/`                | app status, broker, kill switch, allowed symbols, open positions, today's accepted/rejected counts, last signal, last rejection, paper P&L |
-| `/settings/broker` | active provider, configured Topstep / Tradovate fields, "Test connection" button |
-| `/settings/risk`   | read-only view of risk limits + kill-switch toggle |
-| `/tradingview`     | your webhook URL, secret status, alert JSON template, allowed symbols |
+| `/settings/broker` | pick provider + execution mode (form), Topstep / Tradovate placeholder fields, "Test connection" button |
+| `/settings/risk`   | edit allow-list, contracts cap, daily loss, open-positions cap, longs/shorts toggles, dup cooldown · kill-switch toggle |
+| `/tradingview`     | webhook URL, alert JSON template, edit / regenerate the webhook secret, allowed symbols |
 | `/journal`         | recent signals (accepted/rejected) + recent closed paper trades |
 | `/metrics`         | accepted/rejected counts, rejection reasons, trades by symbol, basic paper P&L, win rate |
 | `/logs`            | tail of `logs/signalbridge.log` |
@@ -96,7 +96,32 @@ A rejection at any step returns `{"accepted": false, "decision": "rejected", "re
 
 ## Configuration
 
-All config lives in `.env` (see `.env.example` for the full list).
+`.env` provides **defaults** at first boot. The dashboard then persists any
+changes you make to a `settings` table in `data/signalbridge.db`, and those
+stored values **override the `.env` defaults** at runtime. Resetting a value
+back to its `.env` default means editing the `settings` row in SQLite (or
+deleting it and restarting).
+
+Dashboard-editable keys: `APP_HOST`, `APP_PORT`, `EXECUTION_MODE`,
+`BROKER_PROVIDER`, `TRADINGVIEW_WEBHOOK_SECRET`, `ALLOWED_SYMBOLS`,
+`MAX_CONTRACTS_PER_TRADE`, `MAX_DAILY_LOSS`, `MAX_OPEN_POSITIONS`,
+`ENABLE_LONGS`, `ENABLE_SHORTS`, `DUPLICATE_ORDER_COOLDOWN_SECONDS`.
+
+Runtime-applied immediately: webhook secret, execution mode, all risk
+limits, allow-list, longs/shorts toggles, duplicate cooldown.
+Restart-required: `APP_HOST`, `APP_PORT`, `BROKER_PROVIDER` (the broker
+adapter is built once at startup).
+
+**Broker credentials** (Topstep / Tradovate `USERNAME`, `PASSWORD`,
+`API_KEY`, etc.) are intentionally **not** editable from the UI yet —
+those still come from `.env` only.
+
+**Execution adapters today.** Only `paper` is functional. `topstep` and
+`tradovate` load so the app can boot, but `execute()` raises
+`NotImplementedError` (turned into a labeled rejection by the webhook
+handler). `live` execution mode is rejected at the settings layer.
+
+All env defaults (see `.env.example` for the full list):
 
 | Variable | Purpose |
 | --- | --- |
@@ -176,7 +201,7 @@ pytest -q
 ## Logs and database
 
 - Logs: `logs/signalbridge.log` (rotating, 5 MB × 3 backups). Tail in the dashboard at `/logs`.
-- Database: `data/signalbridge.db` (SQLite). Tables: `signals`, `positions`, `daily_pnl`, `closed_trades`.
+- Database: `data/signalbridge.db` (SQLite). Tables: `settings`, `signals`, `positions`, `daily_pnl`, `closed_trades`.
 
 Inspect from the CLI:
 

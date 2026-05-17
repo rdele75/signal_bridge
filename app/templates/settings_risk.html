@@ -3,7 +3,13 @@
 {% block page_title %}Risk{% endblock %}
 {% block content %}
 <h1>Risk settings</h1>
-<p class="subtitle">Active risk configuration loaded from <code>.env</code>. Edit the file and restart to change.</p>
+<p class="subtitle">Persisted in SQLite. Edits take effect on the next signal.</p>
+
+{% if flash %}
+  <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
+    <span class="t">{{ 'Error' if flash_kind == 'error' else 'Saved' }}:</span> {{ flash }}
+  </div>
+{% endif %}
 
 <section class="grid grid-4 section">
   <div class="card">
@@ -61,12 +67,69 @@
 </section>
 
 <section class="card section">
+  <div class="section-head">
+    <h3>Edit risk limits</h3>
+    <span class="hint">saved to SQLite · applies on next signal</span>
+  </div>
+  <form method="post" action="/settings/risk" class="form">
+    <div class="form-row">
+      <label for="allowed_symbols">Allowed symbols</label>
+      <input type="text" id="allowed_symbols" name="allowed_symbols"
+             value="{{ risk.allowed_symbols_csv }}"
+             placeholder="MES1!, MNQ1!">
+      <p class="muted" style="margin: 4px 0 0;">Comma-separated TradingView tickers.</p>
+    </div>
+    <div class="grid grid-2">
+      <div class="form-row">
+        <label for="max_contracts_per_trade">Max contracts / trade</label>
+        <input type="number" min="1" step="1" id="max_contracts_per_trade"
+               name="max_contracts_per_trade"
+               value="{{ risk.max_contracts_per_trade }}">
+      </div>
+      <div class="form-row">
+        <label for="max_open_positions">Max open positions</label>
+        <input type="number" min="1" step="1" id="max_open_positions"
+               name="max_open_positions"
+               value="{{ risk.max_open_positions }}">
+      </div>
+      <div class="form-row">
+        <label for="max_daily_loss">Max daily loss (pts)</label>
+        <input type="number" min="0" step="0.01" id="max_daily_loss"
+               name="max_daily_loss"
+               value="{{ '%.2f' % risk.max_daily_loss }}">
+      </div>
+      <div class="form-row">
+        <label for="duplicate_order_cooldown_seconds">Duplicate cooldown (sec)</label>
+        <input type="number" min="0" step="1" id="duplicate_order_cooldown_seconds"
+               name="duplicate_order_cooldown_seconds"
+               value="{{ risk.duplicate_order_cooldown_seconds }}">
+      </div>
+    </div>
+    <div class="form-row toggles">
+      <label>
+        <input type="checkbox" name="enable_longs" value="true"
+               {% if risk.enable_longs %}checked{% endif %}>
+        Enable longs
+      </label>
+      <label>
+        <input type="checkbox" name="enable_shorts" value="true"
+               {% if risk.enable_shorts %}checked{% endif %}>
+        Enable shorts
+      </label>
+    </div>
+    <div class="btn-row">
+      <button type="submit" class="btn btn-primary">Save risk settings</button>
+    </div>
+  </form>
+</section>
+
+<section class="card section">
   <h3>Allowed symbols</h3>
   <p class="muted" style="margin: 0 0 6px;">Signals whose symbol isn't on this list are rejected before they reach the broker.</p>
   {% if risk.allowed_symbols %}
     <ul class="chips">{% for s in risk.allowed_symbols %}<li>{{ s }}</li>{% endfor %}</ul>
   {% else %}
-    <div class="empty"><strong>empty</strong>set ALLOWED_SYMBOLS in .env</div>
+    <div class="empty"><strong>empty</strong>add symbols above</div>
   {% endif %}
 </section>
 

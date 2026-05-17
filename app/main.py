@@ -14,8 +14,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -32,6 +32,12 @@ from .journal import Journal
 from .kill_switch import KillSwitch
 from .risk_engine import RiskEngine
 from .schemas import StatusResponse, WebhookResponse
+from .settings_store import (
+    SettingsStore,
+    SettingsValidationError,
+    generate_secret,
+    webhook_secret_preview,
+)
 from .signal_router import build_broker
 from .symbol_map import SymbolMap
 from .webhook import WebhookHandler
@@ -76,6 +82,8 @@ def create_app() -> FastAPI:
     )
 
     journal = Journal(settings.database_abs_path)
+    settings_store = SettingsStore(settings.database_abs_path)
+    settings_store.initialize_settings_from_env(settings)
     kill_switch = KillSwitch(
         settings.database_abs_path.parent / "kill_switch.active",
         enabled=settings.enable_kill_switch,
@@ -96,6 +104,7 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     app.state.settings = settings
+    app.state.settings_store = settings_store
     app.state.journal = journal
     app.state.kill_switch = kill_switch
     app.state.risk = risk
@@ -105,14 +114,24 @@ def create_app() -> FastAPI:
     app.state.templates = templates
 
     def _page_ctx(request: Request) -> dict[str, Any]:
+        flash = request.query_params.get("flash")
+        flash_kind = request.query_params.get("flash_kind", "info")
         return {
             "request": request,
             "app_name": settings.app_name,
             "app_version": __version__,
             "execution_mode": settings.execution_mode,
-            "broker_provider": broker.provider,
+            "broker_provider": settings.resolved_provider,
+            "active_broker_provider": broker.provider,
             "kill_switch_active": kill_switch.is_active(),
+            "flash": flash,
+            "flash_kind": flash_kind if flash_kind in {"ok", "error", "info"} else "info",
         }
+
+    def _flash_redirect(path: str, message: str, kind: str = "ok") -> RedirectResponse:
+        from urllib.parse import urlencode
+        qs = urlencode({"flash": message, "flash_kind": kind})
+        return RedirectResponse(url=f"{path}?{qs}", status_code=303)
 
     # ------------------------------------------------------------------
     # JSON endpoints
@@ -130,7 +149,7 @@ def create_app() -> FastAPI:
         return StatusResponse(
             app_name=settings.app_name,
             execution_mode=settings.execution_mode,
-            broker_provider=broker.provider,
+            broker_provider=settings.resolved_provider,
             broker=settings.broker,
             allowed_symbols=list(settings.allowed_symbols),
             kill_switch_active=kill_switch.is_active(),
@@ -212,6 +231,7 @@ def create_app() -> FastAPI:
     @app.get("/settings/broker", response_class=HTMLResponse)
     def page_settings_broker(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
+        configured = settings.resolved_provider
         ctx.update(
             {
                 "topstep": {
@@ -231,9 +251,40 @@ def create_app() -> FastAPI:
                     "account_id": settings.tradovate_account_id,
                     "env": settings.tradovate_env,
                 },
+                "provider_options": ["paper", "topstep", "tradovate"],
+                "execution_mode_options": ["paper", "demo"],
+                "configured_provider": configured,
+                "configured_execution_mode": settings.execution_mode,
+                "restart_required": configured != broker.provider,
             }
         )
         return templates.TemplateResponse(request, "settings_broker.html", ctx)
+
+    @app.post("/settings/broker")
+    def post_settings_broker(
+        broker_provider: str = Form(...),
+        execution_mode: str = Form(...),
+    ):
+        try:
+            new_provider = settings_store.update_typed(
+                "BROKER_PROVIDER", broker_provider
+            )
+            new_mode = settings_store.update_typed(
+                "EXECUTION_MODE", execution_mode
+            )
+        except SettingsValidationError as exc:
+            return _flash_redirect("/settings/broker", str(exc), kind="error")
+
+        settings_store.apply_to_settings(
+            settings, "BROKER_PROVIDER", new_provider
+        )
+        settings_store.apply_to_settings(
+            settings, "EXECUTION_MODE", new_mode
+        )
+        msg = "Broker settings saved."
+        if new_provider != broker.provider:
+            msg += " Restart required to switch the active adapter."
+        return _flash_redirect("/settings/broker", msg, kind="ok")
 
     @app.get("/settings/risk", response_class=HTMLResponse)
     def page_settings_risk(request: Request) -> HTMLResponse:
@@ -247,8 +298,42 @@ def create_app() -> FastAPI:
             "enable_shorts": settings.enable_shorts,
             "enable_kill_switch": settings.enable_kill_switch,
             "allowed_symbols": list(settings.allowed_symbols),
+            "allowed_symbols_csv": ", ".join(settings.allowed_symbols),
         }
         return templates.TemplateResponse(request, "settings_risk.html", ctx)
+
+    @app.post("/settings/risk")
+    def post_settings_risk(
+        allowed_symbols: str = Form(""),
+        max_contracts_per_trade: str = Form(...),
+        max_daily_loss: str = Form(...),
+        max_open_positions: str = Form(...),
+        duplicate_order_cooldown_seconds: str = Form(...),
+        enable_longs: str = Form("false"),
+        enable_shorts: str = Form("false"),
+    ):
+        updates = {
+            "ALLOWED_SYMBOLS": allowed_symbols,
+            "MAX_CONTRACTS_PER_TRADE": max_contracts_per_trade,
+            "MAX_DAILY_LOSS": max_daily_loss,
+            "MAX_OPEN_POSITIONS": max_open_positions,
+            "DUPLICATE_ORDER_COOLDOWN_SECONDS": duplicate_order_cooldown_seconds,
+            "ENABLE_LONGS": enable_longs,
+            "ENABLE_SHORTS": enable_shorts,
+        }
+        try:
+            coerced = {
+                key: settings_store.update_typed(key, value)
+                for key, value in updates.items()
+            }
+        except SettingsValidationError as exc:
+            return _flash_redirect("/settings/risk", str(exc), kind="error")
+
+        for key, value in coerced.items():
+            settings_store.apply_to_settings(settings, key, value)
+        return _flash_redirect(
+            "/settings/risk", "Risk settings saved.", kind="ok"
+        )
 
     @app.get("/tradingview", response_class=HTMLResponse)
     def page_tradingview(request: Request) -> HTMLResponse:
@@ -258,9 +343,7 @@ def create_app() -> FastAPI:
         )
         secret = settings.webhook_secret or ""
         secret_set = bool(secret) and secret != "change_me_to_a_long_random_secret"
-        secret_preview = (
-            secret[:3] + "…" + secret[-2:] if len(secret) >= 6 else "set"
-        )
+        secret_preview = webhook_secret_preview(secret)
         alert_template = json.dumps(
             {
                 "secret": "<your TRADINGVIEW_WEBHOOK_SECRET>",
@@ -292,6 +375,34 @@ def create_app() -> FastAPI:
             }
         )
         return templates.TemplateResponse(request, "tradingview.html", ctx)
+
+    @app.post("/tradingview/secret")
+    def post_tradingview_secret(webhook_secret: str = Form(...)):
+        try:
+            new_secret = settings_store.update_typed(
+                "TRADINGVIEW_WEBHOOK_SECRET", webhook_secret
+            )
+        except SettingsValidationError as exc:
+            return _flash_redirect("/tradingview", str(exc), kind="error")
+        settings_store.apply_to_settings(
+            settings, "TRADINGVIEW_WEBHOOK_SECRET", new_secret
+        )
+        return _flash_redirect(
+            "/tradingview", "Webhook secret updated.", kind="ok"
+        )
+
+    @app.post("/tradingview/secret/regenerate")
+    def post_tradingview_secret_regenerate():
+        new_secret = generate_secret()
+        settings_store.set_setting("TRADINGVIEW_WEBHOOK_SECRET", new_secret)
+        settings_store.apply_to_settings(
+            settings, "TRADINGVIEW_WEBHOOK_SECRET", new_secret
+        )
+        return _flash_redirect(
+            "/tradingview",
+            "Generated a new webhook secret. Update your TradingView alerts.",
+            kind="ok",
+        )
 
     @app.get("/journal", response_class=HTMLResponse)
     def page_journal(request: Request) -> HTMLResponse:

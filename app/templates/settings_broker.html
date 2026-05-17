@@ -3,31 +3,43 @@
 {% block page_title %}Broker{% endblock %}
 {% block content %}
 <h1>Broker settings</h1>
-<p class="subtitle">Configure and probe the active broker adapter.</p>
+<p class="subtitle">Pick the broker adapter + execution mode. Persisted in SQLite.</p>
+
+{% if flash %}
+  <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
+    <span class="t">{{ 'Error' if flash_kind == 'error' else 'Saved' }}:</span> {{ flash }}
+  </div>
+{% endif %}
 
 <div class="banner warn">
   <span class="t">Paper-only:</span> SignalBridge currently only executes against the
   built-in paper adapter. Topstep and Tradovate are placeholders and are not wired
-  to a real API yet.
+  to a real API yet. <code>live</code> execution mode is disabled in this build.
 </div>
 
 <section class="grid grid-3 section">
   <div class="card">
-    <div class="card-label">Active provider</div>
+    <div class="card-label">Configured provider</div>
     <div class="card-value">
-      {% if broker_provider == 'paper' %}
-        <span class="badge badge-paper plain">{{ broker_provider }}</span>
+      {% if configured_provider == 'paper' %}
+        <span class="badge badge-paper plain">{{ configured_provider }}</span>
       {% else %}
-        <span class="badge badge-warn plain">{{ broker_provider }}</span>
+        <span class="badge badge-warn plain">{{ configured_provider }}</span>
       {% endif %}
     </div>
-    <div class="card-sub">change <code>BROKER_PROVIDER</code> in <code>.env</code> + restart to switch</div>
+    <div class="card-sub">
+      {% if restart_required %}
+        active: <code>{{ active_broker_provider }}</code> · <span class="warn">restart to switch</span>
+      {% else %}
+        active adapter
+      {% endif %}
+    </div>
   </div>
 
   <div class="card">
     <div class="card-label">Execution mode</div>
     <div class="card-value">
-      <span class="badge badge-paper plain">{{ execution_mode }}</span>
+      <span class="badge badge-paper plain">{{ configured_execution_mode }}</span>
     </div>
     <div class="card-sub">no real orders will be placed</div>
   </div>
@@ -41,6 +53,38 @@
 
 <section class="card section">
   <div class="section-head">
+    <h3>Broker / execution selection</h3>
+    <span class="hint">saved to SQLite · provider switch needs restart</span>
+  </div>
+  <form method="post" action="/settings/broker" class="form">
+    <div class="grid grid-2">
+      <div class="form-row">
+        <label for="broker_provider">Broker provider</label>
+        <select id="broker_provider" name="broker_provider">
+          {% for p in provider_options %}
+            <option value="{{ p }}" {% if p == configured_provider %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted" style="margin: 4px 0 0;">paper executes; topstep/tradovate return not implemented.</p>
+      </div>
+      <div class="form-row">
+        <label for="execution_mode">Execution mode</label>
+        <select id="execution_mode" name="execution_mode">
+          {% for m in execution_mode_options %}
+            <option value="{{ m }}" {% if m == configured_execution_mode %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted" style="margin: 4px 0 0;"><code>live</code> mode is intentionally disabled.</p>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button type="submit" class="btn btn-primary">Save broker settings</button>
+    </div>
+  </form>
+</section>
+
+<section class="card section">
+  <div class="section-head">
     <h2>Test connection</h2>
     <span class="hint">probes the loaded adapter</span>
   </div>
@@ -49,7 +93,7 @@
     Topstep and Tradovate return <span class="warn">not implemented (501)</span>.
   </p>
   <div class="btn-row">
-    <button id="btn-test" class="btn btn-primary">Test {{ broker_provider }} connection</button>
+    <button id="btn-test" class="btn btn-primary">Test {{ active_broker_provider }} connection</button>
   </div>
   <pre id="test-out" class="output">click the button to probe the adapter…</pre>
 </section>
@@ -60,7 +104,7 @@
       <h3>Topstep / TopstepX</h3>
       <span class="badge badge-warn">placeholder</span>
     </div>
-    <p class="muted">Primary futures broker. Adapter not yet implemented.</p>
+    <p class="muted">Primary futures broker. Adapter not yet implemented. Credentials still come from <code>.env</code> — not editable here yet.</p>
     <dl class="kv">
       <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username or '—' }}</dd>
       <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>
@@ -75,7 +119,7 @@
       <h3>Tradovate</h3>
       <span class="badge badge-warn">placeholder</span>
     </div>
-    <p class="muted">Optional futures broker. Adapter not yet implemented.</p>
+    <p class="muted">Optional futures broker. Adapter not yet implemented. Credentials still come from <code>.env</code> — not editable here yet.</p>
     <dl class="kv">
       <dt>TRADOVATE_USERNAME</dt><dd>{{ tradovate.username or '—' }}</dd>
       <dt>TRADOVATE_ACCOUNT_ID</dt><dd>{{ tradovate.account_id or '—' }}</dd>

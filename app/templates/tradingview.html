@@ -5,6 +5,12 @@
 <h1>TradingView setup</h1>
 <p class="subtitle">Wire your TradingView alerts to the local SignalBridge webhook.</p>
 
+{% if flash %}
+  <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
+    <span class="t">{{ 'Error' if flash_kind == 'error' else 'Saved' }}:</span> {{ flash }}
+  </div>
+{% endif %}
+
 <section class="grid grid-2 section">
   <div class="card">
     <div class="card-label">Webhook endpoint</div>
@@ -21,8 +27,38 @@
         <span class="badge badge-bad">unset / default</span>
       {% endif %}
     </div>
-    <div class="card-sub">edit <code>TRADINGVIEW_WEBHOOK_SECRET</code> in <code>.env</code></div>
+    <div class="card-sub">persisted in SQLite · edit below</div>
   </div>
+</section>
+
+<section class="card section">
+  <div class="section-head">
+    <h3>Update webhook secret</h3>
+    <span class="hint">takes effect on the next signal</span>
+  </div>
+  <form method="post" action="/tradingview/secret" class="form">
+    <div class="form-row">
+      <label for="webhook_secret">Webhook secret</label>
+      <input type="text" id="webhook_secret" name="webhook_secret"
+             autocomplete="off" minlength="8"
+             placeholder="paste a long random string">
+      <p class="muted" style="margin: 4px 0 0;">
+        Minimum 8 characters. Update the matching <code>secret</code> field in your TradingView alert body.
+      </p>
+    </div>
+    <div class="btn-row">
+      <button type="submit" class="btn btn-primary">Save secret</button>
+    </div>
+  </form>
+
+  <form method="post" action="/tradingview/secret/regenerate" class="form" style="margin-top: 12px;">
+    <p class="muted" style="margin: 0 0 6px;">
+      Or have SignalBridge generate one for you (URL-safe, cryptographically strong).
+    </p>
+    <div class="btn-row">
+      <button type="submit" class="btn">Regenerate strong secret</button>
+    </div>
+  </form>
 </section>
 
 <section class="card section">
@@ -54,7 +90,7 @@
   <h3>Alert JSON template</h3>
   <p class="muted" style="margin: 0 0 6px;">
     Paste this into the TradingView alert's <em>Message</em> field. Replace
-    <code>&lt;your TRADINGVIEW_WEBHOOK_SECRET&gt;</code> with the actual secret from your <code>.env</code>.
+    <code>&lt;your TRADINGVIEW_WEBHOOK_SECRET&gt;</code> with the actual secret saved above.
   </p>
   <div class="code-frame">
     <span class="copy-hint">json</span>
@@ -87,7 +123,7 @@
     {% if allowed_symbols %}
       <ul class="chips">{% for s in allowed_symbols %}<li>{{ s }}</li>{% endfor %}</ul>
     {% else %}
-      <div class="empty"><strong>empty</strong>set ALLOWED_SYMBOLS in .env</div>
+      <div class="empty"><strong>empty</strong>add symbols on the Risk page</div>
     {% endif %}
   </div>
 

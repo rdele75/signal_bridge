@@ -498,3 +498,52 @@ pre.code {
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #2a3045; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #3a4262; }
+
+/* ----- Forms ----- */
+.form { margin-top: 4px; }
+.form .form-row { margin: 0 0 12px; }
+.form .form-row label {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.form input[type="text"],
+.form input[type="number"],
+.form input[type="password"],
+.form select,
+.form textarea {
+  width: 100%;
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.form input:focus, .form select:focus, .form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 140, 255, 0.12);
+}
+.form .form-row.toggles {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.form .form-row.toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  color: var(--fg);
+}
+.form .form-row.toggles input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--accent);
+}

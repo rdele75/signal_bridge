@@ -49,13 +49,15 @@ def dashboard_summary(
     )
 
     webhook = _webhook_status(settings)
+    configured_provider = settings.resolved_provider
 
     return {
         "app_name": settings.app_name,
         "app_version": __version__,
         "execution_mode": settings.execution_mode,
-        "broker_provider": broker.provider,
-        "broker_account_id": _broker_account_id(settings, broker.provider),
+        "broker_provider": configured_provider,
+        "active_broker_provider": broker.provider,
+        "broker_account_id": _broker_account_id(settings, configured_provider),
         "kill_switch_active": kill_switch.is_active(),
         "kill_switch_enabled": kill_switch.enabled,
         "allowed_symbols": list(settings.allowed_symbols),
@@ -116,7 +118,8 @@ def system_summary(
         "host": host,
         "port": port,
         "execution_mode": settings.execution_mode,
-        "broker_provider": broker.provider,
+        "broker_provider": settings.resolved_provider,
+        "active_broker_provider": broker.provider,
         "database_path": str(settings.database_abs_path),
         "log_path": str(settings.log_abs_path),
         "log_level": settings.log_level,
