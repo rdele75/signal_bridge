@@ -25,18 +25,20 @@
 
     <nav class="sidebar-nav">
       <div class="section-label">Overview</div>
-      <a href="/"          class="{{ 'active' if path == '/' else '' }}">Dashboard</a>
-      <a href="/journal"   class="{{ 'active' if path == '/journal' else '' }}">Journal</a>
-      <a href="/metrics"   class="{{ 'active' if path == '/metrics' else '' }}">Metrics</a>
-      <a href="/logs"      class="{{ 'active' if path == '/logs' else '' }}">Logs</a>
+      <a href="/"                class="{{ 'active' if path == '/' else '' }}">Dashboard</a>
 
       <div class="section-label">Configuration</div>
       <a href="/settings/broker" class="{{ 'active' if path == '/settings/broker' else '' }}">Broker</a>
       <a href="/settings/risk"   class="{{ 'active' if path == '/settings/risk' else '' }}">Risk</a>
       <a href="/tradingview"     class="{{ 'active' if path == '/tradingview' else '' }}">TradingView</a>
 
+      <div class="section-label">Activity</div>
+      <a href="/journal"         class="{{ 'active' if path == '/journal' else '' }}">Journal</a>
+      <a href="/metrics"         class="{{ 'active' if path == '/metrics' else '' }}">Metrics</a>
+      <a href="/logs"            class="{{ 'active' if path == '/logs' else '' }}">Logs</a>
+
       <div class="section-label">System</div>
-      <a href="/system" class="{{ 'active' if path == '/system' else '' }}">System</a>
+      <a href="/system"          class="{{ 'active' if path == '/system' else '' }}">System</a>
     </nav>
 
     <div class="sidebar-foot">
@@ -50,6 +52,8 @@
       <span class="page-title">{% block page_title %}SignalBridge{% endblock %}</span>
     </div>
     <div class="status-strip">
+      <span class="label">app</span>
+      <span class="badge badge-info plain">{{ app_name or 'SignalBridge' }}</span>
       <span class="label">mode</span>
       <span class="badge {{ mode_class }}">{{ execution_mode }}</span>
       <span class="label">broker</span>

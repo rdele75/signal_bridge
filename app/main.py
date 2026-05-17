@@ -107,6 +107,8 @@ def create_app() -> FastAPI:
     def _page_ctx(request: Request) -> dict[str, Any]:
         return {
             "request": request,
+            "app_name": settings.app_name,
+            "app_version": __version__,
             "execution_mode": settings.execution_mode,
             "broker_provider": broker.provider,
             "kill_switch_active": kill_switch.is_active(),

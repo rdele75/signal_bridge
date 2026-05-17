@@ -211,3 +211,41 @@ def test_tradingview_page_shows_three_url_forms(client):
     assert "http://127.0.0.1:" in body
     assert "http://HOST:" in body
     assert "https://YOUR-TUNNEL-URL/webhooks/tradingview" in body
+
+
+# ---------- Shared layout: sidebar nav + top status strip ----------
+
+NAV_LINKS = [
+    ("Dashboard",   'href="/"'),
+    ("Broker",      'href="/settings/broker"'),
+    ("Risk",        'href="/settings/risk"'),
+    ("TradingView", 'href="/tradingview"'),
+    ("Journal",     'href="/journal"'),
+    ("Metrics",     'href="/metrics"'),
+    ("Logs",        'href="/logs"'),
+    ("System",      'href="/system"'),
+]
+
+
+def test_sidebar_nav_present_on_every_page(client):
+    for path in DASHBOARD_PAGES:
+        body = client.get(path).text
+        for label, href in NAV_LINKS:
+            assert href in body, f"{path} missing nav href {href}"
+            assert label in body, f"{path} missing nav label {label}"
+
+
+def test_sidebar_nav_order_matches_spec(client):
+    body = client.get("/").text
+    positions = [body.find(href) for _, href in NAV_LINKS]
+    assert all(p > 0 for p in positions), "nav hrefs missing from dashboard"
+    assert positions == sorted(positions), f"nav order wrong: {positions}"
+
+
+def test_top_status_bar_shows_app_name_mode_broker_killswitch(client):
+    body = client.get("/").text
+    assert "SignalBridge" in body
+    assert "mode" in body
+    assert "broker" in body
+    assert "paper" in body
+    assert "kill switch off" in body or "kill switch active" in body
