@@ -25,6 +25,7 @@ from .dashboard import (
     dashboard_summary,
     journal_view,
     metrics_summary,
+    system_summary,
     tail_log,
 )
 from .journal import Journal
@@ -175,6 +176,12 @@ def create_app() -> FastAPI:
         status_code = 200 if result.get("ok") else 501
         return JSONResponse(content=result, status_code=status_code)
 
+    @app.get("/api/system")
+    def api_system() -> dict[str, Any]:
+        return system_summary(
+            settings=settings, broker=broker, kill_switch=kill_switch
+        )
+
     @app.post("/webhooks/tradingview", response_model=WebhookResponse)
     async def tradingview_webhook(request: Request) -> WebhookResponse:
         try:
@@ -302,6 +309,14 @@ def create_app() -> FastAPI:
         ctx["log_path"] = str(settings.log_abs_path)
         ctx["lines"] = tail_log(settings.log_abs_path, lines=300)
         return templates.TemplateResponse(request, "logs.html", ctx)
+
+    @app.get("/system", response_class=HTMLResponse)
+    def page_system(request: Request) -> HTMLResponse:
+        ctx = _page_ctx(request)
+        ctx["sys"] = system_summary(
+            settings=settings, broker=broker, kill_switch=kill_switch
+        )
+        return templates.TemplateResponse(request, "system.html", ctx)
 
     return app
 

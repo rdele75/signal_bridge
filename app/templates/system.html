@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}System · SignalBridge{% endblock %}
+{% block page_title %}System{% endblock %}
+{% block content %}
+<h1>System</h1>
+<p class="subtitle">Runtime, paths, and local access info for this SignalBridge instance.</p>
+
+<section class="grid grid-4 section">
+  <div class="card">
+    <div class="card-label">App</div>
+    <div class="card-value sm">{{ sys.app_name }}</div>
+    <div class="card-sub mono">v{{ sys.app_version }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Runtime status</div>
+    <div class="card-value">
+      {% if sys.runtime_status == 'running' %}
+        <span class="badge badge-good plain">running</span>
+      {% else %}
+        <span class="badge badge-bad plain">halted</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">kill switch {{ 'active' if sys.kill_switch_active else 'off' }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Execution mode</div>
+    <div class="card-value">
+      <span class="badge {{ 'badge-paper' if sys.execution_mode == 'paper' else 'badge-info' }} plain">{{ sys.execution_mode }}</span>
+    </div>
+    <div class="card-sub">no real orders</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Broker provider</div>
+    <div class="card-value">
+      <span class="badge {{ 'badge-paper' if sys.broker_provider == 'paper' else 'badge-warn' }} plain">{{ sys.broker_provider }}</span>
+    </div>
+    <div class="card-sub"><a href="/settings/broker">configure</a></div>
+  </div>
+</section>
+
+<section class="grid grid-2 section">
+  <div class="card">
+    <h3>Process / binding</h3>
+    <dl class="kv">
+      <dt>host</dt><dd>{{ sys.host }}</dd>
+      <dt>port</dt><dd>{{ sys.port }}</dd>
+      <dt>hostname</dt><dd>{{ sys.hostname }}</dd>
+      <dt>pid</dt><dd>{{ sys.pid }}</dd>
+      <dt>python</dt><dd>{{ sys.python_version }}</dd>
+      <dt>platform</dt><dd>{{ sys.platform }}</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h3>Storage / paths</h3>
+    <dl class="kv">
+      <dt>database</dt><dd>{{ sys.database_path }}</dd>
+      <dt>log file</dt><dd>{{ sys.log_path }}</dd>
+      <dt>log level</dt><dd>{{ sys.log_level }}</dd>
+      <dt>cwd</dt><dd>{{ sys.cwd }}</dd>
+      <dt>project root</dt><dd>{{ sys.project_root }}</dd>
+      <dt>.env file</dt>
+      <dd>
+        {{ sys.env_file_path }}
+        {% if sys.env_file_loaded %}
+          <span class="badge badge-good" style="margin-left: 6px;">loaded</span>
+        {% else %}
+          <span class="badge badge-warn" style="margin-left: 6px;">not found</span>
+        {% endif %}
+      </dd>
+    </dl>
+  </div>
+</section>
+
+<section class="card section">
+  <h3>Webhook</h3>
+  <dl class="kv">
+    <dt>endpoint</dt><dd>{{ sys.webhook_path }}</dd>
+    <dt>local URL</dt><dd>{{ sys.webhook_url_local }}</dd>
+    <dt>secret</dt>
+    <dd>
+      {% if sys.webhook_secret_set %}
+        <span class="badge badge-good">configured</span>
+      {% else %}
+        <span class="badge badge-bad">unset / default</span>
+      {% endif %}
+    </dd>
+  </dl>
+</section>
+
+<section class="card section">
+  <h3>Useful local URLs</h3>
+  <div class="table-wrap">
+    <table class="mini">
+      <thead><tr><th>Page</th><th>URL</th></tr></thead>
+      <tbody>
+        {% for u in sys.local_urls %}
+          <tr>
+            <td>{{ u.label }}</td>
+            <td class="mono"><a href="{{ u.url }}">{{ u.url }}</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="banner">
+  <span class="t">Local-only:</span> SignalBridge is meant to run on your own machine.
+  If you've joined this host to a Tailscale network, reach the dashboard via the
+  device's Tailscale magic-DNS name (e.g. <code>http://yourmachine:{{ sys.port }}/</code>) —
+  don't hardcode IPs.
+</div>
+{% endblock %}

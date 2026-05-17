@@ -1,58 +1,118 @@
 {% extends "base.html" %}
 {% block title %}TradingView · SignalBridge{% endblock %}
+{% block page_title %}TradingView{% endblock %}
 {% block content %}
 <h1>TradingView setup</h1>
+<p class="subtitle">Wire your TradingView alerts to the local SignalBridge webhook.</p>
 
-<div class="card">
-  <h3>Webhook URL</h3>
-  <p>Point your TradingView alert at:</p>
-  <pre class="output">{{ webhook_url }}</pre>
-  <p class="muted">
-    Your laptop is on <code>{{ host }}:{{ port }}</code> — to reach it from
-    TradingView's servers, expose it with <strong>ngrok</strong> or
-    <strong>Cloudflare Tunnel</strong> and use the public URL instead.
+<section class="grid grid-2 section">
+  <div class="card">
+    <div class="card-label">Webhook endpoint</div>
+    <div class="card-value sm mono">/webhooks/tradingview</div>
+    <div class="card-sub">accepts JSON POST · TradingView alert "Webhook URL" field</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Shared secret</div>
+    <div class="card-value sm">
+      {% if secret_set %}
+        <span class="badge badge-good">configured</span>
+        <span class="mono muted" style="margin-left: 6px;">{{ secret_preview }}</span>
+      {% else %}
+        <span class="badge badge-bad">unset / default</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">edit <code>TRADINGVIEW_WEBHOOK_SECRET</code> in <code>.env</code></div>
+  </div>
+</section>
+
+<section class="card section">
+  <h3>Webhook URL — three forms</h3>
+  <p class="muted" style="margin: 0 0 6px;">
+    SignalBridge is bound to <code>{{ host }}:{{ port }}</code>. TradingView's servers
+    can't reach <code>127.0.0.1</code> directly — for real alerts, expose it via ngrok
+    or Cloudflare Tunnel and use the public HTTPS URL.
   </p>
-</div>
-
-<div class="card">
-  <h3>Shared secret</h3>
-  <p>
-    Set in <code>.env</code> as <code>TRADINGVIEW_WEBHOOK_SECRET</code>.
-    Currently:
-    <strong>
-      {% if secret_set %}configured ({{ secret_preview }}){% else %}<span class="bad">unset / default — change this</span>{% endif %}
-    </strong>
+  <div class="code-frame">
+    <span class="copy-hint">local</span>
+    <pre class="code">http://127.0.0.1:{{ port }}/webhooks/tradingview</pre>
+  </div>
+  <div class="code-frame">
+    <span class="copy-hint">lan / tailscale</span>
+    <pre class="code">http://HOST:{{ port }}/webhooks/tradingview</pre>
+  </div>
+  <div class="code-frame">
+    <span class="copy-hint">public tunnel (https)</span>
+    <pre class="code">https://YOUR-TUNNEL-URL/webhooks/tradingview</pre>
+  </div>
+  <p class="muted" style="margin: 8px 0 0;">
+    Replace <code>HOST</code> with the machine's LAN or Tailscale magic-DNS name,
+    and <code>YOUR-TUNNEL-URL</code> with the hostname your ngrok / Cloudflare Tunnel prints.
   </p>
-</div>
+</section>
 
-<div class="card">
-  <h3>Alert JSON body template</h3>
-  <p>Paste this into your TradingView alert's "Message" field, then replace the secret:</p>
-  <pre class="output">{{ alert_template }}</pre>
-</div>
+<section class="card section">
+  <h3>Alert JSON template</h3>
+  <p class="muted" style="margin: 0 0 6px;">
+    Paste this into the TradingView alert's <em>Message</em> field. Replace
+    <code>&lt;your TRADINGVIEW_WEBHOOK_SECRET&gt;</code> with the actual secret from your <code>.env</code>.
+  </p>
+  <div class="code-frame">
+    <span class="copy-hint">json</span>
+    <pre class="code">{{ alert_template }}</pre>
+  </div>
+</section>
 
-<div class="card">
-  <h3>Allowed symbols</h3>
-  <p>SignalBridge will reject any alert whose <code>symbol</code> isn't in this list:</p>
-  {% if allowed_symbols %}
-    <ul class="chips">{% for s in allowed_symbols %}<li>{{ s }}</li>{% endfor %}</ul>
-  {% else %}
-    <div class="muted">none configured</div>
-  {% endif %}
-</div>
+<section class="card section">
+  <h3>Local curl test</h3>
+  <p class="muted" style="margin: 0 0 6px;">Verify the bridge accepts and routes a synthetic signal without touching TradingView.</p>
+  <div class="code-frame">
+    <span class="copy-hint">bash</span>
+    <pre class="code">curl -X POST {{ webhook_url }} \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "secret": "<your TRADINGVIEW_WEBHOOK_SECRET>",
+    "symbol": "MES1!",
+    "action": "buy",
+    "contracts": "1",
+    "price": "5000.25",
+    "order_id": "manual-test-001"
+  }'</pre>
+  </div>
+</section>
 
-<div class="card">
-  <h3>Field reference</h3>
-  <table class="mini">
-    <thead><tr><th>Field</th><th>Required</th><th>Notes</th></tr></thead>
-    <tbody>
-      <tr><td>secret</td><td>yes</td><td>must match <code>TRADINGVIEW_WEBHOOK_SECRET</code></td></tr>
-      <tr><td>symbol</td><td>yes</td><td>must be on allow-list (e.g. <code>MES1!</code>)</td></tr>
-      <tr><td>action</td><td>yes</td><td>buy / long / sell / short / cover / exit / close</td></tr>
-      <tr><td>contracts</td><td>no</td><td>string or number; defaults to 1</td></tr>
-      <tr><td>price</td><td>yes (paper)</td><td>string or number; paper requires it for fill</td></tr>
-      <tr><td>order_id</td><td>no</td><td>used for duplicate suppression</td></tr>
-    </tbody>
-  </table>
+<section class="grid grid-2 section">
+  <div class="card">
+    <h3>Allowed symbols</h3>
+    <p class="muted" style="margin: 0 0 4px;">Alerts with any other <code>symbol</code> are rejected.</p>
+    {% if allowed_symbols %}
+      <ul class="chips">{% for s in allowed_symbols %}<li>{{ s }}</li>{% endfor %}</ul>
+    {% else %}
+      <div class="empty"><strong>empty</strong>set ALLOWED_SYMBOLS in .env</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Field reference</h3>
+    <div class="table-wrap">
+      <table class="mini">
+        <thead><tr><th>Field</th><th>Required</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>secret</code></td><td>yes</td><td>must match <code>TRADINGVIEW_WEBHOOK_SECRET</code></td></tr>
+          <tr><td><code>symbol</code></td><td>yes</td><td>must be on allow-list (e.g. <code>MES1!</code>)</td></tr>
+          <tr><td><code>action</code></td><td>yes</td><td>buy / long / sell / short / cover / exit / close</td></tr>
+          <tr><td><code>contracts</code></td><td>no</td><td>defaults to 1</td></tr>
+          <tr><td><code>price</code></td><td>yes (paper)</td><td>paper requires it for fill</td></tr>
+          <tr><td><code>order_id</code></td><td>no</td><td>used for duplicate suppression</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<div class="banner">
+  <span class="t">Going public:</span> when you're ready to receive real TradingView alerts,
+  run <code>ngrok http {{ port }}</code> (or <code>cloudflared tunnel</code>) and use that
+  public URL as your alert webhook URL instead of the local one above. See
+  <code>app/tunnel/</code> for notes.
 </div>
 {% endblock %}

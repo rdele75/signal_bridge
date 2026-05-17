@@ -1,30 +1,66 @@
 {% extends "base.html" %}
 {% block title %}Broker · SignalBridge{% endblock %}
+{% block page_title %}Broker{% endblock %}
 {% block content %}
-<h1>Broker</h1>
+<h1>Broker settings</h1>
+<p class="subtitle">Configure and probe the active broker adapter.</p>
 
-<div class="card">
-  <div class="card-label">Active provider</div>
-  <div class="card-value">{{ broker_provider }}</div>
-  <div class="card-sub">
-    Change <code>BROKER_PROVIDER</code> in <code>.env</code> and restart to switch.
-  </div>
+<div class="banner warn">
+  <span class="t">Paper-only:</span> SignalBridge currently only executes against the
+  built-in paper adapter. Topstep and Tradovate are placeholders and are not wired
+  to a real API yet.
 </div>
 
-<section class="card">
-  <h2>Test connection</h2>
-  <p class="muted">
-    Probes the currently-loaded broker adapter. Paper always succeeds.
-    Topstep and Tradovate are placeholders and return "not implemented".
-  </p>
-  <button id="btn-test" class="btn">Test {{ broker_provider }} connection</button>
-  <pre id="test-out" class="output">click the button…</pre>
+<section class="grid grid-3 section">
+  <div class="card">
+    <div class="card-label">Active provider</div>
+    <div class="card-value">
+      {% if broker_provider == 'paper' %}
+        <span class="badge badge-paper plain">{{ broker_provider }}</span>
+      {% else %}
+        <span class="badge badge-warn plain">{{ broker_provider }}</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">change <code>BROKER_PROVIDER</code> in <code>.env</code> + restart to switch</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Execution mode</div>
+    <div class="card-value">
+      <span class="badge badge-paper plain">{{ execution_mode }}</span>
+    </div>
+    <div class="card-sub">no real orders will be placed</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Paper status</div>
+    <div class="card-value"><span class="badge badge-good plain">healthy</span></div>
+    <div class="card-sub">built-in adapter, always available</div>
+  </div>
 </section>
 
-<section class="grid grid-2">
+<section class="card section">
+  <div class="section-head">
+    <h2>Test connection</h2>
+    <span class="hint">probes the loaded adapter</span>
+  </div>
+  <p class="muted" style="margin: 0 0 10px;">
+    Paper always returns <span class="good">ok</span>.
+    Topstep and Tradovate return <span class="warn">not implemented (501)</span>.
+  </p>
+  <div class="btn-row">
+    <button id="btn-test" class="btn btn-primary">Test {{ broker_provider }} connection</button>
+  </div>
+  <pre id="test-out" class="output">click the button to probe the adapter…</pre>
+</section>
+
+<section class="grid grid-2 section">
   <div class="card">
-    <h3>Topstep / TopstepX</h3>
-    <p class="muted">Primary future broker. Adapter is a placeholder.</p>
+    <div class="card-row">
+      <h3>Topstep / TopstepX</h3>
+      <span class="badge badge-warn">placeholder</span>
+    </div>
+    <p class="muted">Primary futures broker. Adapter not yet implemented.</p>
     <dl class="kv">
       <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username or '—' }}</dd>
       <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>
@@ -35,8 +71,11 @@
   </div>
 
   <div class="card">
-    <h3>Tradovate</h3>
-    <p class="muted">Optional future broker. Adapter is a placeholder.</p>
+    <div class="card-row">
+      <h3>Tradovate</h3>
+      <span class="badge badge-warn">placeholder</span>
+    </div>
+    <p class="muted">Optional futures broker. Adapter not yet implemented.</p>
     <dl class="kv">
       <dt>TRADOVATE_USERNAME</dt><dd>{{ tradovate.username or '—' }}</dd>
       <dt>TRADOVATE_ACCOUNT_ID</dt><dd>{{ tradovate.account_id or '—' }}</dd>

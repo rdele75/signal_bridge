@@ -37,6 +37,7 @@ Journal / metrics / logs   ←—   visible in the local dashboard
 | `/journal`         | recent signals (accepted/rejected) + recent closed paper trades |
 | `/metrics`         | accepted/rejected counts, rejection reasons, trades by symbol, basic paper P&L, win rate |
 | `/logs`            | tail of `logs/signalbridge.log` |
+| `/system`          | app name/version, host/port, db & log paths, cwd, broker, mode, `.env` loaded?, runtime status, useful local URLs |
 
 All pages share a top bar showing **execution mode**, **broker provider**, and a **live / halted** pill driven by the kill switch.
 
@@ -152,6 +153,7 @@ To make `127.0.0.1` reachable from TradingView's servers, expose it with **ngrok
 | `POST /api/kill-switch/enable`        | activate the kill switch (halts execution) |
 | `POST /api/kill-switch/disable`       | deactivate the kill switch |
 | `POST /api/broker/test-connection`    | probe the active broker adapter |
+| `GET  /api/system`                    | host/port, paths, runtime status, useful local URLs |
 | `POST /webhooks/tradingview`          | the inbound alert endpoint |
 
 `POST /api/broker/test-connection` returns `200` with `ok: true` for paper and `501` with `ok: false` and `status: "not_implemented"` for topstep / tradovate.

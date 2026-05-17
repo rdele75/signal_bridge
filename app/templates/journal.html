@@ -1,73 +1,107 @@
 {% extends "base.html" %}
 {% block title %}Journal · SignalBridge{% endblock %}
+{% block page_title %}Journal{% endblock %}
 {% block content %}
 <h1>Journal</h1>
+<p class="subtitle">Every signal received and trade closed, in chronological order.</p>
 
-<section class="card">
-  <h3>Recent signals ({{ signals|length }})</h3>
+<section class="section">
+  <div class="section-head">
+    <h2>Recent signals <span class="muted">({{ signals|length }})</span></h2>
+    <span class="hint">newest first · last 100</span>
+  </div>
   {% if signals %}
-  <table class="data">
-    <thead>
-      <tr>
-        <th>#</th><th>received_at</th><th>symbol</th><th>broker_symbol</th>
-        <th>action</th><th>qty</th><th>price</th><th>broker</th>
-        <th>decision</th><th>reason</th><th>order_id</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for s in signals %}
-      <tr class="row-{{ s.decision }}">
-        <td>{{ s.id }}</td>
-        <td>{{ s.received_at }}</td>
-        <td>{{ s.symbol or '—' }}</td>
-        <td>{{ s.broker_symbol or '—' }}</td>
-        <td>{{ s.action or '—' }}</td>
-        <td>{{ s.contracts if s.contracts is not none else '—' }}</td>
-        <td>{{ '%.4f' % s.price if s.price is not none else '—' }}</td>
-        <td>{{ s.broker_provider or '—' }}</td>
-        <td>
-          {% if s.decision == 'accepted' %}<span class="good">accepted</span>
-          {% else %}<span class="bad">rejected</span>{% endif %}
-        </td>
-        <td class="muted">{{ s.rejection_reason or '' }}</td>
-        <td>{{ s.order_id or '—' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Symbol</th>
+          <th>Action</th>
+          <th class="num">Qty</th>
+          <th class="num">Price</th>
+          <th>Decision</th>
+          <th>Rejection reason</th>
+          <th>Order ID</th>
+          <th>Broker</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in signals %}
+        <tr class="row-{{ s.decision }}">
+          <td class="mono muted">{{ s.received_at }}</td>
+          <td><strong>{{ s.symbol or '—' }}</strong>{% if s.broker_symbol and s.broker_symbol != s.symbol %} <span class="muted">→ {{ s.broker_symbol }}</span>{% endif %}</td>
+          <td>{{ s.action or '—' }}</td>
+          <td class="num">{{ s.contracts if s.contracts is not none else '—' }}</td>
+          <td class="num">{{ '%.4f' % s.price if s.price is not none else '—' }}</td>
+          <td>
+            {% if s.decision == 'accepted' %}
+              <span class="badge badge-good">accepted</span>
+            {% else %}
+              <span class="badge badge-bad">rejected</span>
+            {% endif %}
+          </td>
+          <td class="muted">{{ s.rejection_reason or '' }}</td>
+          <td class="mono">{{ s.order_id or '—' }}</td>
+          <td>
+            {% if s.broker_provider %}
+              <span class="badge {{ 'badge-paper' if s.broker_provider == 'paper' else 'badge-warn' }} plain">{{ s.broker_provider }}</span>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
-    <div class="muted">no signals recorded yet</div>
+    <div class="empty"><strong>no signals yet</strong>fire a TradingView alert or run a local curl test</div>
   {% endif %}
 </section>
 
-<section class="card">
-  <h3>Recent closed trades ({{ closed_trades|length }})</h3>
+<section class="section">
+  <div class="section-head">
+    <h2>Recent closed trades <span class="muted">({{ closed_trades|length }})</span></h2>
+    <span class="hint">paper-mode fills only</span>
+  </div>
   {% if closed_trades %}
-  <table class="data">
-    <thead>
-      <tr><th>#</th><th>closed_at</th><th>symbol</th><th>side</th><th>qty</th>
-          <th>entry</th><th>exit</th><th>pnl (pts)</th><th>broker</th></tr>
-    </thead>
-    <tbody>
-      {% for t in closed_trades %}
-      <tr>
-        <td>{{ t.id }}</td>
-        <td>{{ t.closed_at }}</td>
-        <td>{{ t.symbol }}</td>
-        <td>{{ t.side }}</td>
-        <td>{{ t.contracts }}</td>
-        <td>{{ '%.4f' % t.entry_price if t.entry_price is not none else '—' }}</td>
-        <td>{{ '%.4f' % t.exit_price if t.exit_price is not none else '—' }}</td>
-        <td class="{{ 'good' if t.realized_pnl_points > 0 else ('bad' if t.realized_pnl_points < 0 else '') }}">
-          {{ '%+.4f' % t.realized_pnl_points }}
-        </td>
-        <td>{{ t.broker_provider or '—' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Closed</th>
+          <th>Symbol</th>
+          <th>Side</th>
+          <th class="num">Qty</th>
+          <th class="num">Entry</th>
+          <th class="num">Exit</th>
+          <th class="num">P&amp;L (pts)</th>
+          <th>Broker</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in closed_trades %}
+        <tr>
+          <td class="mono muted">{{ t.closed_at }}</td>
+          <td><strong>{{ t.symbol }}</strong></td>
+          <td>{{ t.side }}</td>
+          <td class="num">{{ t.contracts }}</td>
+          <td class="num">{{ '%.4f' % t.entry_price if t.entry_price is not none else '—' }}</td>
+          <td class="num">{{ '%.4f' % t.exit_price if t.exit_price is not none else '—' }}</td>
+          <td class="num {{ 'good' if t.realized_pnl_points > 0 else ('bad' if t.realized_pnl_points < 0 else '') }}">
+            {{ '%+.4f' % t.realized_pnl_points }}
+          </td>
+          <td>
+            {% if t.broker_provider %}
+              <span class="badge {{ 'badge-paper' if t.broker_provider == 'paper' else 'badge-warn' }} plain">{{ t.broker_provider }}</span>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
-    <div class="muted">no closed trades yet</div>
+    <div class="empty"><strong>no closed trades</strong>round-trip a position to populate</div>
   {% endif %}
 </section>
 {% endblock %}

@@ -1,57 +1,122 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · SignalBridge{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
 {% block content %}
-<h1>Dashboard</h1>
+<h1>Overview</h1>
+<p class="subtitle">Live status of your local trading bridge.</p>
 
-<section class="grid grid-3">
+<section class="grid grid-4 section">
   <div class="card">
-    <div class="card-label">Status</div>
+    <div class="card-label">App status</div>
     <div class="card-value">
       {% if kill_switch_active %}
-        <span class="bad">HALTED (kill switch)</span>
+        <span class="badge badge-bad">halted</span>
       {% else %}
-        <span class="good">RUNNING</span>
+        <span class="badge badge-good">running</span>
       {% endif %}
     </div>
-    <div class="card-sub">Kill switch: {{ 'enabled' if kill_switch_enabled else 'disabled' }}</div>
+    <div class="card-sub">kill switch {{ 'enabled' if kill_switch_enabled else 'disabled' }}</div>
   </div>
 
   <div class="card">
     <div class="card-label">Execution mode</div>
-    <div class="card-value">{{ execution_mode }}</div>
-    <div class="card-sub">Broker: <strong>{{ broker_provider }}</strong></div>
+    <div class="card-value">
+      {% if execution_mode == 'paper' %}
+        <span class="badge badge-paper plain">{{ execution_mode }}</span>
+      {% elif execution_mode == 'live' %}
+        <span class="badge badge-good plain">{{ execution_mode }}</span>
+      {% else %}
+        <span class="badge badge-info plain">{{ execution_mode }}</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">simulated fills only</div>
   </div>
 
   <div class="card">
-    <div class="card-label">Broker account</div>
+    <div class="card-label">Broker provider</div>
     <div class="card-value">
-      {% if broker_account_id %}{{ broker_account_id }}{% else %}<span class="muted">none configured</span>{% endif %}
+      {% if broker_provider == 'paper' %}
+        <span class="badge badge-paper plain">{{ broker_provider }}</span>
+      {% else %}
+        <span class="badge badge-warn plain">{{ broker_provider }}</span>
+      {% endif %}
     </div>
-    <div class="card-sub"><a href="/settings/broker">Configure</a></div>
+    <div class="card-sub">
+      {% if broker_account_id %}acct {{ broker_account_id }}{% else %}<a href="/settings/broker">configure</a>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Kill switch</div>
+    <div class="card-value">
+      {% if kill_switch_active %}
+        <span class="badge badge-bad plain">active</span>
+      {% else %}
+        <span class="badge badge-good plain">off</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">
+      <div class="btn-row" style="margin-top: 4px;">
+        <button id="dash-ks-enable" class="btn btn-danger">activate</button>
+        <button id="dash-ks-disable" class="btn">deactivate</button>
+      </div>
+    </div>
   </div>
 </section>
 
-<section class="grid grid-4">
+<section class="grid grid-2 section">
+  <div class="card">
+    <div class="card-label">Webhook</div>
+    <div class="card-value sm mono" style="word-break: break-all;">{{ webhook_path }}</div>
+    <div class="card-sub">
+      secret:
+      {% if webhook_secret_set %}
+        <span class="badge badge-good">configured</span>
+      {% else %}
+        <span class="badge badge-bad">unset / default</span>
+      {% endif %}
+      · <a href="/tradingview">setup</a>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">Local webhook URL</div>
+    <div class="card-value sm mono" style="word-break: break-all;">{{ webhook_url_local }}</div>
+    <div class="card-sub">use TradingView page for tunnel URL examples</div>
+  </div>
+</section>
+
+<section class="grid grid-4 section">
+  <div class="card">
+    <div class="card-label">Open positions</div>
+    <div class="card-value lg">{{ open_position_count }}</div>
+    <div class="card-sub">live exposure</div>
+  </div>
   <div class="card">
     <div class="card-label">Trades today</div>
-    <div class="card-value">{{ trades_today }}</div>
+    <div class="card-value lg">{{ trades_today }}</div>
+    <div class="card-sub">accepted signals</div>
   </div>
   <div class="card">
     <div class="card-label">Accepted today</div>
-    <div class="card-value good">{{ accepted_today }}</div>
+    <div class="card-value lg good">{{ accepted_today }}</div>
+    <div class="card-sub">passed risk + broker</div>
   </div>
   <div class="card">
     <div class="card-label">Rejected today</div>
-    <div class="card-value bad">{{ rejected_today }}</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Paper P&amp;L today</div>
-    <div class="card-value">{{ daily_pnl_display }}</div>
-    <div class="card-sub">closed trades: {{ closed_trade_total }}</div>
+    <div class="card-value lg {{ 'bad' if rejected_today else 'muted' }}">{{ rejected_today }}</div>
+    <div class="card-sub">blocked by risk</div>
   </div>
 </section>
 
-<section class="grid grid-2">
+<section class="grid grid-3 section">
+  <div class="card">
+    <div class="card-label">Paper P&amp;L today</div>
+    <div class="card-value lg {{ 'good' if daily_pnl > 0 else ('bad' if daily_pnl < 0 else '') }}">
+      {{ daily_pnl_display }}
+    </div>
+    <div class="card-sub">closed trades: {{ closed_trade_total }}</div>
+  </div>
+
   <div class="card">
     <div class="card-label">Allowed symbols</div>
     {% if allowed_symbols %}
@@ -59,58 +124,88 @@
         {% for s in allowed_symbols %}<li>{{ s }}</li>{% endfor %}
       </ul>
     {% else %}
-      <div class="muted">none</div>
+      <div class="muted">none configured</div>
     {% endif %}
-    <div class="card-sub"><a href="/settings/risk">Configure risk</a></div>
+    <div class="card-sub"><a href="/settings/risk">edit allowlist</a></div>
   </div>
 
   <div class="card">
     <div class="card-label">Open positions ({{ open_position_count }})</div>
     {% if open_positions %}
-      <table class="mini">
-        <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg</th></tr></thead>
-        <tbody>
-          {% for p in open_positions %}
-            <tr>
-              <td>{{ p.symbol }}</td>
-              <td>{{ p.side or '—' }}</td>
-              <td>{{ p.quantity }}</td>
-              <td>{{ '%.4f' % p.avg_price if p.avg_price is not none else '—' }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="table-wrap" style="margin-top: 6px;">
+        <table class="mini">
+          <thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Avg</th></tr></thead>
+          <tbody>
+            {% for p in open_positions %}
+              <tr>
+                <td><strong>{{ p.symbol }}</strong></td>
+                <td>{{ p.side or '—' }}</td>
+                <td class="num">{{ p.quantity }}</td>
+                <td class="num">{{ '%.4f' % p.avg_price if p.avg_price is not none else '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     {% else %}
-      <div class="muted">no open positions</div>
+      <div class="empty"><strong>flat</strong>no open positions</div>
     {% endif %}
   </div>
 </section>
 
-<section class="grid grid-2">
+<section class="grid grid-2 section">
   <div class="card">
     <div class="card-label">Last signal</div>
     {% if last_signal %}
-      <div><strong>{{ last_signal.symbol }}</strong> {{ last_signal.action }} × {{ last_signal.contracts }}</div>
-      <div class="muted">{{ last_signal.received_at }}</div>
-      <div>decision:
-        {% if last_signal.decision == 'accepted' %}<span class="good">accepted</span>
-        {% else %}<span class="bad">rejected</span>{% endif %}
+      <div class="card-value sm">
+        <strong>{{ last_signal.symbol }}</strong>
+        <span class="muted">·</span>
+        {{ last_signal.action }}
+        <span class="muted">×</span>
+        {{ last_signal.contracts }}
       </div>
-      {% if last_signal.rejection_reason %}<div class="muted">{{ last_signal.rejection_reason }}</div>{% endif %}
+      <div class="card-sub mono">{{ last_signal.received_at }}</div>
+      <div style="margin-top: 8px;">
+        {% if last_signal.decision == 'accepted' %}
+          <span class="badge badge-good">accepted</span>
+        {% else %}
+          <span class="badge badge-bad">rejected</span>
+        {% endif %}
+        {% if last_signal.rejection_reason %}
+          <span class="muted" style="margin-left: 6px;">{{ last_signal.rejection_reason }}</span>
+        {% endif %}
+      </div>
     {% else %}
-      <div class="muted">none yet — fire a TradingView alert to populate</div>
+      <div class="empty"><strong>no signals yet</strong>fire a TradingView alert to populate</div>
     {% endif %}
   </div>
 
   <div class="card">
     <div class="card-label">Last rejection</div>
     {% if last_rejection %}
-      <div><strong>{{ last_rejection.symbol or '—' }}</strong> {{ last_rejection.action or '' }}</div>
-      <div class="muted">{{ last_rejection.received_at }}</div>
-      <div class="bad">{{ last_rejection.rejection_reason }}</div>
+      <div class="card-value sm">
+        <strong>{{ last_rejection.symbol or '—' }}</strong>
+        <span class="muted">·</span>
+        {{ last_rejection.action or '—' }}
+      </div>
+      <div class="card-sub mono">{{ last_rejection.received_at }}</div>
+      <div style="margin-top: 8px;">
+        <span class="badge badge-bad">{{ last_rejection.rejection_reason }}</span>
+      </div>
     {% else %}
-      <div class="muted">no rejections recorded</div>
+      <div class="empty"><strong>clean</strong>no rejections recorded</div>
     {% endif %}
   </div>
 </section>
+
+<script>
+async function _dashKs(path) {
+  try {
+    await fetch(path, { method: 'POST' });
+    location.reload();
+  } catch (e) { console.error('kill switch failed', e); }
+}
+document.getElementById('dash-ks-enable').addEventListener('click', () => _dashKs('/api/kill-switch/enable'));
+document.getElementById('dash-ks-disable').addEventListener('click', () => _dashKs('/api/kill-switch/disable'));
+</script>
 {% endblock %}

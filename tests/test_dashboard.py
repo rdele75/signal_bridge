@@ -14,6 +14,7 @@ DASHBOARD_PAGES = [
     "/journal",
     "/metrics",
     "/logs",
+    "/system",
 ]
 
 
@@ -164,3 +165,49 @@ def test_invalid_price_rejected(client):
     body = r.json()
     assert body["accepted"] is False
     assert "missing_or_invalid_price" in body["rejection_reason"]
+
+
+# ---------- /system + /api/system ----------
+
+def test_system_page_renders(client):
+    r = client.get("/system")
+    assert r.status_code == 200
+    body = r.text
+    assert "SignalBridge" in body
+    assert "/webhooks/tradingview" in body
+    assert "Useful local URLs" in body
+
+
+def test_api_system(client):
+    r = client.get("/api/system")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["app_name"] == "SignalBridge"
+    assert body["broker_provider"] == "paper"
+    assert body["execution_mode"] == "paper"
+    assert body["webhook_path"] == "/webhooks/tradingview"
+    assert body["webhook_url_local"].endswith("/webhooks/tradingview")
+    # Test fixture sets a non-default secret, so it should report configured.
+    assert body["webhook_secret_set"] is True
+    # Storage paths come back as absolute strings.
+    assert body["database_path"].endswith(".db")
+    assert body["log_path"].endswith(".log")
+    # Runtime status flips with kill switch.
+    assert body["runtime_status"] == "running"
+    assert isinstance(body["local_urls"], list) and body["local_urls"]
+
+
+def test_api_system_runtime_status_halted_when_kill_switch_on(client):
+    client.post("/api/kill-switch/enable")
+    body = client.get("/api/system").json()
+    assert body["kill_switch_active"] is True
+    assert body["runtime_status"] == "halted"
+
+
+# ---------- TradingView page surfaces all three URL forms ----------
+
+def test_tradingview_page_shows_three_url_forms(client):
+    body = client.get("/tradingview").text
+    assert "http://127.0.0.1:" in body
+    assert "http://HOST:" in body
+    assert "https://YOUR-TUNNEL-URL/webhooks/tradingview" in body

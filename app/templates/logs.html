@@ -1,20 +1,58 @@
 {% extends "base.html" %}
 {% block title %}Logs · SignalBridge{% endblock %}
+{% block page_title %}Logs{% endblock %}
 {% block content %}
-<h1>Recent logs</h1>
+<h1>Logs</h1>
+<p class="subtitle">Tail of the SignalBridge log file.</p>
 
-<div class="card">
-  <div class="card-label">log file</div>
-  <div class="card-value mono">{{ log_path }}</div>
-  <div class="card-sub">last {{ lines|length }} lines</div>
-</div>
+<section class="grid grid-3 section">
+  <div class="card">
+    <div class="card-label">Log file</div>
+    <div class="card-value sm mono" style="word-break: break-all;">{{ log_path }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Lines shown</div>
+    <div class="card-value lg">{{ lines|length }}</div>
+    <div class="card-sub">max 300 (tail)</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Stream</div>
+    <div class="card-value">
+      {% if lines %}
+        <span class="badge badge-good plain">active</span>
+      {% else %}
+        <span class="badge badge-muted plain">quiet</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">reload page to refresh</div>
+  </div>
+</section>
 
-<section class="card">
+<section class="section">
   {% if lines %}
-    <pre class="output logs">{% for line in lines %}{{ line }}
-{% endfor %}</pre>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span>signalbridge.log</span>
+        <span class="path">{{ log_path }}</span>
+      </div>
+      <div class="terminal-body">
+        {% for line in lines %}
+          {% set lower = line|lower %}
+          {% if ' error ' in lower or ' err ' in lower or 'traceback' in lower or 'exception' in lower %}
+            <div class="line err">{{ line }}</div>
+          {% elif ' warn' in lower %}
+            <div class="line warn">{{ line }}</div>
+          {% elif ' info ' in lower %}
+            <div class="line info">{{ line }}</div>
+          {% else %}
+            <div class="line">{{ line }}</div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
   {% else %}
-    <div class="muted">log file is empty or hasn't been created yet</div>
+    <div class="empty"><strong>log is empty</strong>SignalBridge hasn't written any output yet — fire a signal to populate it</div>
   {% endif %}
 </section>
 {% endblock %}

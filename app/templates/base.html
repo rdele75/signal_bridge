@@ -4,36 +4,63 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>{% block title %}SignalBridge{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <a href="/">SignalBridge</a>
-      <span class="pill pill-{{ 'on' if not kill_switch_active else 'off' }}">
-        {{ 'live' if not kill_switch_active else 'halted' }}
-      </span>
-      <span class="pill pill-mode">{{ execution_mode }}</span>
-      <span class="pill pill-broker">{{ broker_provider }}</span>
+{% set path = request.url.path %}
+{% set mode_class = 'badge-paper' if execution_mode == 'paper' else ('badge-good' if execution_mode == 'live' else 'badge-info') %}
+{% set broker_class = 'badge-paper' if broker_provider == 'paper' else 'badge-warn' %}
+{% set ks_class = 'badge-bad' if kill_switch_active else 'badge-good' %}
+{% set ks_text  = 'kill switch active' if kill_switch_active else 'kill switch off' %}
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="logo">SB</div>
+      <div>
+        <div class="name">SignalBridge</div>
+        <span class="sub">trading bridge</span>
+      </div>
     </div>
-    <nav>
-      <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Dashboard</a>
-      <a href="/journal" class="{{ 'active' if request.url.path == '/journal' else '' }}">Journal</a>
-      <a href="/metrics" class="{{ 'active' if request.url.path == '/metrics' else '' }}">Metrics</a>
-      <a href="/logs" class="{{ 'active' if request.url.path == '/logs' else '' }}">Logs</a>
-      <a href="/settings/broker" class="{{ 'active' if request.url.path == '/settings/broker' else '' }}">Broker</a>
-      <a href="/settings/risk" class="{{ 'active' if request.url.path == '/settings/risk' else '' }}">Risk</a>
-      <a href="/tradingview" class="{{ 'active' if request.url.path == '/tradingview' else '' }}">TradingView</a>
+
+    <nav class="sidebar-nav">
+      <div class="section-label">Overview</div>
+      <a href="/"          class="{{ 'active' if path == '/' else '' }}">Dashboard</a>
+      <a href="/journal"   class="{{ 'active' if path == '/journal' else '' }}">Journal</a>
+      <a href="/metrics"   class="{{ 'active' if path == '/metrics' else '' }}">Metrics</a>
+      <a href="/logs"      class="{{ 'active' if path == '/logs' else '' }}">Logs</a>
+
+      <div class="section-label">Configuration</div>
+      <a href="/settings/broker" class="{{ 'active' if path == '/settings/broker' else '' }}">Broker</a>
+      <a href="/settings/risk"   class="{{ 'active' if path == '/settings/risk' else '' }}">Risk</a>
+      <a href="/tradingview"     class="{{ 'active' if path == '/tradingview' else '' }}">TradingView</a>
+
+      <div class="section-label">System</div>
+      <a href="/system" class="{{ 'active' if path == '/system' else '' }}">System</a>
     </nav>
+
+    <div class="sidebar-foot">
+      private local bridge<br>
+      paper-mode only
+    </div>
+  </aside>
+
+  <header class="topbar">
+    <div class="crumbs">
+      <span class="page-title">{% block page_title %}SignalBridge{% endblock %}</span>
+    </div>
+    <div class="status-strip">
+      <span class="label">mode</span>
+      <span class="badge {{ mode_class }}">{{ execution_mode }}</span>
+      <span class="label">broker</span>
+      <span class="badge {{ broker_class }}">{{ broker_provider }}</span>
+      <span class="badge {{ ks_class }}">{{ ks_text }}</span>
+    </div>
   </header>
 
-  <main class="page">
+  <main class="main">
     {% block content %}{% endblock %}
   </main>
-
-  <footer class="footer">
-    <span>SignalBridge — private local trading bridge</span>
-    <span>{{ broker_provider }} · {{ execution_mode }}</span>
-  </footer>
+</div>
 </body>
 </html>

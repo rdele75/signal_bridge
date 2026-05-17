@@ -6,10 +6,15 @@ data it needs, then hands the dict straight to Jinja2.
 from __future__ import annotations
 
 import json
+import os
+import platform
+import socket
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from .config import Settings
+from . import __version__
+from .config import PROJECT_ROOT, Settings
 from .execution.broker_base import BrokerBase
 from .journal import Journal
 from .kill_switch import KillSwitch
@@ -43,8 +48,11 @@ def dashboard_summary(
         f"{daily_pnl:+.2f} pts" if closed["total"] > 0 else "N/A"
     )
 
+    webhook = _webhook_status(settings)
+
     return {
         "app_name": settings.app_name,
+        "app_version": __version__,
         "execution_mode": settings.execution_mode,
         "broker_provider": broker.provider,
         "broker_account_id": _broker_account_id(settings, broker.provider),
@@ -61,6 +69,77 @@ def dashboard_summary(
         "daily_pnl": daily_pnl,
         "daily_pnl_display": pnl_display,
         "closed_trade_total": closed["total"],
+        "webhook_path": "/webhooks/tradingview",
+        "webhook_secret_set": webhook["secret_set"],
+        "webhook_url_local": webhook["url_local"],
+    }
+
+
+def _webhook_status(settings: Settings) -> dict[str, Any]:
+    secret = settings.webhook_secret or ""
+    secret_set = bool(secret) and secret != "change_me_to_a_long_random_secret"
+    return {
+        "secret_set": secret_set,
+        "url_local": f"http://{settings.app_host}:{settings.app_port}/webhooks/tradingview",
+    }
+
+
+def system_summary(
+    *,
+    settings: Settings,
+    broker: BrokerBase,
+    kill_switch: KillSwitch,
+) -> dict[str, Any]:
+    """Build the System page payload. Used by both /system (HTML) and
+    /api/system (JSON)."""
+    env_file = PROJECT_ROOT / ".env"
+    webhook = _webhook_status(settings)
+    host = settings.app_host
+    port = settings.app_port
+
+    local_urls = [
+        {"label": "Dashboard", "url": f"http://{host}:{port}/"},
+        {"label": "System",    "url": f"http://{host}:{port}/system"},
+        {"label": "Broker",    "url": f"http://{host}:{port}/settings/broker"},
+        {"label": "Risk",      "url": f"http://{host}:{port}/settings/risk"},
+        {"label": "TradingView", "url": f"http://{host}:{port}/tradingview"},
+        {"label": "Journal",   "url": f"http://{host}:{port}/journal"},
+        {"label": "Metrics",   "url": f"http://{host}:{port}/metrics"},
+        {"label": "Logs",      "url": f"http://{host}:{port}/logs"},
+        {"label": "Health",    "url": f"http://{host}:{port}/health"},
+        {"label": "Webhook",   "url": webhook["url_local"]},
+    ]
+
+    return {
+        "app_name": settings.app_name,
+        "app_version": __version__,
+        "host": host,
+        "port": port,
+        "execution_mode": settings.execution_mode,
+        "broker_provider": broker.provider,
+        "database_path": str(settings.database_abs_path),
+        "log_path": str(settings.log_abs_path),
+        "log_level": settings.log_level,
+        "cwd": str(Path.cwd()),
+        "project_root": str(PROJECT_ROOT),
+        "env_file_path": str(env_file),
+        "env_file_loaded": env_file.exists(),
+        "webhook_path": "/webhooks/tradingview",
+        "webhook_url_local": webhook["url_local"],
+        "webhook_secret_set": webhook["secret_set"],
+        "kill_switch_active": kill_switch.is_active(),
+        "kill_switch_enabled": kill_switch.enabled,
+        "runtime_status": "halted" if kill_switch.is_active() else "running",
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+        "hostname": socket.gethostname(),
+        "pid": os.getpid(),
+        "local_urls": local_urls,
+        "tailscale_note": (
+            "If you're on a Tailscale network, reach the dashboard at "
+            "http://<this-machine-tailscale-name>:"
+            f"{port}/. Do not hardcode IPs — use the magic DNS name."
+        ),
     }
 
 
