@@ -13,13 +13,14 @@
 
 <div class="banner warn">
   <span class="t">Paper-only:</span> SignalBridge currently only executes against the
-  built-in paper adapter. Topstep and Tradovate are placeholders and are not wired
-  to a real API yet. <code>live</code> execution mode is disabled in this build.
+  built-in paper adapter. Topstep and Tradovate are scaffolded but not connected to
+  a real broker API yet. <code>live</code> execution mode is disabled in this build.
 </div>
 
-<section class="grid grid-3 section">
+{# ---- Top status cards ---- #}
+<section class="grid grid-4 section">
   <div class="card">
-    <div class="card-label">Configured provider</div>
+    <div class="card-label">Selected broker provider</div>
     <div class="card-value">
       {% if configured_provider == 'paper' %}
         <span class="badge badge-paper plain">{{ configured_provider }}</span>
@@ -41,16 +42,37 @@
     <div class="card-value">
       <span class="badge badge-paper plain">{{ configured_execution_mode }}</span>
     </div>
-    <div class="card-sub">no real orders will be placed</div>
+    <div class="card-sub">no live orders are placed</div>
   </div>
 
   <div class="card">
-    <div class="card-label">Paper status</div>
-    <div class="card-value"><span class="badge badge-good plain">healthy</span></div>
-    <div class="card-sub">built-in adapter, always available</div>
+    <div class="card-label">Selected account</div>
+    <div class="card-value sm mono">{{ selected_account_id or '—' }}</div>
+    <div class="card-sub">
+      {% if selected_account_id_raw %}
+        from <code>SELECTED_ACCOUNT_ID</code>
+      {% else %}
+        per-provider default
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Broker connection</div>
+    <div class="card-value">
+      {% if broker_status.broker_connected %}
+        <span class="badge badge-good plain">connected</span>
+      {% elif broker_status.not_implemented %}
+        <span class="badge badge-warn plain">not implemented</span>
+      {% else %}
+        <span class="badge badge-bad plain">offline</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">{{ broker_status.broker_message or '—' }}</div>
   </div>
 </section>
 
+{# ---- Form: provider + mode + selected account ---- #}
 <section class="card section">
   <div class="section-head">
     <h3>Broker / execution selection</h3>
@@ -77,12 +99,52 @@
         <p class="muted" style="margin: 4px 0 0;"><code>live</code> mode is intentionally disabled.</p>
       </div>
     </div>
+    <div class="form-row" style="margin-top: 10px;">
+      <label for="selected_account_id">Selected account ID</label>
+      <input id="selected_account_id" name="selected_account_id"
+             type="text" maxlength="128" autocomplete="off"
+             placeholder="e.g. PAPER-001 or your Topstep account id"
+             value="{{ selected_account_id_raw or '' }}" />
+      <p class="muted" style="margin: 4px 0 0;">
+        Empty → use the per-provider default (<code>PAPER-001</code>, <code>TOPSTEP_ACCOUNT_ID</code>, etc.).
+      </p>
+    </div>
     <div class="btn-row">
       <button type="submit" class="btn btn-primary">Save broker settings</button>
     </div>
   </form>
 </section>
 
+{# ---- Paper broker status ---- #}
+<section class="card section">
+  <div class="section-head">
+    <h3>Paper broker</h3>
+    <span class="hint">built-in, always available</span>
+  </div>
+  {% if broker_accounts.accounts %}
+    {% set acct = broker_accounts.accounts[0] %}
+    <dl class="kv">
+      <dt>account_id</dt><dd><code>{{ acct.account_id }}</code></dd>
+      <dt>balance</dt><dd>{{ '%.2f' % acct.balance }} {{ acct.currency }}</dd>
+      <dt>equity</dt><dd>{{ '%.2f' % acct.equity }} {{ acct.currency }}</dd>
+      <dt>realized P&L (points)</dt><dd>{{ '%+.2f' % acct.realized_pnl_points }}</dd>
+      <dt>daily P&L (points)</dt><dd>{{ '%+.2f' % acct.daily_pnl_points }}</dd>
+      <dt>open positions</dt><dd>{{ acct.open_position_count }}</dd>
+    </dl>
+  {% else %}
+    <p class="muted">
+      Paper account snapshot is unavailable
+      {% if broker_accounts.not_implemented %}
+        because the active provider is <code>{{ broker_accounts.provider }}</code>.
+        Switch to <code>paper</code> and restart to see it.
+      {% else %}
+        (no data yet).
+      {% endif %}
+    </p>
+  {% endif %}
+</section>
+
+{# ---- Test connection ---- #}
 <section class="card section">
   <div class="section-head">
     <h2>Test connection</h2>
@@ -98,19 +160,21 @@
   <pre id="test-out" class="output">click the button to probe the adapter…</pre>
 </section>
 
+{# ---- Provider placeholders ---- #}
 <section class="grid grid-2 section">
   <div class="card">
     <div class="card-row">
       <h3>Topstep / TopstepX</h3>
       <span class="badge badge-warn">placeholder</span>
     </div>
-    <p class="muted">Primary futures broker. Adapter not yet implemented. Credentials still come from <code>.env</code> — not editable here yet.</p>
+    <p class="muted">Primary futures broker. Adapter scaffolded — not connected yet.
+    Credentials still come from <code>.env</code>; the UI never displays the raw values.</p>
     <dl class="kv">
-      <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username or '—' }}</dd>
-      <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>
       <dt>TOPSTEP_ENV</dt><dd>{{ topstep.env or '—' }}</dd>
-      <dt>TOPSTEP_API_KEY</dt><dd>{{ '••• set' if topstep.api_key else '—' }}</dd>
-      <dt>TOPSTEP_PASSWORD</dt><dd>{{ '••• set' if topstep.password else '—' }}</dd>
+      <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username_preview or ('configured' if topstep.username_set else '—') }}</dd>
+      <dt>TOPSTEP_API_KEY</dt><dd>{{ 'configured' if topstep.api_key_set else '—' }}</dd>
+      <dt>TOPSTEP_PASSWORD</dt><dd>{{ 'configured' if topstep.password_set else '—' }}</dd>
+      <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>
     </dl>
   </div>
 
@@ -119,15 +183,17 @@
       <h3>Tradovate</h3>
       <span class="badge badge-warn">placeholder</span>
     </div>
-    <p class="muted">Optional futures broker. Adapter not yet implemented. Credentials still come from <code>.env</code> — not editable here yet.</p>
+    <p class="muted">Optional futures broker. Adapter scaffolded — not connected yet.
+    Credentials still come from <code>.env</code>; the UI never displays the raw values.</p>
     <dl class="kv">
-      <dt>TRADOVATE_USERNAME</dt><dd>{{ tradovate.username or '—' }}</dd>
-      <dt>TRADOVATE_ACCOUNT_ID</dt><dd>{{ tradovate.account_id or '—' }}</dd>
       <dt>TRADOVATE_ENV</dt><dd>{{ tradovate.env or '—' }}</dd>
-      <dt>TRADOVATE_APP_ID</dt><dd>{{ tradovate.app_id or '—' }}</dd>
-      <dt>TRADOVATE_CID</dt><dd>{{ tradovate.cid or '—' }}</dd>
-      <dt>TRADOVATE_PASSWORD</dt><dd>{{ '••• set' if tradovate.password else '—' }}</dd>
-      <dt>TRADOVATE_SEC</dt><dd>{{ '••• set' if tradovate.sec else '—' }}</dd>
+      <dt>TRADOVATE_USERNAME</dt><dd>{{ tradovate.username_preview or ('configured' if tradovate.username_set else '—') }}</dd>
+      <dt>TRADOVATE_APP_ID</dt><dd>{{ 'configured' if tradovate.app_id_set else '—' }}</dd>
+      <dt>TRADOVATE_APP_VERSION</dt><dd>{{ tradovate.app_version or '—' }}</dd>
+      <dt>TRADOVATE_CID</dt><dd>{{ 'configured' if tradovate.cid_set else '—' }}</dd>
+      <dt>TRADOVATE_SEC</dt><dd>{{ 'configured' if tradovate.sec_set else '—' }}</dd>
+      <dt>TRADOVATE_PASSWORD</dt><dd>{{ 'configured' if tradovate.password_set else '—' }}</dd>
+      <dt>TRADOVATE_ACCOUNT_ID</dt><dd>{{ tradovate.account_id or '—' }}</dd>
     </dl>
   </div>
 </section>

@@ -22,6 +22,7 @@ from fastapi.templating import Jinja2Templates
 from . import __version__
 from .config import Settings, get_settings
 from .dashboard import (
+    broker_status_payload,
     dashboard_summary,
     journal_view,
     metrics_summary,
@@ -46,6 +47,22 @@ from .webhook import WebhookHandler
 _HERE = Path(__file__).resolve().parent
 TEMPLATES_DIR = _HERE / "templates"
 STATIC_DIR = _HERE / "static"
+
+
+def _mask_identifier(value: str) -> str:
+    """Return a masked version of a username-like identifier.
+
+    Used by the broker settings page so we don't echo full usernames
+    back to the UI. Empty/short values come back empty.
+    """
+    if not value:
+        return ""
+    text = str(value)
+    if len(text) <= 2:
+        return "•" * len(text)
+    if len(text) <= 4:
+        return text[0] + "•" * (len(text) - 1)
+    return f"{text[:2]}{'•' * (len(text) - 4)}{text[-2:]}"
 
 
 def _configure_logging(settings: Settings) -> None:
@@ -146,11 +163,15 @@ def create_app() -> FastAPI:
         }
 
     def _status_payload() -> StatusResponse:
+        broker_snapshot = broker_status_payload(settings=settings, broker=broker)
         return StatusResponse(
             app_name=settings.app_name,
             execution_mode=settings.execution_mode,
             broker_provider=settings.resolved_provider,
             broker=settings.broker,
+            selected_account_id=broker_snapshot["selected_account_id"],
+            broker_connected=broker_snapshot["broker_connected"],
+            broker_message=broker_snapshot["broker_message"],
             allowed_symbols=list(settings.allowed_symbols),
             kill_switch_active=kill_switch.is_active(),
             open_positions=journal.list_open_positions(),
@@ -191,11 +212,58 @@ def create_app() -> FastAPI:
         kill_switch.deactivate()
         return {"ok": True, "kill_switch_active": kill_switch.is_active()}
 
+    def _safe_broker_call(method_name: str, *args, **kwargs) -> dict[str, Any]:
+        """Wrap a broker method so it always returns a JSON-friendly dict."""
+        fn = getattr(broker, method_name, None)
+        if fn is None:
+            return {
+                "ok": False,
+                "provider": broker.provider,
+                "not_implemented": True,
+                "status": "not_implemented",
+                "message": f"{broker.provider} has no {method_name}()",
+            }
+        try:
+            result = fn(*args, **kwargs)
+        except NotImplementedError as exc:
+            return {
+                "ok": False,
+                "provider": broker.provider,
+                "not_implemented": True,
+                "status": "not_implemented",
+                "message": str(exc) or f"{broker.provider} {method_name} not implemented",
+            }
+        except Exception as exc:  # pragma: no cover - defensive
+            return {
+                "ok": False,
+                "provider": broker.provider,
+                "not_implemented": False,
+                "status": "error",
+                "message": f"{method_name} raised: {exc.__class__.__name__}",
+            }
+        return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+    @app.get("/api/broker/status")
+    def api_broker_status() -> dict[str, Any]:
+        return broker_status_payload(settings=settings, broker=broker)
+
     @app.post("/api/broker/test-connection")
     def api_broker_test() -> JSONResponse:
-        result = broker.test_connection()
+        result = _safe_broker_call("test_connection")
         status_code = 200 if result.get("ok") else 501
         return JSONResponse(content=result, status_code=status_code)
+
+    @app.get("/api/broker/accounts")
+    def api_broker_accounts() -> dict[str, Any]:
+        return _safe_broker_call("get_accounts")
+
+    @app.get("/api/broker/positions")
+    def api_broker_positions() -> dict[str, Any]:
+        return _safe_broker_call("get_positions")
+
+    @app.get("/api/broker/orders")
+    def api_broker_orders() -> dict[str, Any]:
+        return _safe_broker_call("get_orders")
 
     @app.get("/api/system")
     def api_system() -> dict[str, Any]:
@@ -232,22 +300,26 @@ def create_app() -> FastAPI:
     def page_settings_broker(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         configured = settings.resolved_provider
+        broker_snapshot = broker_status_payload(settings=settings, broker=broker)
+        accounts = _safe_broker_call("get_accounts")
         ctx.update(
             {
                 "topstep": {
-                    "username": settings.topstep_username,
-                    "password": settings.topstep_password,
-                    "api_key": settings.topstep_api_key,
+                    "username_set": bool(settings.topstep_username),
+                    "username_preview": _mask_identifier(settings.topstep_username),
+                    "password_set": bool(settings.topstep_password),
+                    "api_key_set": bool(settings.topstep_api_key),
                     "account_id": settings.topstep_account_id,
                     "env": settings.topstep_env,
                 },
                 "tradovate": {
-                    "username": settings.tradovate_username,
-                    "password": settings.tradovate_password,
-                    "app_id": settings.tradovate_app_id,
+                    "username_set": bool(settings.tradovate_username),
+                    "username_preview": _mask_identifier(settings.tradovate_username),
+                    "password_set": bool(settings.tradovate_password),
+                    "app_id_set": bool(settings.tradovate_app_id),
                     "app_version": settings.tradovate_app_version,
-                    "cid": settings.tradovate_cid,
-                    "sec": settings.tradovate_sec,
+                    "cid_set": bool(settings.tradovate_cid),
+                    "sec_set": bool(settings.tradovate_sec),
                     "account_id": settings.tradovate_account_id,
                     "env": settings.tradovate_env,
                 },
@@ -255,7 +327,11 @@ def create_app() -> FastAPI:
                 "execution_mode_options": ["paper", "demo"],
                 "configured_provider": configured,
                 "configured_execution_mode": settings.execution_mode,
+                "selected_account_id": settings.resolved_account_id,
+                "selected_account_id_raw": settings.selected_account_id,
                 "restart_required": configured != broker.provider,
+                "broker_status": broker_snapshot,
+                "broker_accounts": accounts,
             }
         )
         return templates.TemplateResponse(request, "settings_broker.html", ctx)
@@ -264,6 +340,7 @@ def create_app() -> FastAPI:
     def post_settings_broker(
         broker_provider: str = Form(...),
         execution_mode: str = Form(...),
+        selected_account_id: str = Form(""),
     ):
         try:
             new_provider = settings_store.update_typed(
@@ -271,6 +348,9 @@ def create_app() -> FastAPI:
             )
             new_mode = settings_store.update_typed(
                 "EXECUTION_MODE", execution_mode
+            )
+            new_account = settings_store.update_typed(
+                "SELECTED_ACCOUNT_ID", selected_account_id
             )
         except SettingsValidationError as exc:
             return _flash_redirect("/settings/broker", str(exc), kind="error")
@@ -280,6 +360,9 @@ def create_app() -> FastAPI:
         )
         settings_store.apply_to_settings(
             settings, "EXECUTION_MODE", new_mode
+        )
+        settings_store.apply_to_settings(
+            settings, "SELECTED_ACCOUNT_ID", new_account
         )
         msg = "Broker settings saved."
         if new_provider != broker.provider:

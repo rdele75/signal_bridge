@@ -50,6 +50,13 @@ def dashboard_summary(
 
     webhook = _webhook_status(settings)
     configured_provider = settings.resolved_provider
+    broker_status = broker_status_payload(settings=settings, broker=broker)
+
+    # Recent paper orders for the dashboard table. Only paper has fills
+    # right now — for placeholder providers the list comes back empty
+    # but still renders safely.
+    recent_orders_resp = _safe_get_orders(broker)
+    recent_orders = recent_orders_resp.get("orders") or []
 
     return {
         "app_name": settings.app_name,
@@ -58,6 +65,15 @@ def dashboard_summary(
         "broker_provider": configured_provider,
         "active_broker_provider": broker.provider,
         "broker_account_id": _broker_account_id(settings, configured_provider),
+        "selected_account_id": settings.resolved_account_id or None,
+        "broker_status": broker_status,
+        "broker_connected": broker_status["broker_connected"],
+        "broker_message": broker_status["broker_message"],
+        "broker_not_implemented": broker_status["not_implemented"],
+        "recent_orders": recent_orders[:10],
+        "recent_orders_not_implemented": bool(
+            recent_orders_resp.get("not_implemented")
+        ),
         "kill_switch_active": kill_switch.is_active(),
         "kill_switch_enabled": kill_switch.enabled,
         "allowed_symbols": list(settings.allowed_symbols),
@@ -75,6 +91,14 @@ def dashboard_summary(
         "webhook_secret_set": webhook["secret_set"],
         "webhook_url_local": webhook["url_local"],
     }
+
+
+def _safe_get_orders(broker: BrokerBase) -> dict[str, Any]:
+    try:
+        result = broker.get_orders()
+    except Exception:  # pragma: no cover - defensive
+        return {"ok": False, "orders": [], "not_implemented": False}
+    return result if isinstance(result, dict) else {"ok": False, "orders": []}
 
 
 def _webhook_status(settings: Settings) -> dict[str, Any]:
@@ -187,11 +211,40 @@ def _signal_for_display(row: Optional[dict[str, Any]]) -> Optional[dict[str, Any
 
 
 def _broker_account_id(settings: Settings, provider: str) -> Optional[str]:
-    if provider == "topstep":
-        return settings.topstep_account_id or None
-    if provider == "tradovate":
-        return settings.tradovate_account_id or None
-    return None
+    resolved = settings.resolved_account_id
+    return resolved or None
+
+
+def broker_status_payload(
+    *, settings: Settings, broker: BrokerBase
+) -> dict[str, Any]:
+    """Snapshot used by /api/broker/status and the dashboard cards.
+
+    Never raises — the dashboard/API rely on it always returning JSON.
+    """
+    try:
+        probe = broker.test_connection()
+    except Exception as exc:  # pragma: no cover - defensive
+        probe = {
+            "ok": False,
+            "provider": broker.provider,
+            "status": "error",
+            "not_implemented": False,
+            "message": f"test_connection raised: {exc.__class__.__name__}",
+        }
+    return {
+        "ok": bool(probe.get("ok")),
+        "provider": broker.provider,
+        "broker_provider": settings.resolved_provider,
+        "active_broker_provider": broker.provider,
+        "execution_mode": settings.execution_mode,
+        "selected_account_id": settings.resolved_account_id or None,
+        "broker_connected": bool(probe.get("ok")),
+        "broker_message": probe.get("message", ""),
+        "not_implemented": bool(probe.get("not_implemented")),
+        "status": probe.get("status", "unknown"),
+        "restart_required": settings.resolved_provider != broker.provider,
+    }
 
 
 # ----- Logs page helpers -----

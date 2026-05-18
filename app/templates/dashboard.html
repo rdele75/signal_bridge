@@ -40,9 +40,16 @@
       {% else %}
         <span class="badge badge-warn plain">{{ broker_provider }}</span>
       {% endif %}
+      {% if broker_connected %}
+        <span class="badge badge-good">connected</span>
+      {% elif broker_not_implemented %}
+        <span class="badge badge-warn">not implemented</span>
+      {% else %}
+        <span class="badge badge-bad">offline</span>
+      {% endif %}
     </div>
     <div class="card-sub">
-      {% if broker_account_id %}acct {{ broker_account_id }}{% else %}<a href="/settings/broker">configure</a>{% endif %}
+      {% if selected_account_id %}acct <code>{{ selected_account_id }}</code>{% else %}<a href="/settings/broker">configure</a>{% endif %}
     </div>
   </div>
 
@@ -149,6 +156,55 @@
       </div>
     {% else %}
       <div class="empty"><strong>flat</strong>no open positions</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section">
+  <div class="card">
+    <div class="card-row">
+      <div class="card-label">Recent paper orders</div>
+      <span class="hint">latest 10 from the active adapter</span>
+    </div>
+    {% if recent_orders %}
+      <div class="table-wrap" style="margin-top: 6px;">
+        <table class="mini">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Symbol</th>
+              <th>Action</th>
+              <th class="num">Qty</th>
+              <th class="num">Price</th>
+              <th>Decision</th>
+              <th>Order ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for o in recent_orders %}
+              <tr>
+                <td class="mono">{{ o.received_at }}</td>
+                <td><strong>{{ o.symbol or '—' }}</strong></td>
+                <td>{{ o.action or '—' }}</td>
+                <td class="num">{{ o.contracts if o.contracts is not none else '—' }}</td>
+                <td class="num">{{ '%.4f' % o.price if o.price is not none else '—' }}</td>
+                <td>
+                  {% if o.decision == 'accepted' %}
+                    <span class="badge badge-good">accepted</span>
+                  {% else %}
+                    <span class="badge badge-bad">{{ o.decision or 'rejected' }}</span>
+                  {% endif %}
+                </td>
+                <td class="mono">{{ o.order_id or '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% elif recent_orders_not_implemented %}
+      <div class="empty"><strong>n/a</strong>active provider does not expose order history yet</div>
+    {% else %}
+      <div class="empty"><strong>no orders yet</strong>fire a TradingView alert to populate</div>
     {% endif %}
   </div>
 </section>

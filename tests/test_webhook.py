@@ -20,9 +20,40 @@ def test_status(client):
     assert body["execution_mode"] == "paper"
     assert body["broker_provider"] == "paper"
     assert body["broker"] == "paper"
+    assert body["selected_account_id"] == "PAPER-001"
+    assert body["broker_connected"] is True
+    assert isinstance(body["broker_message"], str)
     assert "MES1!" in body["allowed_symbols"]
     assert body["kill_switch_active"] is False
     assert body["open_positions"] == []
+
+
+def test_status_topstep_provider_does_not_crash(make_app):
+    """Switching the active provider to topstep must keep /status JSON-able
+    and the dashboard reachable."""
+    from fastapi.testclient import TestClient
+
+    app = make_app(provider="topstep")
+    with TestClient(app) as c:
+        status_body = c.get("/status").json()
+        api_status_body = c.get("/api/status").json()
+        dash = c.get("/")
+    assert status_body["broker_provider"] == "topstep"
+    assert status_body["broker_connected"] is False
+    assert api_status_body["broker_provider"] == "topstep"
+    assert dash.status_code == 200
+
+
+def test_status_tradovate_provider_does_not_crash(make_app):
+    from fastapi.testclient import TestClient
+
+    app = make_app(provider="tradovate")
+    with TestClient(app) as c:
+        status_body = c.get("/status").json()
+        dash = c.get("/")
+    assert status_body["broker_provider"] == "tradovate"
+    assert status_body["broker_connected"] is False
+    assert dash.status_code == 200
 
 
 def test_status_shows_topstep_provider(make_app):

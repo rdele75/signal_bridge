@@ -154,6 +154,160 @@ def test_api_broker_test_tradovate_not_implemented(make_app):
     assert "not implemented" in body["message"].lower()
 
 
+# ---------- /api/broker/status ----------
+
+
+def test_api_broker_status_paper(client):
+    body = client.get("/api/broker/status").json()
+    assert body["provider"] == "paper"
+    assert body["broker_provider"] == "paper"
+    assert body["broker_connected"] is True
+    assert body["selected_account_id"] == "PAPER-001"
+    assert body["execution_mode"] == "paper"
+    assert body["not_implemented"] is False
+
+
+def test_api_broker_status_topstep_not_implemented(make_app):
+    from fastapi.testclient import TestClient
+    app = make_app(provider="topstep")
+    with TestClient(app) as c:
+        r = c.get("/api/broker/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["provider"] == "topstep"
+    assert body["broker_provider"] == "topstep"
+    assert body["broker_connected"] is False
+    assert body["not_implemented"] is True
+
+
+def test_api_broker_status_tradovate_not_implemented(make_app):
+    from fastapi.testclient import TestClient
+    app = make_app(provider="tradovate")
+    with TestClient(app) as c:
+        body = c.get("/api/broker/status").json()
+    assert body["provider"] == "tradovate"
+    assert body["not_implemented"] is True
+    assert body["broker_connected"] is False
+
+
+# ---------- /api/broker/accounts ----------
+
+
+def test_api_broker_accounts_paper(client):
+    r = client.get("/api/broker/accounts")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["provider"] == "paper"
+    assert body["selected_account_id"] == "PAPER-001"
+    assert isinstance(body["accounts"], list)
+    assert body["accounts"][0]["account_id"] == "PAPER-001"
+    assert body["accounts"][0]["balance"] == 50000.0
+
+
+def test_api_broker_accounts_topstep_not_implemented(make_app):
+    from fastapi.testclient import TestClient
+    app = make_app(provider="topstep")
+    with TestClient(app) as c:
+        body = c.get("/api/broker/accounts").json()
+    assert body["ok"] is False
+    assert body["not_implemented"] is True
+    assert body["provider"] == "topstep"
+    assert body["accounts"] == []
+
+
+def test_api_broker_accounts_tradovate_not_implemented(make_app):
+    from fastapi.testclient import TestClient
+    app = make_app(provider="tradovate")
+    with TestClient(app) as c:
+        body = c.get("/api/broker/accounts").json()
+    assert body["ok"] is False
+    assert body["not_implemented"] is True
+    assert body["provider"] == "tradovate"
+    assert body["accounts"] == []
+
+
+# ---------- /api/broker/positions ----------
+
+
+def test_api_broker_positions_paper_empty(client):
+    r = client.get("/api/broker/positions")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["provider"] == "paper"
+    assert body["positions"] == []
+
+
+def test_api_broker_positions_paper_reflects_fill(client):
+    client.post("/webhooks/tradingview", json=make_alert(order_id="pos_1"))
+    body = client.get("/api/broker/positions").json()
+    assert body["ok"] is True
+    assert len(body["positions"]) == 1
+    pos = body["positions"][0]
+    assert pos["symbol"] == "MES1!"
+    assert pos["quantity"] == 1
+    assert pos["side"] == "long"
+
+
+def test_api_broker_positions_topstep_safe(make_app):
+    from fastapi.testclient import TestClient
+    app = make_app(provider="topstep")
+    with TestClient(app) as c:
+        r = c.get("/api/broker/positions")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["not_implemented"] is True
+    assert body["positions"] == []
+
+
+def test_api_broker_positions_tradovate_safe(make_app):
+    from fastapi.testclient import TestClient
+    app = make_app(provider="tradovate")
+    with TestClient(app) as c:
+        body = c.get("/api/broker/positions").json()
+    assert body["not_implemented"] is True
+    assert body["positions"] == []
+
+
+# ---------- /api/broker/orders ----------
+
+
+def test_api_broker_orders_paper_empty(client):
+    body = client.get("/api/broker/orders").json()
+    assert body["ok"] is True
+    assert body["provider"] == "paper"
+    assert body["orders"] == []
+
+
+def test_api_broker_orders_paper_reflects_fill(client):
+    client.post("/webhooks/tradingview", json=make_alert(order_id="ord_1"))
+    body = client.get("/api/broker/orders").json()
+    assert body["ok"] is True
+    assert len(body["orders"]) >= 1
+    assert body["orders"][0]["order_id"] == "ord_1"
+    assert body["orders"][0]["symbol"] == "MES1!"
+    assert body["orders"][0]["decision"] == "accepted"
+
+
+def test_api_broker_orders_topstep_safe(make_app):
+    from fastapi.testclient import TestClient
+    app = make_app(provider="topstep")
+    with TestClient(app) as c:
+        body = c.get("/api/broker/orders").json()
+    assert body["not_implemented"] is True
+    assert body["orders"] == []
+
+
+def test_api_broker_orders_tradovate_safe(make_app):
+    from fastapi.testclient import TestClient
+    app = make_app(provider="tradovate")
+    with TestClient(app) as c:
+        body = c.get("/api/broker/orders").json()
+    assert body["not_implemented"] is True
+    assert body["orders"] == []
+
+
 # ---------- price-required behavior (already covered in test_webhook) ----------
 
 def test_invalid_price_rejected(client):

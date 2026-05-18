@@ -223,6 +223,38 @@ def test_api_status_reflects_updated_broker_provider(client):
     assert body["execution_mode"] == "demo"
 
 
+def test_post_settings_broker_saves_selected_account_id(client):
+    r = client.post(
+        "/settings/broker",
+        data={
+            "broker_provider": "paper",
+            "execution_mode": "paper",
+            "selected_account_id": "PAPER-CUSTOM-9",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert client.app.state.settings.selected_account_id == "PAPER-CUSTOM-9"
+    body = client.get("/api/status").json()
+    assert body["selected_account_id"] == "PAPER-CUSTOM-9"
+
+
+def test_post_settings_broker_blank_account_falls_back_to_default(client):
+    r = client.post(
+        "/settings/broker",
+        data={
+            "broker_provider": "paper",
+            "execution_mode": "paper",
+            "selected_account_id": "",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    body = client.get("/api/status").json()
+    # Empty → resolves to per-provider default.
+    assert body["selected_account_id"] == "PAPER-001"
+
+
 # ---------- POST /tradingview/secret ----------
 
 

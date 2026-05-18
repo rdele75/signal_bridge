@@ -25,6 +25,7 @@ MANAGED_KEYS: tuple[str, ...] = (
     "APP_PORT",
     "EXECUTION_MODE",
     "BROKER_PROVIDER",
+    "SELECTED_ACCOUNT_ID",
     "TRADINGVIEW_WEBHOOK_SECRET",
     "ALLOWED_SYMBOLS",
     "MAX_CONTRACTS_PER_TRADE",
@@ -42,6 +43,7 @@ MANAGED_KEYS: tuple[str, ...] = (
 RUNTIME_APPLICABLE: frozenset[str] = frozenset(
     {
         "EXECUTION_MODE",
+        "SELECTED_ACCOUNT_ID",
         "TRADINGVIEW_WEBHOOK_SECRET",
         "ALLOWED_SYMBOLS",
         "MAX_CONTRACTS_PER_TRADE",
@@ -176,6 +178,15 @@ def coerce(key: str, raw: Any) -> Any:
             )
         return text
 
+    if key == "SELECTED_ACCOUNT_ID":
+        text = (str(raw) if raw is not None else "").strip()
+        # Empty is allowed — means "use the per-provider default".
+        if len(text) > 128:
+            raise SettingsValidationError(
+                "SELECTED_ACCOUNT_ID must be 128 characters or fewer"
+            )
+        return text
+
     if key == "TRADINGVIEW_WEBHOOK_SECRET":
         text = str(raw or "")
         if len(text) < 8:
@@ -216,6 +227,7 @@ _KEY_TO_ATTR: dict[str, str] = {
     "APP_PORT": "app_port",
     "EXECUTION_MODE": "execution_mode",
     "BROKER_PROVIDER": "broker_provider",
+    "SELECTED_ACCOUNT_ID": "selected_account_id",
     "TRADINGVIEW_WEBHOOK_SECRET": "webhook_secret",
     "ALLOWED_SYMBOLS": "allowed_symbols",
     "MAX_CONTRACTS_PER_TRADE": "max_contracts_per_trade",

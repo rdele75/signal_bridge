@@ -129,6 +129,12 @@ class Settings(BaseModel):
     )
     tradovate_env: str = Field(default_factory=lambda: os.getenv("TRADOVATE_ENV", "demo"))
 
+    # Currently selected trading account. Persisted alongside the broker
+    # provider. Empty string means "use the per-provider default".
+    selected_account_id: str = Field(
+        default_factory=lambda: os.getenv("SELECTED_ACCOUNT_ID", "")
+    )
+
     # Optional symbol-mapping file (provider-aware mappings). Resolved
     # relative to the project root if not absolute.
     symbols_map_path: str = Field(
@@ -145,6 +151,23 @@ class Settings(BaseModel):
         """The provider to actually use. Prefers BROKER_PROVIDER, falls back
         to BROKER (legacy), defaults to 'paper'."""
         return (self.broker_provider or self.broker or "paper").lower()
+
+    @property
+    def resolved_account_id(self) -> str:
+        """The selected account id for the active provider.
+
+        Prefers SELECTED_ACCOUNT_ID. Otherwise falls back to the
+        per-provider account id (TOPSTEP_ACCOUNT_ID / TRADOVATE_ACCOUNT_ID)
+        or the paper default 'PAPER-001'.
+        """
+        if self.selected_account_id:
+            return self.selected_account_id
+        provider = self.resolved_provider
+        if provider == "topstep":
+            return self.topstep_account_id or ""
+        if provider == "tradovate":
+            return self.tradovate_account_id or ""
+        return "PAPER-001"
 
     @property
     def symbols_map_abs_path(self) -> Path:

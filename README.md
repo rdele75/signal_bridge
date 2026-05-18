@@ -2,7 +2,15 @@
 
 **SignalBridge** is a private, local trading dashboard and webhook bridge.
 
-It runs on your own machine, exposes a small web UI you open in a browser, accepts TradingView alerts at a webhook endpoint, applies your risk rules, and executes them through a broker adapter. Today the only functional adapter is **paper trading**; **Topstep / TopstepX** and **Tradovate** are stubbed out for the future.
+It runs on your own machine, exposes a small web UI you open in a browser, accepts TradingView alerts at a webhook endpoint, applies your risk rules, and executes them through a broker adapter.
+
+**Broker status today:**
+
+- **Paper** — fully functional. Simulates fills, tracks positions, and computes realized PnL in price-points. Default account id is `PAPER-001` (configurable via `SELECTED_ACCOUNT_ID`).
+- **Topstep / TopstepX** — adapter is scaffolded but **not connected** to a real API yet. `execute()` rejects with `broker_not_implemented`; the read-only methods (`get_accounts`, `get_positions`, `get_orders`, …) return a structured `not_implemented` envelope so the dashboard never crashes.
+- **Tradovate** — same: scaffolded placeholder, not connected.
+- Broker credentials are **env-only** (`TOPSTEP_*` / `TRADOVATE_*` in `.env`). The dashboard never echoes them back; it only shows whether each one is configured.
+- **No live orders are placed by this build.**
 
 > Not SaaS. Not multi-user. Not packaged for distribution. Not live yet.
 
@@ -103,9 +111,10 @@ back to its `.env` default means editing the `settings` row in SQLite (or
 deleting it and restarting).
 
 Dashboard-editable keys: `APP_HOST`, `APP_PORT`, `EXECUTION_MODE`,
-`BROKER_PROVIDER`, `TRADINGVIEW_WEBHOOK_SECRET`, `ALLOWED_SYMBOLS`,
-`MAX_CONTRACTS_PER_TRADE`, `MAX_DAILY_LOSS`, `MAX_OPEN_POSITIONS`,
-`ENABLE_LONGS`, `ENABLE_SHORTS`, `DUPLICATE_ORDER_COOLDOWN_SECONDS`.
+`BROKER_PROVIDER`, `SELECTED_ACCOUNT_ID`, `TRADINGVIEW_WEBHOOK_SECRET`,
+`ALLOWED_SYMBOLS`, `MAX_CONTRACTS_PER_TRADE`, `MAX_DAILY_LOSS`,
+`MAX_OPEN_POSITIONS`, `ENABLE_LONGS`, `ENABLE_SHORTS`,
+`DUPLICATE_ORDER_COOLDOWN_SECONDS`.
 
 Runtime-applied immediately: webhook secret, execution mode, all risk
 limits, allow-list, longs/shorts toggles, duplicate cooldown.
@@ -171,17 +180,21 @@ To make `127.0.0.1` reachable from TradingView's servers, expose it with **ngrok
 | --- | --- |
 | `GET  /health`                        | liveness probe |
 | `GET  /status`                        | top-level status (same shape as `/api/status`) |
-| `GET  /api/status`                    | app + broker + open positions |
+| `GET  /api/status`                    | app + broker + open positions + `selected_account_id`, `broker_connected`, `broker_message` |
 | `GET  /api/metrics`                   | accepted/rejected counts, rejection reasons, by-symbol, win rate |
 | `GET  /api/journal/recent?limit=50`   | recent signals + closed trades |
 | `GET  /api/positions`                 | open positions only |
 | `POST /api/kill-switch/enable`        | activate the kill switch (halts execution) |
 | `POST /api/kill-switch/disable`       | deactivate the kill switch |
+| `GET  /api/broker/status`             | active provider, selected account, connection status |
 | `POST /api/broker/test-connection`    | probe the active broker adapter |
+| `GET  /api/broker/accounts`           | accounts visible to the active adapter |
+| `GET  /api/broker/positions`          | open positions from the active adapter |
+| `GET  /api/broker/orders`             | recent orders from the active adapter |
 | `GET  /api/system`                    | host/port, paths, runtime status, useful local URLs |
 | `POST /webhooks/tradingview`          | the inbound alert endpoint |
 
-`POST /api/broker/test-connection` returns `200` with `ok: true` for paper and `501` with `ok: false` and `status: "not_implemented"` for topstep / tradovate.
+`POST /api/broker/test-connection` returns `200` with `ok: true` for paper and `501` with `ok: false` and `status: "not_implemented"` for topstep / tradovate. The `GET /api/broker/*` query endpoints always return `200` with a JSON envelope — when the active provider hasn't implemented an operation, the envelope includes `"not_implemented": true` so the dashboard can render safely.
 
 ---
 
@@ -219,8 +232,9 @@ sqlite3 data/signalbridge.db \
 
 ## Safety notes
 
-- Live execution is **not** implemented. Topstep + Tradovate adapters raise `NotImplementedError` on `execute()`.
+- Live execution is **not** implemented. Topstep + Tradovate adapters raise `NotImplementedError` on `execute()`, and every read-only method (`get_accounts`, `get_positions`, `get_orders`, …) returns `not_implemented: true` instead of hitting a real API.
 - Paper mode is the default and cannot place real orders.
+- Broker credentials live in `.env` only. The UI never echoes raw values back; it only reports whether each one is configured.
 - The kill switch is on by default — create `data/kill_switch.active` (or click the button on `/settings/risk`) to halt all execution. Delete the file (or click again) to resume.
 - The webhook secret is the only authentication. Use a long random string and never commit it.
 - This is a single-user local app. There is no auth in front of the dashboard — bind to `127.0.0.1` and don't expose the dashboard port publicly.

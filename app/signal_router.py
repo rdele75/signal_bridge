@@ -18,14 +18,17 @@ def build_broker(settings: Settings, journal: Journal) -> BrokerBase:
     provider = settings.resolved_provider
 
     if provider == "paper":
-        return PaperBroker(journal=journal)
+        return PaperBroker(
+            journal=journal,
+            account_id=settings.resolved_account_id or "PAPER-001",
+        )
 
     if provider == "topstep":
         return TopstepBroker(
             username=settings.topstep_username,
             password=settings.topstep_password,
             api_key=settings.topstep_api_key,
-            account_id=settings.topstep_account_id,
+            account_id=settings.resolved_account_id or settings.topstep_account_id,
             env=settings.topstep_env,
         )
 
@@ -37,9 +40,12 @@ def build_broker(settings: Settings, journal: Journal) -> BrokerBase:
             app_version=settings.tradovate_app_version,
             cid=settings.tradovate_cid,
             sec=settings.tradovate_sec,
-            account_id=settings.tradovate_account_id,
+            account_id=settings.resolved_account_id or settings.tradovate_account_id,
             env=settings.tradovate_env,
         )
 
     # Unknown provider — fall back to paper rather than failing closed.
-    return PaperBroker(journal=journal)
+    return PaperBroker(
+        journal=journal,
+        account_id=settings.resolved_account_id or "PAPER-001",
+    )
