@@ -30,7 +30,25 @@
   </div>
 </section>
 
-<section class="grid grid-3 section">
+<section class="grid grid-4 section">
+  <div class="card">
+    <div class="card-label">Timeframe lock</div>
+    <div class="card-value">
+      {% if risk.enable_timeframe_lock %}
+        <span class="badge badge-good plain">enabled</span>
+      {% else %}
+        <span class="badge badge-warn plain">disabled</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">
+      allowed:
+      {% if risk.allowed_timeframes %}
+        <code>{{ risk.allowed_timeframes_csv }}</code>
+      {% else %}
+        <span class="muted">(none)</span>
+      {% endif %}
+    </div>
+  </div>
   <div class="card">
     <div class="card-label">Longs</div>
     <div class="card-value">
@@ -116,6 +134,22 @@
                {% if risk.enable_shorts %}checked{% endif %}>
         Enable shorts
       </label>
+      <label>
+        <input type="checkbox" name="enable_timeframe_lock" value="true"
+               {% if risk.enable_timeframe_lock %}checked{% endif %}>
+        Enable timeframe lock
+      </label>
+    </div>
+    <div class="form-row">
+      <label for="allowed_timeframes">Allowed timeframes</label>
+      <input type="text" id="allowed_timeframes" name="allowed_timeframes"
+             value="{{ risk.allowed_timeframes_csv }}"
+             placeholder="1,5,15">
+      <p class="muted" style="margin: 4px 0 0;">
+        Comma-separated. Example: <code>1</code> for 1-minute,
+        <code>5</code> for 5-minute, <code>15</code> for 15-minute,
+        <code>60</code> for 1-hour, <code>D</code> for daily.
+      </p>
     </div>
     <div class="btn-row">
       <button type="submit" class="btn btn-primary">Save risk settings</button>

@@ -382,6 +382,9 @@ def create_app() -> FastAPI:
             "enable_kill_switch": settings.enable_kill_switch,
             "allowed_symbols": list(settings.allowed_symbols),
             "allowed_symbols_csv": ", ".join(settings.allowed_symbols),
+            "enable_timeframe_lock": settings.enable_timeframe_lock,
+            "allowed_timeframes": list(settings.allowed_timeframes),
+            "allowed_timeframes_csv": ",".join(settings.allowed_timeframes),
         }
         return templates.TemplateResponse(request, "settings_risk.html", ctx)
 
@@ -394,6 +397,8 @@ def create_app() -> FastAPI:
         duplicate_order_cooldown_seconds: str = Form(...),
         enable_longs: str = Form("false"),
         enable_shorts: str = Form("false"),
+        enable_timeframe_lock: str = Form("false"),
+        allowed_timeframes: str = Form(""),
     ):
         updates = {
             "ALLOWED_SYMBOLS": allowed_symbols,
@@ -403,6 +408,8 @@ def create_app() -> FastAPI:
             "DUPLICATE_ORDER_COOLDOWN_SECONDS": duplicate_order_cooldown_seconds,
             "ENABLE_LONGS": enable_longs,
             "ENABLE_SHORTS": enable_shorts,
+            "ENABLE_TIMEFRAME_LOCK": enable_timeframe_lock,
+            "ALLOWED_TIMEFRAMES": allowed_timeframes,
         }
         try:
             coerced = {
@@ -441,6 +448,7 @@ def create_app() -> FastAPI:
                 "market_position": "{{strategy.market_position}}",
                 "order_id": "{{strategy.order.id}}",
                 "comment": "{{strategy.order.comment}}",
+                "timeframe": "{{interval}}",
                 "bar_time": "{{time}}",
                 "fire_time": "{{timenow}}",
             },

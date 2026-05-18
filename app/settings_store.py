@@ -34,6 +34,8 @@ MANAGED_KEYS: tuple[str, ...] = (
     "ENABLE_LONGS",
     "ENABLE_SHORTS",
     "DUPLICATE_ORDER_COOLDOWN_SECONDS",
+    "ENABLE_TIMEFRAME_LOCK",
+    "ALLOWED_TIMEFRAMES",
 )
 
 # Keys whose change can be applied to the in-memory Settings instance
@@ -52,6 +54,8 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "ENABLE_LONGS",
         "ENABLE_SHORTS",
         "DUPLICATE_ORDER_COOLDOWN_SECONDS",
+        "ENABLE_TIMEFRAME_LOCK",
+        "ALLOWED_TIMEFRAMES",
     }
 )
 
@@ -132,6 +136,30 @@ def serialize_symbols(symbols: list[str]) -> str:
     return ",".join(s.strip() for s in symbols if s and str(s).strip())
 
 
+def parse_timeframes(raw: Any) -> list[str]:
+    """Parse a user-supplied list of timeframes ("1,5,15" / [1, "5"]) into
+    normalized string entries. Invalid entries are dropped silently — the
+    risk engine treats an empty allow-list as 'lock has nothing to match'
+    and rejects, which is the safe direction. An empty input yields []."""
+    from .risk_engine import normalize_timeframe  # local: avoid cycle
+
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        items = [item.strip() for item in str(raw).split(",")]
+    out: list[str] = []
+    for item in items:
+        normalized = normalize_timeframe(item)
+        if normalized is None or normalized == "":
+            continue
+        if normalized in out:
+            continue
+        out.append(normalized)
+    return out
+
+
 def serialize(key: str, value: Any) -> str:
     """Turn a typed Settings value into the string we store in SQLite."""
     if value is None:
@@ -207,8 +235,11 @@ def coerce(key: str, raw: Any) -> Any:
     if key == "DUPLICATE_ORDER_COOLDOWN_SECONDS":
         return parse_int(raw, min_value=0)
 
-    if key in {"ENABLE_LONGS", "ENABLE_SHORTS"}:
+    if key in {"ENABLE_LONGS", "ENABLE_SHORTS", "ENABLE_TIMEFRAME_LOCK"}:
         return parse_bool(raw)
+
+    if key == "ALLOWED_TIMEFRAMES":
+        return parse_timeframes(raw)
 
     raise SettingsValidationError(f"unknown setting: {key}")
 
@@ -236,6 +267,8 @@ _KEY_TO_ATTR: dict[str, str] = {
     "ENABLE_LONGS": "enable_longs",
     "ENABLE_SHORTS": "enable_shorts",
     "DUPLICATE_ORDER_COOLDOWN_SECONDS": "duplicate_order_cooldown_seconds",
+    "ENABLE_TIMEFRAME_LOCK": "enable_timeframe_lock",
+    "ALLOWED_TIMEFRAMES": "allowed_timeframes",
 }
 
 

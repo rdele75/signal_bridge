@@ -38,6 +38,10 @@ class TradingViewAlert(BaseModel):
     comment: Optional[str] = None
     bar_time: Optional[str] = None
     fire_time: Optional[str] = None
+    # TradingView's {{interval}} placeholder. Arrives as a string for
+    # numeric intervals ("1", "5", "60") and letter codes ("D", "W") but
+    # hand-rolled clients may send a raw int.
+    timeframe: Optional[NumberLike] = None
 
     @field_validator("contracts", "price", "position_size", mode="before")
     @classmethod
@@ -61,6 +65,21 @@ class TradingViewAlert(BaseModel):
             f"expected number or numeric string, got {type(v).__name__}"
         )
 
+    @field_validator("timeframe", mode="before")
+    @classmethod
+    def _validate_timeframe(cls, v: Any) -> Any:
+        # Allow numeric ("1"), letter codes ("D"), and minute-suffixed
+        # forms ("5m"). Normalization happens later in the risk engine.
+        if v is None or v == "":
+            return None
+        if isinstance(v, bool):
+            raise ValueError("timeframe cannot be a bool")
+        if isinstance(v, (int, float, str)):
+            return v
+        raise ValueError(
+            f"expected number or string for timeframe, got {type(v).__name__}"
+        )
+
 
 # ---------- Internal normalized signal ----------
 
@@ -75,6 +94,9 @@ class NormalizedSignal(BaseModel):
     price: Optional[float] = None
     order_id: Optional[str] = None
     comment: Optional[str] = None
+    # Normalized timeframe value (e.g. "1", "5", "60", "D"). None when the
+    # alert didn't include one.
+    timeframe: Optional[str] = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 

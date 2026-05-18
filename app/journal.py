@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS signals (
     broker_provider TEXT,
     broker_symbol TEXT,
     order_id TEXT,
+    timeframe TEXT,
     raw_payload TEXT,
     decision TEXT,
     rejection_reason TEXT,
@@ -92,6 +93,7 @@ class Journal:
             for col, ddl in (
                 ("broker_provider", "ALTER TABLE signals ADD COLUMN broker_provider TEXT"),
                 ("broker_symbol", "ALTER TABLE signals ADD COLUMN broker_symbol TEXT"),
+                ("timeframe", "ALTER TABLE signals ADD COLUMN timeframe TEXT"),
             ):
                 if col not in existing:
                     conn.execute(ddl)
@@ -115,15 +117,17 @@ class Journal:
         execution_result: Optional[dict[str, Any]] = None,
         broker_provider: Optional[str] = None,
         broker_symbol: Optional[str] = None,
+        timeframe: Optional[str] = None,
     ) -> int:
         with self._lock, self._conn() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO signals (
                     received_at, source, strategy, symbol, action, contracts,
-                    price, broker_provider, broker_symbol, order_id, raw_payload,
-                    decision, rejection_reason, execution_mode, execution_result
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    price, broker_provider, broker_symbol, order_id, timeframe,
+                    raw_payload, decision, rejection_reason, execution_mode,
+                    execution_result
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _utcnow_iso(),
@@ -136,6 +140,7 @@ class Journal:
                     broker_provider,
                     broker_symbol,
                     order_id,
+                    timeframe,
                     json.dumps(raw_payload, default=str),
                     decision,
                     rejection_reason,
@@ -314,7 +319,7 @@ class Journal:
                 """
                 SELECT id, received_at, source, strategy, symbol, broker_symbol,
                        action, contracts, price, broker_provider, order_id,
-                       decision, rejection_reason, execution_mode
+                       timeframe, decision, rejection_reason, execution_mode
                 FROM signals
                 ORDER BY id DESC
                 LIMIT ?

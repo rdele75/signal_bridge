@@ -11,6 +11,7 @@ from .journal import Journal
 from .risk_engine import (
     RiskEngine,
     normalize_action,
+    normalize_timeframe,
     parse_float,
     parse_int,
 )
@@ -113,6 +114,7 @@ class WebhookHandler:
             price=price,
             order_id=alert.order_id,
             comment=alert.comment,
+            timeframe=normalize_timeframe(alert.timeframe),
             raw=raw_payload,
         )
 
@@ -134,6 +136,7 @@ class WebhookHandler:
                 execution_result=None,
                 broker_provider=self.broker.provider,
                 broker_symbol=signal.broker_symbol,
+                timeframe=signal.timeframe,
             )
             log.info(
                 "REJECTED symbol=%s action=%s reason=%s",
@@ -180,6 +183,7 @@ class WebhookHandler:
                 execution_result=result.model_dump(),
                 broker_provider=self.broker.provider,
                 broker_symbol=signal.broker_symbol,
+                timeframe=signal.timeframe,
             )
             log.info(
                 "BROKER_REJECTED symbol=%s action=%s reason=%s",
@@ -209,6 +213,7 @@ class WebhookHandler:
             execution_result=result.model_dump(),
             broker_provider=self.broker.provider,
             broker_symbol=signal.broker_symbol,
+            timeframe=signal.timeframe,
         )
         log.info(
             "ACCEPTED symbol=%s action=%s contracts=%s price=%s",
@@ -235,6 +240,7 @@ class WebhookHandler:
         symbol: str | None = None,
         broker_symbol: str | None = None,
     ) -> None:
+        tf_raw = raw.get("timeframe") if isinstance(raw, dict) else None
         self.journal.record_signal(
             source=raw.get("source") if isinstance(raw, dict) else None,
             strategy=raw.get("strategy") if isinstance(raw, dict) else None,
@@ -250,5 +256,6 @@ class WebhookHandler:
             execution_result=None,
             broker_provider=self.broker.provider,
             broker_symbol=broker_symbol,
+            timeframe=normalize_timeframe(tf_raw),
         )
         log.info("REJECTED reason=%s", reason)

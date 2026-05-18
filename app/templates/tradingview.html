@@ -96,6 +96,13 @@
     <span class="copy-hint">json</span>
     <pre class="code">{{ alert_template }}</pre>
   </div>
+  <p class="muted" style="margin: 8px 0 0;">
+    <strong>Note:</strong> For strategy / indicator alerts, <code>{{ '{{interval}}' }}</code>
+    sends the chart timeframe (e.g. <code>1</code>, <code>5</code>, <code>60</code>,
+    <code>D</code>). TradingView may return <code>1</code> for some price-only or
+    Range chart alerts — keep that in mind if you enable the timeframe lock on the
+    <a href="/settings/risk">Risk page</a>.
+  </p>
 </section>
 
 <section class="card section">
@@ -139,6 +146,7 @@
           <tr><td><code>contracts</code></td><td>no</td><td>defaults to 1</td></tr>
           <tr><td><code>price</code></td><td>yes (paper)</td><td>paper requires it for fill</td></tr>
           <tr><td><code>order_id</code></td><td>no</td><td>used for duplicate suppression</td></tr>
+          <tr><td><code>timeframe</code></td><td>no*</td><td><code>{{ '{{interval}}' }}</code> · *required when Risk → timeframe lock is on</td></tr>
         </tbody>
       </table>
     </div>

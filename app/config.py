@@ -146,6 +146,14 @@ class Settings(BaseModel):
         default_factory=lambda: _int("DUPLICATE_ORDER_COOLDOWN_SECONDS", 60)
     )
 
+    # Reject signals whose chart timeframe isn't in the allowlist.
+    enable_timeframe_lock: bool = Field(
+        default_factory=lambda: _bool("ENABLE_TIMEFRAME_LOCK", False)
+    )
+    allowed_timeframes: List[str] = Field(
+        default_factory=lambda: _csv("ALLOWED_TIMEFRAMES", ["1"])
+    )
+
     @property
     def resolved_provider(self) -> str:
         """The provider to actually use. Prefers BROKER_PROVIDER, falls back

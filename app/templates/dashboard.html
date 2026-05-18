@@ -133,7 +133,17 @@
     {% else %}
       <div class="muted">none configured</div>
     {% endif %}
-    <div class="card-sub"><a href="/settings/risk">edit allowlist</a></div>
+    <div class="card-sub">
+      timeframe lock:
+      {% if timeframe_lock_enabled %}
+        <span class="badge badge-good">enabled</span>
+        <span class="muted">·</span>
+        <code>{{ allowed_timeframes_csv or '(none)' }}</code>
+      {% else %}
+        <span class="badge badge-warn">disabled</span>
+      {% endif %}
+      · <a href="/settings/risk">edit</a>
+    </div>
   </div>
 
   <div class="card">
