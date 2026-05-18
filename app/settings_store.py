@@ -36,6 +36,14 @@ MANAGED_KEYS: tuple[str, ...] = (
     "DUPLICATE_ORDER_COOLDOWN_SECONDS",
     "ENABLE_TIMEFRAME_LOCK",
     "ALLOWED_TIMEFRAMES",
+    # Topstep / TopstepX (ProjectX) — scaffolded adapter, persisted so the
+    # dashboard can configure credentials ahead of the real auth phase.
+    "TOPSTEP_USERNAME",
+    "TOPSTEP_API_KEY",
+    "TOPSTEP_ACCOUNT_ID",
+    "TOPSTEP_ENV",
+    "TOPSTEP_BASE_URL",
+    "TOPSTEP_WS_URL",
 )
 
 # Keys whose change can be applied to the in-memory Settings instance
@@ -56,6 +64,16 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "DUPLICATE_ORDER_COOLDOWN_SECONDS",
         "ENABLE_TIMEFRAME_LOCK",
         "ALLOWED_TIMEFRAMES",
+        # Topstep credentials are read by the adapter on each call, so
+        # changes don't need a restart to take effect on the next test
+        # connection / API call. The active broker instance still needs
+        # a restart if BROKER_PROVIDER changes.
+        "TOPSTEP_USERNAME",
+        "TOPSTEP_API_KEY",
+        "TOPSTEP_ACCOUNT_ID",
+        "TOPSTEP_ENV",
+        "TOPSTEP_BASE_URL",
+        "TOPSTEP_WS_URL",
     }
 )
 
@@ -69,6 +87,7 @@ _FALSE_STRINGS = {"0", "false", "no", "off"}
 
 ALLOWED_PROVIDERS: tuple[str, ...] = ("paper", "topstep", "tradovate")
 ALLOWED_EXECUTION_MODES: tuple[str, ...] = ("paper", "demo", "live")
+ALLOWED_TOPSTEP_ENVS: tuple[str, ...] = ("demo", "live")
 
 
 class SettingsValidationError(ValueError):
@@ -241,6 +260,43 @@ def coerce(key: str, raw: Any) -> Any:
     if key == "ALLOWED_TIMEFRAMES":
         return parse_timeframes(raw)
 
+    # ---- Topstep / TopstepX (ProjectX) ----
+    if key in {"TOPSTEP_USERNAME", "TOPSTEP_ACCOUNT_ID"}:
+        text = (str(raw) if raw is not None else "").strip()
+        if len(text) > 256:
+            raise SettingsValidationError(f"{key} must be 256 characters or fewer")
+        return text
+
+    if key == "TOPSTEP_API_KEY":
+        # Allow empty (cleared) or any non-empty secret string. We do not
+        # impose a strict format because ProjectX issues opaque keys.
+        text = str(raw) if raw is not None else ""
+        if len(text) > 1024:
+            raise SettingsValidationError("TOPSTEP_API_KEY is unexpectedly long")
+        return text
+
+    if key == "TOPSTEP_ENV":
+        text = (str(raw) if raw is not None else "").strip().lower() or "demo"
+        if text not in ALLOWED_TOPSTEP_ENVS:
+            raise SettingsValidationError(
+                f"TOPSTEP_ENV must be one of {ALLOWED_TOPSTEP_ENVS}"
+            )
+        if text == "live":
+            raise SettingsValidationError(
+                "TOPSTEP_ENV=live is not allowed yet — pick demo"
+            )
+        return text
+
+    if key in {"TOPSTEP_BASE_URL", "TOPSTEP_WS_URL"}:
+        text = (str(raw) if raw is not None else "").strip()
+        if text and not (text.startswith("http://") or text.startswith("https://")):
+            raise SettingsValidationError(
+                f"{key} must be a http(s) URL"
+            )
+        if len(text) > 512:
+            raise SettingsValidationError(f"{key} is too long")
+        return text
+
     raise SettingsValidationError(f"unknown setting: {key}")
 
 
@@ -269,6 +325,12 @@ _KEY_TO_ATTR: dict[str, str] = {
     "DUPLICATE_ORDER_COOLDOWN_SECONDS": "duplicate_order_cooldown_seconds",
     "ENABLE_TIMEFRAME_LOCK": "enable_timeframe_lock",
     "ALLOWED_TIMEFRAMES": "allowed_timeframes",
+    "TOPSTEP_USERNAME": "topstep_username",
+    "TOPSTEP_API_KEY": "topstep_api_key",
+    "TOPSTEP_ACCOUNT_ID": "topstep_account_id",
+    "TOPSTEP_ENV": "topstep_env",
+    "TOPSTEP_BASE_URL": "topstep_base_url",
+    "TOPSTEP_WS_URL": "topstep_ws_url",
 }
 
 

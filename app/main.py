@@ -288,6 +288,27 @@ def create_app() -> FastAPI:
             }
         return result if isinstance(result, dict) else {"ok": True, "result": result}
 
+    def _test_connection_status_code(result: dict[str, Any]) -> int:
+        """Pick the HTTP status code for /api/broker/test-connection.
+
+        Documented adapter states (ok / missing_credentials /
+        scaffolded_not_connected / not_implemented) return 200 — the
+        envelope itself carries the detail. Anything else is treated as
+        an internal error.
+        """
+        if result.get("ok"):
+            return 200
+        status_value = (result.get("status") or "").lower()
+        documented = {
+            "ok",
+            "missing_credentials",
+            "scaffolded_not_connected",
+            "not_implemented",
+        }
+        if status_value in documented or result.get("not_implemented"):
+            return 200
+        return 500
+
     @app.get(
         "/api/broker/status", dependencies=[Depends(require_admin_api)]
     )
@@ -300,7 +321,7 @@ def create_app() -> FastAPI:
     )
     def api_broker_test() -> JSONResponse:
         result = _safe_broker_call("test_connection")
-        status_code = 200 if result.get("ok") else 501
+        status_code = _test_connection_status_code(result)
         return JSONResponse(content=result, status_code=status_code)
 
     @app.get(
@@ -417,15 +438,28 @@ def create_app() -> FastAPI:
         configured = settings.resolved_provider
         broker_snapshot = broker_status_payload(settings=settings, broker=broker)
         accounts = _safe_broker_call("get_accounts")
+        api_key = settings.topstep_api_key or ""
+        api_key_preview = (
+            f"…{api_key[-4:]}" if len(api_key) >= 4 else ""
+        )
         ctx.update(
             {
                 "topstep": {
+                    "username": settings.topstep_username or "",
                     "username_set": bool(settings.topstep_username),
                     "username_preview": _mask_identifier(settings.topstep_username),
                     "password_set": bool(settings.topstep_password),
-                    "api_key_set": bool(settings.topstep_api_key),
+                    "api_key_set": bool(api_key),
+                    "api_key_preview": api_key_preview or (
+                        "configured" if api_key else ""
+                    ),
                     "account_id": settings.topstep_account_id,
                     "env": settings.topstep_env,
+                    "base_url": settings.topstep_base_url,
+                    "ws_url": settings.topstep_ws_url,
+                    "env_options": ["demo"],
+                    "token_cached": bool(settings.topstep_token),
+                    "token_expires_at": settings.topstep_token_expires_at or "",
                 },
                 "tradovate": {
                     "username_set": bool(settings.tradovate_username),
@@ -451,6 +485,8 @@ def create_app() -> FastAPI:
         )
         return templates.TemplateResponse(request, "settings_broker.html", ctx)
 
+    _TOPSTEP_API_KEY_UNCHANGED = "__topstep_api_key_unchanged__"
+
     @app.post(
         "/settings/broker",
         dependencies=[Depends(require_admin_page)],
@@ -459,31 +495,42 @@ def create_app() -> FastAPI:
         broker_provider: str = Form(...),
         execution_mode: str = Form(...),
         selected_account_id: str = Form(""),
+        topstep_username: str = Form(""),
+        topstep_api_key: str = Form(_TOPSTEP_API_KEY_UNCHANGED),
+        topstep_account_id: str = Form(""),
+        topstep_env: str = Form("demo"),
+        topstep_base_url: str = Form("https://api.topstepx.com"),
+        topstep_ws_url: str = Form("https://rtc.topstepx.com"),
     ):
+        # Build the update list dynamically so the API key is only touched
+        # when the user actually changed it (blank-on-purpose still clears
+        # it via the sentinel).
+        updates: list[tuple[str, Any]] = [
+            ("BROKER_PROVIDER", broker_provider),
+            ("EXECUTION_MODE", execution_mode),
+            ("SELECTED_ACCOUNT_ID", selected_account_id),
+            ("TOPSTEP_USERNAME", topstep_username),
+            ("TOPSTEP_ACCOUNT_ID", topstep_account_id),
+            ("TOPSTEP_ENV", topstep_env),
+            ("TOPSTEP_BASE_URL", topstep_base_url),
+            ("TOPSTEP_WS_URL", topstep_ws_url),
+        ]
+        if topstep_api_key != _TOPSTEP_API_KEY_UNCHANGED:
+            updates.append(("TOPSTEP_API_KEY", topstep_api_key))
+
         try:
-            new_provider = settings_store.update_typed(
-                "BROKER_PROVIDER", broker_provider
-            )
-            new_mode = settings_store.update_typed(
-                "EXECUTION_MODE", execution_mode
-            )
-            new_account = settings_store.update_typed(
-                "SELECTED_ACCOUNT_ID", selected_account_id
-            )
+            coerced: dict[str, Any] = {
+                key: settings_store.update_typed(key, value)
+                for key, value in updates
+            }
         except SettingsValidationError as exc:
             return _flash_redirect("/settings/broker", str(exc), kind="error")
 
-        settings_store.apply_to_settings(
-            settings, "BROKER_PROVIDER", new_provider
-        )
-        settings_store.apply_to_settings(
-            settings, "EXECUTION_MODE", new_mode
-        )
-        settings_store.apply_to_settings(
-            settings, "SELECTED_ACCOUNT_ID", new_account
-        )
+        for key, value in coerced.items():
+            settings_store.apply_to_settings(settings, key, value)
+
         msg = "Broker settings saved."
-        if new_provider != broker.provider:
+        if coerced["BROKER_PROVIDER"] != broker.provider:
             msg += " Restart required to switch the active adapter."
         return _flash_redirect("/settings/broker", msg, kind="ok")
 

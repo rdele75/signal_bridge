@@ -109,6 +109,70 @@
         Empty → use the per-provider default (<code>PAPER-001</code>, <code>TOPSTEP_ACCOUNT_ID</code>, etc.).
       </p>
     </div>
+
+    <h3 style="margin-top: 18px;">Topstep / TopstepX (ProjectX)</h3>
+    <p class="muted" style="margin: 0 0 10px;">
+      Credentials for the future ProjectX adapter. The API key is never
+      echoed back — leave the field blank to keep the saved value.
+      Real auth/order routing is not implemented yet.
+    </p>
+    <div class="grid grid-2">
+      <div class="form-row">
+        <label for="topstep_username">TopstepX username</label>
+        <input id="topstep_username" name="topstep_username"
+               type="text" maxlength="256" autocomplete="off"
+               placeholder="your TopstepX username"
+               value="{{ topstep.username }}" />
+      </div>
+      <div class="form-row">
+        <label for="topstep_api_key">TopstepX API key</label>
+        <input id="topstep_api_key" name="topstep_api_key"
+               type="password" autocomplete="off"
+               placeholder="{{ 'leave blank to keep saved key (' + topstep.api_key_preview + ')' if topstep.api_key_set else 'paste your TopstepX API key' }}" />
+        <p class="muted" style="margin: 4px 0 0;">
+          {% if topstep.api_key_set %}
+            currently <code>{{ topstep.api_key_preview }}</code> · empty submit keeps it
+          {% else %}
+            not configured
+          {% endif %}
+        </p>
+      </div>
+    </div>
+    <div class="grid grid-2">
+      <div class="form-row">
+        <label for="topstep_account_id">TopstepX account ID</label>
+        <input id="topstep_account_id" name="topstep_account_id"
+               type="text" maxlength="256" autocomplete="off"
+               placeholder="e.g. PRACTICE-XXXX"
+               value="{{ topstep.account_id }}" />
+      </div>
+      <div class="form-row">
+        <label for="topstep_env">TopstepX environment</label>
+        <select id="topstep_env" name="topstep_env">
+          {% for e in topstep.env_options %}
+            <option value="{{ e }}" {% if e == topstep.env %}selected{% endif %}>{{ e }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted" style="margin: 4px 0 0;"><code>live</code> is intentionally disabled.</p>
+      </div>
+    </div>
+    <div class="grid grid-2">
+      <div class="form-row">
+        <label for="topstep_base_url">TopstepX base URL</label>
+        <input id="topstep_base_url" name="topstep_base_url"
+               type="text" maxlength="512" autocomplete="off"
+               placeholder="https://api.topstepx.com"
+               value="{{ topstep.base_url }}" />
+      </div>
+      <div class="form-row">
+        <label for="topstep_ws_url">TopstepX WebSocket URL</label>
+        <input id="topstep_ws_url" name="topstep_ws_url"
+               type="text" maxlength="512" autocomplete="off"
+               placeholder="https://rtc.topstepx.com"
+               value="{{ topstep.ws_url }}" />
+      </div>
+    </div>
+
     <div class="btn-row">
       <button type="submit" class="btn btn-primary">Save broker settings</button>
     </div>
@@ -197,16 +261,19 @@
   <div class="card">
     <div class="card-row">
       <h3>Topstep / TopstepX</h3>
-      <span class="badge badge-warn">placeholder</span>
+      <span class="badge badge-warn">scaffolded</span>
     </div>
-    <p class="muted">Primary futures broker. Adapter scaffolded — not connected yet.
-    Credentials still come from <code>.env</code>; the UI never displays the raw values.</p>
+    <p class="muted">Primary futures broker (ProjectX REST + WebSocket).
+    Adapter scaffolded — real auth and order routing are not implemented yet.
+    Save credentials above to prepare for the next phase.</p>
     <dl class="kv">
       <dt>TOPSTEP_ENV</dt><dd>{{ topstep.env or '—' }}</dd>
       <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username_preview or ('configured' if topstep.username_set else '—') }}</dd>
-      <dt>TOPSTEP_API_KEY</dt><dd>{{ 'configured' if topstep.api_key_set else '—' }}</dd>
-      <dt>TOPSTEP_PASSWORD</dt><dd>{{ 'configured' if topstep.password_set else '—' }}</dd>
+      <dt>TOPSTEP_API_KEY</dt><dd>{{ topstep.api_key_preview or ('configured' if topstep.api_key_set else '—') }}</dd>
       <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>
+      <dt>TOPSTEP_BASE_URL</dt><dd><code>{{ topstep.base_url or '—' }}</code></dd>
+      <dt>TOPSTEP_WS_URL</dt><dd><code>{{ topstep.ws_url or '—' }}</code></dd>
+      <dt>token cached</dt><dd>{{ 'yes' if topstep.token_cached else 'no' }}</dd>
     </dl>
   </div>
 

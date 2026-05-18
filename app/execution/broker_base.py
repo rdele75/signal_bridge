@@ -47,6 +47,19 @@ class BrokerBase(ABC):
         """
         return self._not_implemented("test_connection")
 
+    def authenticate(self) -> dict[str, Any]:
+        """Run the broker-specific login / token exchange.
+
+        Default returns "not implemented" so a placeholder adapter can be
+        polled safely. Real adapters override this to actually hit the
+        broker's auth endpoint and cache the resulting token.
+        """
+        return self._not_implemented("authenticate")
+
+    def refresh_token(self) -> dict[str, Any]:
+        """Refresh the cached auth token. Defaults to not implemented."""
+        return self._not_implemented("refresh_token")
+
     # ------------------------------------------------------------------
     # Account / position / order queries
     #

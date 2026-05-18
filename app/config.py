@@ -100,7 +100,11 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("LOG_LEVEL", "INFO").upper()
     )
 
-    # Topstep / TopstepX placeholders — not used until the adapter is implemented.
+    # Topstep / TopstepX — primary planned futures broker via ProjectX API.
+    # The adapter is scaffolded-only right now; real auth/order routing is
+    # not implemented. These values are accepted, persisted, and surfaced
+    # through the dashboard (masked) so the wiring is ready for the future
+    # authentication phase.
     topstep_username: str = Field(default_factory=lambda: os.getenv("TOPSTEP_USERNAME", ""))
     topstep_password: str = Field(default_factory=lambda: os.getenv("TOPSTEP_PASSWORD", ""))
     topstep_api_key: str = Field(default_factory=lambda: os.getenv("TOPSTEP_API_KEY", ""))
@@ -108,6 +112,18 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("TOPSTEP_ACCOUNT_ID", "")
     )
     topstep_env: str = Field(default_factory=lambda: os.getenv("TOPSTEP_ENV", "demo"))
+    topstep_base_url: str = Field(
+        default_factory=lambda: os.getenv("TOPSTEP_BASE_URL", "https://api.topstepx.com")
+    )
+    topstep_ws_url: str = Field(
+        default_factory=lambda: os.getenv("TOPSTEP_WS_URL", "https://rtc.topstepx.com")
+    )
+    # Cached auth artifacts. Written by the adapter once real auth lands;
+    # empty in the scaffolded build.
+    topstep_token: str = Field(default_factory=lambda: os.getenv("TOPSTEP_TOKEN", ""))
+    topstep_token_expires_at: str = Field(
+        default_factory=lambda: os.getenv("TOPSTEP_TOKEN_EXPIRES_AT", "")
+    )
 
     # Tradovate placeholders — not used until the adapter is implemented.
     tradovate_username: str = Field(

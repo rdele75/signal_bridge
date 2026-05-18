@@ -131,15 +131,17 @@ def test_api_broker_test_paper_success(client):
 
 
 def test_api_broker_test_topstep_not_implemented(make_app):
+    """Topstep returns a documented envelope at 200 — `missing_credentials`
+    when nothing is configured, never a 5xx error."""
     from fastapi.testclient import TestClient
     app = make_app(provider="topstep")
     with TestClient(app) as c:
         r = c.post("/api/broker/test-connection")
-    assert r.status_code == 501
+    assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False
     assert body["provider"] == "topstep"
-    assert "not implemented" in body["message"].lower()
+    assert body["status"] == "missing_credentials"
 
 
 def test_api_broker_test_tradovate_not_implemented(make_app):
@@ -147,7 +149,7 @@ def test_api_broker_test_tradovate_not_implemented(make_app):
     app = make_app(provider="tradovate")
     with TestClient(app) as c:
         r = c.post("/api/broker/test-connection")
-    assert r.status_code == 501
+    assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False
     assert body["provider"] == "tradovate"
@@ -168,6 +170,10 @@ def test_api_broker_status_paper(client):
 
 
 def test_api_broker_status_topstep_not_implemented(make_app):
+    """Without credentials the status payload reports the missing-creds
+    state (status=missing_credentials, broker_connected=false). With creds
+    configured it reports scaffolded_not_connected — both are documented
+    operator states, neither is an internal not_implemented bug."""
     from fastapi.testclient import TestClient
     app = make_app(provider="topstep")
     with TestClient(app) as c:
@@ -177,7 +183,7 @@ def test_api_broker_status_topstep_not_implemented(make_app):
     assert body["provider"] == "topstep"
     assert body["broker_provider"] == "topstep"
     assert body["broker_connected"] is False
-    assert body["not_implemented"] is True
+    assert body["status"] == "missing_credentials"
 
 
 def test_api_broker_status_tradovate_not_implemented(make_app):

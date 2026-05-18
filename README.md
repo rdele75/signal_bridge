@@ -7,9 +7,10 @@ It runs on your own machine, exposes a small web UI you open in a browser, accep
 **Broker status today:**
 
 - **Paper** — fully functional. Simulates fills, tracks positions, and computes realized PnL in price-points. Default account id is `PAPER-001` (configurable via `SELECTED_ACCOUNT_ID`).
-- **Topstep / TopstepX** — adapter is scaffolded but **not connected** to a real API yet. `execute()` rejects with `broker_not_implemented`; the read-only methods (`get_accounts`, `get_positions`, `get_orders`, …) return a structured `not_implemented` envelope so the dashboard never crashes.
+- **Topstep / TopstepX** — adapter is scaffolded but **not connected** to a real API yet. `execute()` rejects with `broker_not_implemented: topstep_execution_not_implemented…`; `test_connection()` returns `missing_credentials` or `scaffolded_not_connected`; the read-only methods (`get_accounts`, `get_positions`, `get_orders`, …) return a structured `not_implemented` envelope so the dashboard never crashes. See [`docs/topstep.md`](docs/topstep.md) for the integration plan.
 - **Tradovate** — same: scaffolded placeholder, not connected.
-- Broker credentials are **env-only** (`TOPSTEP_*` / `TRADOVATE_*` in `.env`). The dashboard never echoes them back; it only shows whether each one is configured.
+- Topstep credentials (`TOPSTEP_USERNAME`, `TOPSTEP_API_KEY`, `TOPSTEP_ACCOUNT_ID`, `TOPSTEP_ENV`, `TOPSTEP_BASE_URL`, `TOPSTEP_WS_URL`) can be set in `.env` or persisted via `/settings/broker`. The dashboard masks the API key (last four characters only).
+- Tradovate credentials are still env-only.
 - **No live orders are placed by this build.**
 
 > Not SaaS. Not multi-user. Not packaged for distribution. Not live yet.
@@ -218,7 +219,7 @@ To make `127.0.0.1` reachable from TradingView's servers, expose it with **ngrok
 | `GET  /api/system`                    | host/port, paths, runtime status, useful local URLs |
 | `POST /webhooks/tradingview`          | the inbound alert endpoint |
 
-`POST /api/broker/test-connection` returns `200` with `ok: true` for paper and `501` with `ok: false` and `status: "not_implemented"` for topstep / tradovate. The `GET /api/broker/*` query endpoints always return `200` with a JSON envelope — when the active provider hasn't implemented an operation, the envelope includes `"not_implemented": true` so the dashboard can render safely.
+`POST /api/broker/test-connection` returns `200` with `ok: true` for paper. For topstep it returns `200` with `ok: false` and a documented `status` — `missing_credentials` when the username/API key isn't configured, or `scaffolded_not_connected` once credentials are saved. Tradovate keeps the older `not_implemented` envelope. Genuine server errors come back as `500`. The `GET /api/broker/*` query endpoints always return `200` with a JSON envelope — when the active provider hasn't implemented an operation, the envelope includes `"not_implemented": true` so the dashboard can render safely.
 
 ---
 

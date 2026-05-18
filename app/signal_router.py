@@ -30,6 +30,10 @@ def build_broker(settings: Settings, journal: Journal) -> BrokerBase:
             api_key=settings.topstep_api_key,
             account_id=settings.resolved_account_id or settings.topstep_account_id,
             env=settings.topstep_env,
+            base_url=settings.topstep_base_url,
+            ws_url=settings.topstep_ws_url,
+            token=settings.topstep_token,
+            token_expires_at=settings.topstep_token_expires_at,
         )
 
     if provider == "tradovate":
