@@ -212,10 +212,55 @@ To make `127.0.0.1` reachable from TradingView's servers, expose it with **ngrok
 | `GET  /api/broker/accounts`           | accounts visible to the active adapter |
 | `GET  /api/broker/positions`          | open positions from the active adapter |
 | `GET  /api/broker/orders`             | recent orders from the active adapter |
+| `POST /api/paper/flatten`             | zero every open paper position (paper provider only) |
+| `POST /api/paper/flatten/{symbol}`    | zero one paper position by symbol |
+| `POST /api/paper/reset`               | clear paper position/order state (keeps signal journal) |
 | `GET  /api/system`                    | host/port, paths, runtime status, useful local URLs |
 | `POST /webhooks/tradingview`          | the inbound alert endpoint |
 
 `POST /api/broker/test-connection` returns `200` with `ok: true` for paper and `501` with `ok: false` and `status: "not_implemented"` for topstep / tradovate. The `GET /api/broker/*` query endpoints always return `200` with a JSON envelope — when the active provider hasn't implemented an operation, the envelope includes `"not_implemented": true` so the dashboard can render safely.
+
+---
+
+## Paper position cleanup (flatten / reset)
+
+Paper mode accumulates simulated positions during testing — every accepted
+TradingView alert adds, reduces, or flips a position the same way a live
+broker would. To return the simulated account to flat without restarting:
+
+- **Flatten Paper Positions** — closes every open paper position (or one
+  symbol via `/api/paper/flatten/{symbol}`).
+- **Reset Paper State** — additionally clears the paper adapter's
+  in-memory order state. Useful when you've been firing test alerts and
+  want a clean slate.
+
+Neither action deletes the signal journal, closed-trade history, or daily
+PnL — those remain as your testing record. Each action logs a
+`paper_flatten_all` / `paper_flatten_symbol` / `paper_reset_state` event to
+`logs/signalbridge.log`.
+
+Buttons live on the **Dashboard** (under Open positions) and on
+**Broker** (`/settings/broker`, under "Paper controls"). Both prompt for
+confirmation before firing.
+
+If the active provider is `topstep` or `tradovate`, these endpoints return
+a safe `{"ok": false, "not_implemented": true, "status":
+"not_available_for_provider"}` envelope — they only operate on the paper
+adapter.
+
+```bash
+# Flatten all paper positions
+curl -X POST http://127.0.0.1:8000/api/paper/flatten \
+  -b "$(cat dashboard_cookies.txt)"
+
+# Flatten one symbol
+curl -X POST http://127.0.0.1:8000/api/paper/flatten/MES1! \
+  -b "$(cat dashboard_cookies.txt)"
+
+# Reset paper position/order state (keeps signal journal)
+curl -X POST http://127.0.0.1:8000/api/paper/reset \
+  -b "$(cat dashboard_cookies.txt)"
+```
 
 ---
 

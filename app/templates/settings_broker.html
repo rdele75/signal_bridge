@@ -144,6 +144,38 @@
   {% endif %}
 </section>
 
+{# ---- Paper controls: flatten / reset ---- #}
+<section class="card section">
+  <div class="section-head">
+    <h3>Paper controls</h3>
+    <span class="hint">test-position cleanup · paper provider only</span>
+  </div>
+  {% if active_broker_provider == 'paper' %}
+    <p class="muted" style="margin: 0 0 8px;">
+      Use these to return the simulated account to flat during testing.
+      Neither button deletes signal-journal rows or closed-trade history.
+    </p>
+    {% if broker_status.broker_connected and broker_accounts.accounts and broker_accounts.accounts[0].open_position_count %}
+      <p style="margin: 0 0 8px;">
+        <strong>{{ broker_accounts.accounts[0].open_position_count }}</strong>
+        open paper position(s).
+      </p>
+    {% else %}
+      <p class="muted" style="margin: 0 0 8px;">No open paper positions right now.</p>
+    {% endif %}
+    <div class="btn-row">
+      <button id="broker-paper-flatten" class="btn btn-danger" data-paper-flatten>Flatten All Paper Positions</button>
+      <button id="broker-paper-reset" class="btn" data-paper-reset>Reset Paper State</button>
+    </div>
+    <pre id="paper-action-out" class="output" style="margin-top: 10px;">no action yet</pre>
+  {% else %}
+    <p class="muted" style="margin: 0;">
+      Flatten / reset are only available when the active broker provider is
+      <code>paper</code>. Active provider: <code>{{ active_broker_provider }}</code>.
+    </p>
+  {% endif %}
+</section>
+
 {# ---- Test connection ---- #}
 <section class="card section">
   <div class="section-head">
@@ -210,5 +242,31 @@ document.getElementById('btn-test').addEventListener('click', async () => {
     out.textContent = 'request failed: ' + e;
   }
 });
+
+async function _brokerPaperPost(path, confirmMsg) {
+  const out = document.getElementById('paper-action-out');
+  if (!window.confirm(confirmMsg)) return;
+  if (out) out.textContent = 'working…';
+  try {
+    const r = await fetch(path, { method: 'POST' });
+    const body = await r.json();
+    if (out) out.textContent = JSON.stringify(body, null, 2);
+  } catch (e) {
+    if (out) out.textContent = 'request failed: ' + e;
+  }
+}
+const _bpf = document.getElementById('broker-paper-flatten');
+if (_bpf) {
+  _bpf.addEventListener('click', () =>
+    _brokerPaperPost('/api/paper/flatten', 'Flatten ALL open paper positions?')
+  );
+}
+const _bpr = document.getElementById('broker-paper-reset');
+if (_bpr) {
+  _bpr.addEventListener('click', () =>
+    _brokerPaperPost('/api/paper/reset',
+      'Reset paper position/order state? (signal journal is kept)')
+  );
+}
 </script>
 {% endblock %}

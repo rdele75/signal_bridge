@@ -11,6 +11,7 @@ Topstep and Tradovate are scaffolded placeholders.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from typing import Any, Optional
@@ -22,6 +23,8 @@ from .broker_base import BrokerBase
 
 DEFAULT_PAPER_ACCOUNT_ID = "PAPER-001"
 DEFAULT_PAPER_BALANCE = 50_000.0
+
+_log = logging.getLogger("signalbridge")
 
 
 class PaperBroker(BrokerBase):
@@ -174,6 +177,9 @@ class PaperBroker(BrokerBase):
             for sym in targets:
                 if sym not in self._positions:
                     continue
+                if int(self._positions[sym].get("quantity") or 0) == 0:
+                    # Already flat — skip so we don't claim phantom flattens.
+                    continue
                 self._positions[sym] = {
                     "quantity": 0,
                     "avg_price": None,
@@ -183,16 +189,66 @@ class PaperBroker(BrokerBase):
                     symbol=sym, quantity=0, avg_price=None, side=None
                 )
                 flattened.append(sym)
+        event = "paper_flatten_symbol" if symbol else "paper_flatten_all"
+        _log.info(
+            "%s account=%s symbol=%s flattened=%s",
+            event,
+            self.account_id,
+            symbol or "*",
+            flattened,
+        )
         return {
             "ok": True,
             "provider": self.provider,
             "not_implemented": False,
             "account_id": self.account_id,
+            "event": event,
+            "symbol": symbol,
             "flattened": flattened,
+            "count": len(flattened),
             "message": (
                 f"flattened {len(flattened)} position(s)"
                 if flattened
                 else "no open positions"
+            ),
+        }
+
+    def flatten_all_positions(self) -> dict[str, Any]:
+        """Close/zero every open simulated position. Returns structured JSON."""
+        return self.flatten_position(symbol=None)
+
+    def reset_paper_state(self) -> dict[str, Any]:
+        """Clear paper open positions and in-memory order state.
+
+        Does NOT delete the signal journal, closed-trade history, or
+        daily PnL — those are operator records, not paper runtime state.
+        """
+        cleared: list[str] = []
+        with self._lock:
+            for sym, pos in list(self._positions.items()):
+                if int(pos.get("quantity") or 0) != 0:
+                    cleared.append(sym)
+                self.journal.upsert_position(
+                    symbol=sym, quantity=0, avg_price=None, side=None
+                )
+            self._positions = {}
+        _log.info(
+            "paper_reset_state account=%s cleared=%s",
+            self.account_id,
+            cleared,
+        )
+        return {
+            "ok": True,
+            "provider": self.provider,
+            "not_implemented": False,
+            "account_id": self.account_id,
+            "event": "paper_reset_state",
+            "cleared_symbols": cleared,
+            "count": len(cleared),
+            "message": (
+                f"reset paper state; {len(cleared)} open position(s) zeroed"
+                if cleared
+                else "reset paper state; no open positions"
             ),
         }
 

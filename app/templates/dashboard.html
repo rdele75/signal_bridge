@@ -167,6 +167,16 @@
     {% else %}
       <div class="empty"><strong>flat</strong>no open positions</div>
     {% endif %}
+    {% if broker_provider == 'paper' %}
+      <div class="btn-row" style="margin-top: 8px;">
+        <button id="dash-paper-flatten" class="btn btn-danger" data-paper-flatten>Flatten All Paper Positions</button>
+        <button id="dash-paper-reset" class="btn" data-paper-reset>Reset Paper State</button>
+      </div>
+      <p class="muted" style="margin: 6px 0 0; font-size: 12px;">
+        Flatten zeroes open paper positions. Reset additionally clears in-memory
+        paper order state. Neither deletes the signal journal.
+      </p>
+    {% endif %}
   </div>
 </section>
 
@@ -273,5 +283,33 @@ async function _dashKs(path) {
 }
 document.getElementById('dash-ks-enable').addEventListener('click', () => _dashKs('/api/kill-switch/enable'));
 document.getElementById('dash-ks-disable').addEventListener('click', () => _dashKs('/api/kill-switch/disable'));
+
+async function _paperPost(path, confirmMsg) {
+  if (!window.confirm(confirmMsg)) return;
+  try {
+    const r = await fetch(path, { method: 'POST' });
+    const body = await r.json();
+    if (!body.ok) {
+      window.alert(body.message || 'paper action failed');
+    }
+    location.reload();
+  } catch (e) {
+    console.error('paper action failed', e);
+    window.alert('paper action failed: ' + e);
+  }
+}
+const _pf = document.getElementById('dash-paper-flatten');
+if (_pf) {
+  _pf.addEventListener('click', () =>
+    _paperPost('/api/paper/flatten', 'Flatten ALL open paper positions?')
+  );
+}
+const _pr = document.getElementById('dash-paper-reset');
+if (_pr) {
+  _pr.addEventListener('click', () =>
+    _paperPost('/api/paper/reset',
+      'Reset paper position/order state? (signal journal is kept)')
+  );
+}
 </script>
 {% endblock %}

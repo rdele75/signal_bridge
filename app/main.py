@@ -327,6 +327,61 @@ def create_app() -> FastAPI:
             settings=settings, broker=broker, kill_switch=kill_switch
         )
 
+    # ------------------------------------------------------------------
+    # Paper-only admin actions (flatten / reset)
+    #
+    # These only operate on the in-memory paper broker. If the active
+    # provider is topstep/tradovate they return a structured, safe
+    # "not available for this provider yet" envelope at 200, never trying
+    # to mutate a real broker's state.
+    # ------------------------------------------------------------------
+
+    def _paper_not_available() -> JSONResponse:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": False,
+                "provider": broker.provider,
+                "not_implemented": True,
+                "status": "not_available_for_provider",
+                "message": (
+                    f"paper flatten/reset is not available for the "
+                    f"{broker.provider} provider yet"
+                ),
+            },
+        )
+
+    @app.post(
+        "/api/paper/flatten", dependencies=[Depends(require_admin_api)]
+    )
+    def api_paper_flatten() -> JSONResponse:
+        if broker.provider != "paper":
+            return _paper_not_available()
+        return JSONResponse(
+            status_code=200, content=broker.flatten_all_positions()
+        )
+
+    @app.post(
+        "/api/paper/flatten/{symbol}",
+        dependencies=[Depends(require_admin_api)],
+    )
+    def api_paper_flatten_symbol(symbol: str) -> JSONResponse:
+        if broker.provider != "paper":
+            return _paper_not_available()
+        return JSONResponse(
+            status_code=200, content=broker.flatten_position(symbol=symbol)
+        )
+
+    @app.post(
+        "/api/paper/reset", dependencies=[Depends(require_admin_api)]
+    )
+    def api_paper_reset() -> JSONResponse:
+        if broker.provider != "paper":
+            return _paper_not_available()
+        return JSONResponse(
+            status_code=200, content=broker.reset_paper_state()
+        )
+
     @app.post("/webhooks/tradingview", response_model=WebhookResponse)
     async def tradingview_webhook(request: Request) -> WebhookResponse:
         try:
