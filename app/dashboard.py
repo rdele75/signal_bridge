@@ -318,7 +318,10 @@ def broker_status_payload(
 
     Never raises — the dashboard/API rely on it always returning JSON.
     Surfaces the selected account snapshot (id, name, balance, canTrade,
-    isVisible) and the cached-token state for adapters that expose them.
+    isVisible), the cached-token state, and the per-adapter
+    positions/orders read-only status (``not_implemented`` for Topstep in
+    this phase) so the UI never has to second-guess what the broker
+    exposes.
     """
     try:
         probe = broker.test_connection()
@@ -339,6 +342,12 @@ def broker_status_payload(
     balance = selected_account.get("balance") if selected_account else None
     can_trade = selected_account.get("can_trade") if selected_account else None
     is_visible = selected_account.get("is_visible") if selected_account else None
+
+    positions_resp = _safe_get_positions(broker)
+    orders_resp = _safe_get_orders(broker)
+    positions = positions_resp.get("positions") or []
+    orders = orders_resp.get("orders") or []
+
     return {
         "ok": bool(probe.get("ok")),
         "provider": broker.provider,
@@ -354,11 +363,22 @@ def broker_status_payload(
         "status": probe.get("status", "unknown"),
         "auth_status": probe.get("status", "unknown"),
         "balance": balance,
+        "account_balance": balance,
         "can_trade": can_trade,
         "is_visible": is_visible,
         "accounts_count": probe.get("accounts_count"),
         "token_cached": bool(creds.get("token_cached")),
         "token_expires_at": _mask_token_expiry(creds.get("token_expires_at")),
+        "positions_status": positions_resp.get("status", "unknown"),
+        "positions_message": positions_resp.get("message", ""),
+        "positions_count": len(positions),
+        "positions_not_implemented": bool(
+            positions_resp.get("not_implemented")
+        ),
+        "orders_status": orders_resp.get("status", "unknown"),
+        "orders_message": orders_resp.get("message", ""),
+        "orders_count": len(orders),
+        "orders_not_implemented": bool(orders_resp.get("not_implemented")),
         "restart_required": settings.resolved_provider != broker.provider,
     }
 

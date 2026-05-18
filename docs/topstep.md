@@ -1,16 +1,31 @@
 # Topstep / TopstepX integration (read-only account data)
 
-SignalBridge authenticates against TopstepX/ProjectX, lists the active
-TopstepX accounts for the configured user, and surfaces the selected
-account's snapshot (id, name, balance, `canTrade`, `isVisible`) on the
-dashboard and `/api/broker/status`. Open-positions and
-working-orders read endpoints are **scaffolded** — they return a
-structured `not_implemented` envelope until the ProjectX response
-shapes are pinned down.
+SignalBridge currently supports the following with Topstep:
 
-**Order placement is intentionally disabled in this phase** — the
-webhook handler keeps rejecting Topstep-routed signals with a clearly
-labeled reason so no real orders leave the building.
+- **Authentication** against TopstepX/ProjectX (`/api/Auth/loginKey`)
+  using your **TopstepX email address** as `TOPSTEP_USERNAME` and a
+  ProjectX API key.
+- **Account discovery** (`/api/Account/search`) — returns the
+  **numeric ProjectX account id**, account name, balance, `canTrade`,
+  and `isVisible` for each active account.
+- **Read-only account status** surfaced on the dashboard and
+  `/api/broker/status` (selected account id/name, balance, canTrade,
+  isVisible, cached-token state).
+
+Open-positions and working-orders read endpoints are **scaffolded** —
+they return a structured `not_implemented` envelope until the
+ProjectX response shapes are pinned down. The endpoints stay
+read-only and never hit the wire while scaffolded.
+
+**Order placement is still disabled** — the webhook handler rejects
+Topstep-routed signals with a clearly labeled reason
+(`broker_not_implemented: topstep_order_submission_disabled:
+topstep_execution_not_enabled: …`) so no real orders leave the
+building, and never silently falls back to paper.
+
+**Do not share or commit API keys or tokens.** The `TOPSTEP_API_KEY`
+and `TOPSTEP_TOKEN` are masked in the dashboard and in API responses
+(last 4 characters only). `.env` is gitignored.
 
 ## How Topstep exposes its API
 
@@ -74,11 +89,19 @@ For the active Topstep adapter, the status endpoint exposes:
   `selected_account` (`{id, account_id, id_str, name, balance,
   can_trade, is_visible}` — `None` when no account is selected /
   found)
-- `balance`, `can_trade`, `is_visible` — flat mirrors of the selected
-  account snapshot for compact card rendering
+- `balance` / `account_balance`, `can_trade`, `is_visible` — flat
+  mirrors of the selected account snapshot for compact card rendering
 - `token_cached` (bool) and `token_expires_at` (ISO prefix, never the
   raw JWT)
+- `positions_status` (`not_implemented` in this phase),
+  `positions_count`, `positions_not_implemented`, `positions_message`
+- `orders_status` (`not_implemented` in this phase), `orders_count`,
+  `orders_not_implemented`, `orders_message`
 - `accounts_count` (total active accounts), `restart_required`
+
+Tokens and API keys are **never** returned in full — only the
+last-four preview and the masked `token_cached` / `token_expires_at`
+state appear in the payload.
 
 ## Configuration
 

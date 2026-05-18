@@ -701,7 +701,11 @@ class TopstepBroker(BrokerBase):
     def execute(self, signal: NormalizedSignal) -> ExecutionResult:
         # Webhook handler catches this and converts it into a clearly
         # labeled rejection rather than silently no-op'ing a real order.
+        # Both labels are present so journal/log consumers can match on
+        # either ``topstep_execution_not_enabled`` (adapter-level) or
+        # ``topstep_order_submission_disabled`` (intent-level).
         raise NotImplementedError(
+            "topstep_order_submission_disabled: "
             "topstep_execution_not_enabled: Topstep auth and account "
             "discovery are wired up, but order routing is intentionally "
             "disabled in this phase. Use BROKER_PROVIDER=paper to execute."

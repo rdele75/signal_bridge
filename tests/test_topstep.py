@@ -643,6 +643,17 @@ def test_api_broker_status_for_topstep_with_mocked_auth_exposes_account_details(
     assert body["is_visible"] is True
     assert body["token_cached"] is True
     assert body["auth_status"] == "ok"
+    # account_balance is the flat mirror exposed alongside `balance`.
+    assert body["account_balance"] == 150_000.0
+    # positions/orders are scaffolded — must surface a clear
+    # not_implemented status so the dashboard can render it without
+    # second-guessing the adapter.
+    assert body["positions_status"] == "not_implemented"
+    assert body["positions_not_implemented"] is True
+    assert body["positions_count"] == 0
+    assert body["orders_status"] == "not_implemented"
+    assert body["orders_not_implemented"] is True
+    assert body["orders_count"] == 0
     # Token expiry is exposed only as a date/time prefix, never the
     # raw token itself.
     assert "JWT.STATUS.AUTH" not in r.text
@@ -662,9 +673,16 @@ def test_api_broker_status_for_topstep_missing_credentials_safe(make_app):
     assert body["status"] == "missing_credentials"
     assert body["selected_account"] is None
     assert body["balance"] is None
+    assert body["account_balance"] is None
     assert body["can_trade"] is None
     assert body["is_visible"] is None
     assert body["token_cached"] is False
+    # Even with no auth, positions/orders endpoints must report a safe
+    # not_implemented status — and must NOT have touched the network.
+    assert body["positions_status"] == "not_implemented"
+    assert body["positions_not_implemented"] is True
+    assert body["orders_status"] == "not_implemented"
+    assert body["orders_not_implemented"] is True
 
 
 # ----------------------------------------------------------------------
@@ -1106,3 +1124,88 @@ def test_authenticate_does_not_log_full_api_key_or_token(monkeypatch, caplog):
     # But the lengths should be present so the operator can verify shape.
     assert "api_key_len=16" in log_text
     assert "username_len=8" in log_text
+
+
+# ----------------------------------------------------------------------
+# Webhook journals a clear topstep-disabled rejection (no paper fallback)
+# ----------------------------------------------------------------------
+
+
+def test_webhook_with_topstep_provider_journals_order_submission_disabled(make_app):
+    """A topstep-routed webhook must journal a rejection whose reason
+    explicitly labels Topstep order submission as disabled — and must
+    NOT create a paper fill row."""
+    app = make_app(provider="topstep")
+    with TestClient(app) as c:
+        r = c.post(
+            "/webhooks/tradingview",
+            json=make_alert(order_id="topstep_journal_label_1"),
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["accepted"] is False
+        assert body["decision"] == "rejected"
+        # Both labels must be present in the rejection reason so log /
+        # journal consumers can match on either one.
+        assert "topstep_order_submission_disabled" in body["rejection_reason"]
+        assert "broker_not_implemented" in body["rejection_reason"]
+
+        # The signal journal row carries the same label and is recorded
+        # under provider=topstep — never paper.
+        recent = c.get("/api/journal/recent?limit=5").json()
+        rows = recent["signals"]
+        matching = [
+            row for row in rows
+            if row.get("order_id") == "topstep_journal_label_1"
+        ]
+        assert matching, "expected the topstep webhook row in the journal"
+        row = matching[0]
+        assert row["decision"] == "rejected"
+        assert "topstep_order_submission_disabled" in (
+            row.get("rejection_reason") or ""
+        )
+        assert row.get("broker_provider") == "topstep"
+
+        # No paper position should have been created.
+        positions = c.get("/api/positions").json()["open_positions"]
+        assert positions == []
+
+
+# ----------------------------------------------------------------------
+# /settings/broker page renders Topstep positions/orders status
+# ----------------------------------------------------------------------
+
+
+def test_settings_broker_page_renders_topstep_positions_orders_status(
+    make_app, monkeypatch
+):
+    """The broker page must show the Topstep positions/orders read-only
+    status so the operator can see 'not implemented' without inspecting
+    the API."""
+    monkeypatch.setenv("TOPSTEP_USERNAME", "trader42")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "6002")
+
+    app = make_app(provider="topstep")
+    from app.execution.topstep import TopstepBroker as FreshTopstepBroker
+
+    def fake_post(self, path, payload, *, auth=False):
+        if path == "/api/Auth/loginKey":
+            return 200, _login_ok("JWT.PAGE.SAFE")
+        return 200, _accounts_ok(
+            {"id": 6002, "name": "Combine", "balance": 150_000.0,
+             "canTrade": True, "isVisible": True},
+        )
+
+    monkeypatch.setattr(FreshTopstepBroker, "_post_json", fake_post)
+
+    with TestClient(app) as c:
+        r = c.get("/settings/broker")
+    assert r.status_code == 200
+    text = r.text
+    # The template now surfaces the status string from get_positions /
+    # get_orders rather than a hard-coded 'coming next' banner.
+    assert "not_implemented" in text
+    # Secrets must still never leak into the rendered HTML.
+    assert "JWT.PAGE.SAFE" not in text
+    assert "abcd1234efgh5678" not in text

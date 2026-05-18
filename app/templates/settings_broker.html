@@ -122,13 +122,27 @@
     </dd>
     <dt>positions</dt>
     <dd>
-      <span class="badge badge-warn plain">not implemented yet</span>
-      <span class="muted">read-only positions endpoint coming next</span>
+      {% if broker_status.positions_not_implemented %}
+        <span class="badge badge-warn plain">not implemented</span>
+      {% else %}
+        <span class="badge badge-good plain">{{ broker_status.positions_count }} open</span>
+      {% endif %}
+      <span class="muted">status <code>{{ broker_status.positions_status or '—' }}</code></span>
+      {% if broker_status.positions_message %}
+        <span class="muted">· {{ broker_status.positions_message }}</span>
+      {% endif %}
     </dd>
     <dt>orders</dt>
     <dd>
-      <span class="badge badge-warn plain">not implemented yet</span>
-      <span class="muted">read-only orders endpoint coming next</span>
+      {% if broker_status.orders_not_implemented %}
+        <span class="badge badge-warn plain">not implemented</span>
+      {% else %}
+        <span class="badge badge-good plain">{{ broker_status.orders_count }} known</span>
+      {% endif %}
+      <span class="muted">status <code>{{ broker_status.orders_status or '—' }}</code></span>
+      {% if broker_status.orders_message %}
+        <span class="muted">· {{ broker_status.orders_message }}</span>
+      {% endif %}
     </dd>
   </dl>
 </section>
