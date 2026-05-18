@@ -14,12 +14,23 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__
+from .auth import (
+    LoginRequired,
+    check_credentials,
+    login as auth_login,
+    logout as auth_logout,
+    require_admin_api,
+    require_admin_page,
+    safe_next_path,
+    warn_if_default_secrets,
+)
 from .config import Settings, get_settings
 from .dashboard import (
     broker_status_payload,
@@ -120,6 +131,24 @@ def create_app() -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    warn_if_default_secrets(settings, log)
+
+    if settings.admin_auth_enabled:
+        app.add_middleware(
+            SessionMiddleware,
+            secret_key=settings.session_secret or "signalbridge-fallback-secret",
+            session_cookie="signalbridge_session",
+            same_site="lax",
+            https_only=False,
+        )
+
+    @app.exception_handler(LoginRequired)
+    async def _login_required_handler(request: Request, exc: LoginRequired):
+        from urllib.parse import urlencode
+        qs = urlencode({"next": exc.next_path}) if exc.next_path else ""
+        target = f"/login?{qs}" if qs else "/login"
+        return RedirectResponse(url=target, status_code=303)
+
     app.state.settings = settings
     app.state.settings_store = settings_store
     app.state.journal = journal
@@ -143,6 +172,7 @@ def create_app() -> FastAPI:
             "kill_switch_active": kill_switch.is_active(),
             "flash": flash,
             "flash_kind": flash_kind if flash_kind in {"ok", "error", "info"} else "info",
+            "auth_enabled": settings.admin_auth_enabled,
         }
 
     def _flash_redirect(path: str, message: str, kind: str = "ok") -> RedirectResponse:
@@ -178,19 +208,29 @@ def create_app() -> FastAPI:
             database_path=str(settings.database_abs_path),
         )
 
-    @app.get("/status", response_model=StatusResponse)
+    @app.get(
+        "/status",
+        response_model=StatusResponse,
+        dependencies=[Depends(require_admin_api)],
+    )
     def status() -> StatusResponse:
         return _status_payload()
 
-    @app.get("/api/status", response_model=StatusResponse)
+    @app.get(
+        "/api/status",
+        response_model=StatusResponse,
+        dependencies=[Depends(require_admin_api)],
+    )
     def api_status() -> StatusResponse:
         return _status_payload()
 
-    @app.get("/api/metrics")
+    @app.get("/api/metrics", dependencies=[Depends(require_admin_api)])
     def api_metrics() -> dict[str, Any]:
         return metrics_summary(journal=journal)
 
-    @app.get("/api/journal/recent")
+    @app.get(
+        "/api/journal/recent", dependencies=[Depends(require_admin_api)]
+    )
     def api_journal_recent(limit: int = 50) -> dict[str, Any]:
         limit = max(1, min(int(limit), 500))
         return {
@@ -198,16 +238,21 @@ def create_app() -> FastAPI:
             "closed_trades": journal.list_recent_closed_trades(limit=limit),
         }
 
-    @app.get("/api/positions")
+    @app.get("/api/positions", dependencies=[Depends(require_admin_api)])
     def api_positions() -> dict[str, Any]:
         return {"open_positions": journal.list_open_positions()}
 
-    @app.post("/api/kill-switch/enable")
+    @app.post(
+        "/api/kill-switch/enable", dependencies=[Depends(require_admin_api)]
+    )
     def api_kill_switch_enable() -> dict[str, Any]:
         kill_switch.activate("manual via dashboard")
         return {"ok": True, "kill_switch_active": kill_switch.is_active()}
 
-    @app.post("/api/kill-switch/disable")
+    @app.post(
+        "/api/kill-switch/disable",
+        dependencies=[Depends(require_admin_api)],
+    )
     def api_kill_switch_disable() -> dict[str, Any]:
         kill_switch.deactivate()
         return {"ok": True, "kill_switch_active": kill_switch.is_active()}
@@ -243,29 +288,40 @@ def create_app() -> FastAPI:
             }
         return result if isinstance(result, dict) else {"ok": True, "result": result}
 
-    @app.get("/api/broker/status")
+    @app.get(
+        "/api/broker/status", dependencies=[Depends(require_admin_api)]
+    )
     def api_broker_status() -> dict[str, Any]:
         return broker_status_payload(settings=settings, broker=broker)
 
-    @app.post("/api/broker/test-connection")
+    @app.post(
+        "/api/broker/test-connection",
+        dependencies=[Depends(require_admin_api)],
+    )
     def api_broker_test() -> JSONResponse:
         result = _safe_broker_call("test_connection")
         status_code = 200 if result.get("ok") else 501
         return JSONResponse(content=result, status_code=status_code)
 
-    @app.get("/api/broker/accounts")
+    @app.get(
+        "/api/broker/accounts", dependencies=[Depends(require_admin_api)]
+    )
     def api_broker_accounts() -> dict[str, Any]:
         return _safe_broker_call("get_accounts")
 
-    @app.get("/api/broker/positions")
+    @app.get(
+        "/api/broker/positions", dependencies=[Depends(require_admin_api)]
+    )
     def api_broker_positions() -> dict[str, Any]:
         return _safe_broker_call("get_positions")
 
-    @app.get("/api/broker/orders")
+    @app.get(
+        "/api/broker/orders", dependencies=[Depends(require_admin_api)]
+    )
     def api_broker_orders() -> dict[str, Any]:
         return _safe_broker_call("get_orders")
 
-    @app.get("/api/system")
+    @app.get("/api/system", dependencies=[Depends(require_admin_api)])
     def api_system() -> dict[str, Any]:
         return system_summary(
             settings=settings, broker=broker, kill_switch=kill_switch
@@ -283,7 +339,7 @@ def create_app() -> FastAPI:
     # HTML pages
     # ------------------------------------------------------------------
 
-    @app.get("/", response_class=HTMLResponse)
+    @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_admin_page)])
     def page_dashboard(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         ctx.update(
@@ -296,7 +352,11 @@ def create_app() -> FastAPI:
         )
         return templates.TemplateResponse(request, "dashboard.html", ctx)
 
-    @app.get("/settings/broker", response_class=HTMLResponse)
+    @app.get(
+        "/settings/broker",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
     def page_settings_broker(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         configured = settings.resolved_provider
@@ -336,7 +396,10 @@ def create_app() -> FastAPI:
         )
         return templates.TemplateResponse(request, "settings_broker.html", ctx)
 
-    @app.post("/settings/broker")
+    @app.post(
+        "/settings/broker",
+        dependencies=[Depends(require_admin_page)],
+    )
     def post_settings_broker(
         broker_provider: str = Form(...),
         execution_mode: str = Form(...),
@@ -369,7 +432,11 @@ def create_app() -> FastAPI:
             msg += " Restart required to switch the active adapter."
         return _flash_redirect("/settings/broker", msg, kind="ok")
 
-    @app.get("/settings/risk", response_class=HTMLResponse)
+    @app.get(
+        "/settings/risk",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
     def page_settings_risk(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         ctx["risk"] = {
@@ -388,7 +455,10 @@ def create_app() -> FastAPI:
         }
         return templates.TemplateResponse(request, "settings_risk.html", ctx)
 
-    @app.post("/settings/risk")
+    @app.post(
+        "/settings/risk",
+        dependencies=[Depends(require_admin_page)],
+    )
     def post_settings_risk(
         allowed_symbols: str = Form(""),
         max_contracts_per_trade: str = Form(...),
@@ -425,7 +495,11 @@ def create_app() -> FastAPI:
             "/settings/risk", "Risk settings saved.", kind="ok"
         )
 
-    @app.get("/tradingview", response_class=HTMLResponse)
+    @app.get(
+        "/tradingview",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
     def page_tradingview(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         webhook_url = (
@@ -467,7 +541,10 @@ def create_app() -> FastAPI:
         )
         return templates.TemplateResponse(request, "tradingview.html", ctx)
 
-    @app.post("/tradingview/secret")
+    @app.post(
+        "/tradingview/secret",
+        dependencies=[Depends(require_admin_page)],
+    )
     def post_tradingview_secret(webhook_secret: str = Form(...)):
         try:
             new_secret = settings_store.update_typed(
@@ -482,7 +559,10 @@ def create_app() -> FastAPI:
             "/tradingview", "Webhook secret updated.", kind="ok"
         )
 
-    @app.post("/tradingview/secret/regenerate")
+    @app.post(
+        "/tradingview/secret/regenerate",
+        dependencies=[Depends(require_admin_page)],
+    )
     def post_tradingview_secret_regenerate():
         new_secret = generate_secret()
         settings_store.set_setting("TRADINGVIEW_WEBHOOK_SECRET", new_secret)
@@ -495,32 +575,92 @@ def create_app() -> FastAPI:
             kind="ok",
         )
 
-    @app.get("/journal", response_class=HTMLResponse)
+    @app.get(
+        "/journal",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
     def page_journal(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         ctx.update(journal_view(journal=journal, limit=100))
         return templates.TemplateResponse(request, "journal.html", ctx)
 
-    @app.get("/metrics", response_class=HTMLResponse)
+    @app.get(
+        "/metrics",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
     def page_metrics(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         ctx["m"] = metrics_summary(journal=journal)
         return templates.TemplateResponse(request, "metrics.html", ctx)
 
-    @app.get("/logs", response_class=HTMLResponse)
+    @app.get(
+        "/logs",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
     def page_logs(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         ctx["log_path"] = str(settings.log_abs_path)
         ctx["lines"] = tail_log(settings.log_abs_path, lines=300)
         return templates.TemplateResponse(request, "logs.html", ctx)
 
-    @app.get("/system", response_class=HTMLResponse)
+    @app.get(
+        "/system",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
     def page_system(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
         ctx["sys"] = system_summary(
             settings=settings, broker=broker, kill_switch=kill_switch
         )
         return templates.TemplateResponse(request, "system.html", ctx)
+
+    # ------------------------------------------------------------------
+    # Auth pages (public — required to reach the protected pages above)
+    # ------------------------------------------------------------------
+
+    @app.get("/login", response_class=HTMLResponse)
+    def page_login(request: Request, next: str = "/") -> Any:
+        if not settings.admin_auth_enabled:
+            return RedirectResponse(url=safe_next_path(next), status_code=303)
+        ctx = {
+            "request": request,
+            "app_name": settings.app_name,
+            "app_version": __version__,
+            "next": safe_next_path(next),
+            "error": request.query_params.get("error"),
+        }
+        return templates.TemplateResponse(request, "login.html", ctx)
+
+    @app.post("/login")
+    def do_login(
+        request: Request,
+        username: str = Form(""),
+        password: str = Form(""),
+        next: str = Form("/"),
+    ):
+        target = safe_next_path(next)
+        if not settings.admin_auth_enabled:
+            return RedirectResponse(url=target, status_code=303)
+        if check_credentials(settings, username, password):
+            auth_login(request)
+            return RedirectResponse(url=target, status_code=303)
+        from urllib.parse import urlencode
+        qs = urlencode({"error": "invalid", "next": target})
+        return RedirectResponse(url=f"/login?{qs}", status_code=303)
+
+    @app.post("/logout")
+    def do_logout(request: Request):
+        auth_logout(request)
+        return RedirectResponse(url="/login", status_code=303)
+
+    @app.get("/logout")
+    def do_logout_get(request: Request):
+        auth_logout(request)
+        return RedirectResponse(url="/login", status_code=303)
 
     return app
 

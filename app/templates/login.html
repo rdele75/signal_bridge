@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sign in · {{ app_name or 'SignalBridge' }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}" />
+</head>
+<body class="login-body">
+  <div class="login-shell">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="logo">SB</div>
+        <div>
+          <div class="name">{{ app_name or 'SignalBridge' }}</div>
+          <span class="sub">private trading bridge</span>
+        </div>
+      </div>
+
+      <h1 class="login-title">Sign in</h1>
+      <p class="login-sub">Dashboard access only. The TradingView webhook stays open.</p>
+
+      {% if error %}
+        <div class="login-error">Invalid username or password.</div>
+      {% endif %}
+
+      <form method="post" action="/login" class="form login-form">
+        <input type="hidden" name="next" value="{{ next or '/' }}" />
+        <div class="form-row">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text" autocomplete="username" autofocus required />
+        </div>
+        <div class="form-row">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+        </div>
+        <button class="btn btn-primary" type="submit">Sign in</button>
+      </form>
+
+      <div class="login-foot">
+        v{{ app_version }} · local bridge · paper-mode only
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -15,11 +15,20 @@ import pytest
 
 
 SECRET = "test_secret_value_123456789"
+ADMIN_PASSWORD = "test-admin-password"
+SESSION_SECRET = "test-session-secret-do-not-use-in-prod"
 
 
-def _build_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, provider: str = "paper"):
+def _build_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    provider: str = "paper",
+    admin_auth_enabled: bool = False,
+):
     """Construct a fresh FastAPI app bound to a temp DB/log under the given
-    BROKER_PROVIDER."""
+    BROKER_PROVIDER. Admin auth is off by default so most tests don't need
+    to log in — tests that exercise auth set admin_auth_enabled=True."""
     db_path = tmp_path / "sb_test.db"
     log_path = tmp_path / "sb_test.log"
 
@@ -40,6 +49,12 @@ def _build_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, provider: str
     monkeypatch.setenv("LOG_PATH", str(log_path))
     monkeypatch.setenv("LOG_LEVEL", "WARNING")
     monkeypatch.setenv("DUPLICATE_ORDER_COOLDOWN_SECONDS", "60")
+    monkeypatch.setenv(
+        "ADMIN_AUTH_ENABLED", "true" if admin_auth_enabled else "false"
+    )
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", ADMIN_PASSWORD)
+    monkeypatch.setenv("SESSION_SECRET", SESSION_SECRET)
     # Point the symbol map at a non-existent file so tests don't depend on
     # whatever the user has in config/symbols.json.
     monkeypatch.setenv("SYMBOLS_MAP_PATH", str(tmp_path / "missing_symbols.json"))
@@ -58,15 +73,21 @@ def _build_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, provider: str
 
 @pytest.fixture
 def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Default app fixture — paper provider."""
+    """Default app fixture — paper provider, auth disabled."""
     yield _build_app(tmp_path, monkeypatch, provider="paper")
 
 
 @pytest.fixture
 def make_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Factory fixture for picking the broker provider per-test."""
-    def _factory(provider: str = "paper"):
-        return _build_app(tmp_path, monkeypatch, provider=provider)
+    """Factory fixture for picking the broker provider (and toggling auth)
+    per-test."""
+    def _factory(provider: str = "paper", admin_auth_enabled: bool = False):
+        return _build_app(
+            tmp_path,
+            monkeypatch,
+            provider=provider,
+            admin_auth_enabled=admin_auth_enabled,
+        )
     return _factory
 
 
@@ -76,6 +97,28 @@ def client(app_env):
 
     with TestClient(app_env) as c:
         yield c
+
+
+@pytest.fixture
+def auth_app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """App fixture with ADMIN_AUTH_ENABLED=true."""
+    yield _build_app(
+        tmp_path, monkeypatch, provider="paper", admin_auth_enabled=True
+    )
+
+
+def login_as_admin(client, *, password: str = ADMIN_PASSWORD, expect_ok: bool = True):
+    """Helper: POST /login with the test admin credentials. Returns the
+    response (a 303 redirect on success)."""
+    r = client.post(
+        "/login",
+        data={"username": "admin", "password": password},
+        follow_redirects=False,
+    )
+    if expect_ok:
+        assert r.status_code == 303, f"login failed: {r.status_code} {r.text}"
+        assert r.headers.get("location", "").startswith("/"), r.headers
+    return r
 
 
 @pytest.fixture

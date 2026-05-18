@@ -154,6 +154,26 @@ class Settings(BaseModel):
         default_factory=lambda: _csv("ALLOWED_TIMEFRAMES", ["1"])
     )
 
+    # Dashboard admin authentication. Required before exposing the
+    # dashboard publicly (e.g. via Tailscale Funnel). The webhook
+    # endpoint stays public — it has its own shared-secret check.
+    admin_auth_enabled: bool = Field(
+        default_factory=lambda: _bool("ADMIN_AUTH_ENABLED", True)
+    )
+    admin_username: str = Field(
+        default_factory=lambda: os.getenv("ADMIN_USERNAME", "admin")
+    )
+    admin_password: str = Field(
+        default_factory=lambda: os.getenv(
+            "ADMIN_PASSWORD", "change_me_admin_password"
+        )
+    )
+    session_secret: str = Field(
+        default_factory=lambda: os.getenv(
+            "SESSION_SECRET", "generate_or_require_secret"
+        )
+    )
+
     @property
     def resolved_provider(self) -> str:
         """The provider to actually use. Prefers BROKER_PROVIDER, falls back

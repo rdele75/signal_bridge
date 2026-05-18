@@ -42,6 +42,11 @@
     </nav>
 
     <div class="sidebar-foot">
+      {% if auth_enabled %}
+      <form method="post" action="/logout" class="logout-form">
+        <button type="submit">Sign out</button>
+      </form>
+      {% endif %}
       private local bridge<br>
       paper-mode only
     </div>

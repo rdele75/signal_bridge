@@ -378,6 +378,7 @@ def test_stored_settings_override_env_on_reload(tmp_path, monkeypatch):
         LOG_LEVEL="WARNING",
         DUPLICATE_ORDER_COOLDOWN_SECONDS="60",
         SYMBOLS_MAP_PATH=str(tmp_path / "missing.json"),
+        ADMIN_AUTH_ENABLED="false",
     )
 
     import sys

@@ -57,7 +57,10 @@ All pages share a top bar showing **execution mode**, **broker provider**, and a
 git clone <local copy> signalbridge
 cd signalbridge
 cp .env.example .env
-# edit .env — set a long random TRADINGVIEW_WEBHOOK_SECRET
+# edit .env — at minimum set:
+#   TRADINGVIEW_WEBHOOK_SECRET  (long random string, never commit)
+#   ADMIN_PASSWORD              (strong password before exposing the UI)
+#   SESSION_SECRET              (long random string before exposing the UI)
 
 # Linux / macOS
 ./run.sh
@@ -66,14 +69,29 @@ cp .env.example .env
 run.bat
 ```
 
-Server boots on `http://127.0.0.1:8000`. Open it in a browser.
+Server boots on `http://127.0.0.1:8000`. Open it in a browser — you'll
+land on `/login` and need the admin credentials from `.env`.
 
-Smoke checks:
+Smoke checks (no login required for `/health`):
 
 ```bash
 curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/api/status
 ```
+
+Webhook smoke check — bypasses dashboard auth, validates the shared secret
+in the JSON body:
+
+```bash
+curl -X POST http://127.0.0.1:8000/webhooks/tradingview \
+  -H 'Content-Type: application/json' \
+  -d '{"secret":"<TRADINGVIEW_WEBHOOK_SECRET>","source":"tradingview",
+       "strategy":"manual","symbol":"MES1!","action":"buy",
+       "contracts":"1","price":"5000.25","order_id":"smoke_1"}'
+```
+
+The admin-only endpoints (`/api/status`, `/api/system`, `/api/metrics`,
+…) return `401` until you log in — `curl` them with the session cookie
+from your browser, or just open the dashboard.
 
 ---
 
@@ -135,6 +153,9 @@ All env defaults (see `.env.example` for the full list):
 | Variable | Purpose |
 | --- | --- |
 | `APP_HOST`, `APP_PORT`              | bind address (default `127.0.0.1:8000`) |
+| `ADMIN_AUTH_ENABLED`                | enable dashboard login (default `true`) |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD`  | admin credentials for `/login` |
+| `SESSION_SECRET`                    | signing key for the session cookie |
 | `EXECUTION_MODE`                    | `paper` today; `demo` / `live` reserved for the future |
 | `BROKER_PROVIDER`                   | `paper` (default), `topstep`, `tradovate` |
 | `BROKER`                            | legacy alias for `BROKER_PROVIDER` |
@@ -230,11 +251,59 @@ sqlite3 data/signalbridge.db \
 
 ---
 
+## Dashboard authentication
+
+SignalBridge protects the dashboard, settings pages, and admin JSON
+endpoints behind a single admin password so the app can be exposed
+through Tailscale Funnel (or any public tunnel) without leaking control
+over your trading bridge.
+
+| Setting                | Default                              | What it does |
+| ---------------------- | ------------------------------------ | --- |
+| `ADMIN_AUTH_ENABLED`   | `true`                               | turn auth on/off (set `false` only for purely local dev) |
+| `ADMIN_USERNAME`       | `admin`                              | username posted to `/login` |
+| `ADMIN_PASSWORD`       | `change_me_admin_password`           | password posted to `/login` — **change before exposing the UI** |
+| `SESSION_SECRET`       | `generate_or_require_secret`         | signs the session cookie — **set a long random value before exposing the UI** |
+
+**What's protected:**
+- All HTML pages (`/`, `/settings/broker`, `/settings/risk`,
+  `/tradingview`, `/journal`, `/metrics`, `/logs`, `/system`) — anonymous
+  visitors get a 303 redirect to `/login`.
+- All admin JSON endpoints (`/api/status`, `/api/system`, `/api/metrics`,
+  `/api/journal/recent`, `/api/positions`, `/api/kill-switch/*`,
+  `/api/broker/*`) — anonymous callers get `401`.
+- All settings POST endpoints (`/settings/broker`, `/settings/risk`,
+  `/tradingview/secret`, `/tradingview/secret/regenerate`).
+
+**What's intentionally public:**
+- `GET /health` — needed for tunnel liveness checks.
+- `POST /webhooks/tradingview` — TradingView's servers don't have a
+  dashboard session. The endpoint stays open but rejects any payload
+  whose `secret` field doesn't match `TRADINGVIEW_WEBHOOK_SECRET`. **The
+  webhook secret is the only thing standing between TradingView (or
+  anyone who finds the tunnel URL) and your risk engine — rotate it
+  through the dashboard before going public.**
+
+**Before turning on Tailscale Funnel:**
+
+1. `ADMIN_PASSWORD` — change from the default to a strong password.
+2. `SESSION_SECRET` — change from the default to a long random string
+   (e.g. `python -c 'import secrets; print(secrets.token_urlsafe(48))'`).
+   Rotating this signs out everyone.
+3. `TRADINGVIEW_WEBHOOK_SECRET` — change from the default. Either edit
+   `.env` or use the **TradingView** page in the dashboard (it can
+   regenerate a fresh secret for you).
+
+If `SESSION_SECRET` or `ADMIN_PASSWORD` are still on the default at
+startup, the app logs a `WARNING` so you notice.
+
+---
+
 ## Safety notes
 
 - Live execution is **not** implemented. Topstep + Tradovate adapters raise `NotImplementedError` on `execute()`, and every read-only method (`get_accounts`, `get_positions`, `get_orders`, …) returns `not_implemented: true` instead of hitting a real API.
 - Paper mode is the default and cannot place real orders.
 - Broker credentials live in `.env` only. The UI never echoes raw values back; it only reports whether each one is configured.
 - The kill switch is on by default — create `data/kill_switch.active` (or click the button on `/settings/risk`) to halt all execution. Delete the file (or click again) to resume.
-- The webhook secret is the only authentication. Use a long random string and never commit it.
-- This is a single-user local app. There is no auth in front of the dashboard — bind to `127.0.0.1` and don't expose the dashboard port publicly.
+- The webhook secret is the only check on `/webhooks/tradingview` — use a long random string and never commit it.
+- This is a single-user local app. Dashboard auth (above) gates the UI and admin API; the webhook stays open by design but is shared-secret protected.

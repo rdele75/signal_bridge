@@ -377,6 +377,102 @@ dl.kv dd { font-family: var(--mono); font-size: 12.5px; word-break: break-all; c
 
 .btn-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
 
+/* ----- Login page ----- */
+body.login-body {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at top, rgba(124,140,255,0.10), transparent 60%),
+    radial-gradient(ellipse at bottom, rgba(167,139,250,0.08), transparent 55%),
+    var(--bg);
+}
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 18px;
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 28px 22px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.45);
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 18px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.login-brand .logo {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  display: grid; place-items: center;
+  color: white; font-weight: 700; font-size: 15px;
+  box-shadow: 0 0 12px rgba(124, 140, 255, 0.30);
+}
+.login-brand .name { font-weight: 600; color: var(--fg); letter-spacing: 0.2px; }
+.login-brand .sub { display: block; color: var(--fg-mute); font-size: 11px; }
+.login-title {
+  font-size: 18px;
+  margin: 0 0 6px;
+  color: var(--fg);
+}
+.login-sub {
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  margin: 0 0 18px;
+}
+.login-error {
+  background: rgba(248,113,113,0.10);
+  border: 1px solid rgba(248,113,113,0.35);
+  color: var(--bad);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  margin-bottom: 14px;
+}
+.login-form button[type="submit"] {
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 10px 14px;
+  font-size: 13.5px;
+}
+.login-foot {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-mute);
+  font-size: 11px;
+  text-align: center;
+}
+
+/* ----- Sidebar logout link ----- */
+.sidebar-foot .logout-form { margin: 0 0 8px; }
+.sidebar-foot .logout-form button {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  color: var(--fg-dim);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  width: 100%;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.2px;
+  transition: all 0.15s ease;
+}
+.sidebar-foot .logout-form button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
 /* ----- Code blocks / output panels ----- */
 .output, pre.output {
   background: #0a0c11;
