@@ -328,8 +328,10 @@ def test_risk_page_renders_form(client):
     body = client.get("/settings/risk").text
     assert 'action="/settings/risk"' in body
     assert 'name="max_contracts_per_trade"' in body
-    assert 'name="allowed_symbols"' in body
     assert 'name="enable_longs"' in body
+    # Allowed symbols has moved off the risk page (lives in a future
+    # advanced settings page); the field must not be rendered here.
+    assert 'name="allowed_symbols"' not in body
 
 
 def test_broker_page_renders_form(client):

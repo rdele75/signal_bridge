@@ -5,7 +5,21 @@
 <h1>Overview</h1>
 <p class="subtitle">Live status of your local trading bridge.</p>
 
+{# Trading session + execution mode + broker status at a glance.
+   The kill-switch toggle now lives in the header (see base.html). #}
 <section class="grid grid-4 section">
+  <div class="card">
+    <div class="card-label">Trading session</div>
+    <div class="card-value">
+      {% set sess_class = 'badge-good' if trading_session == 'New York'
+                          else ('badge-info' if trading_session == 'London'
+                          else ('badge-paper' if trading_session == 'Asia'
+                          else 'badge-warn')) %}
+      <span class="badge {{ sess_class }} plain">{{ trading_session }}</span>
+    </div>
+    <div class="card-sub mono" data-session-time>{{ session_time }}</div>
+  </div>
+
   <div class="card">
     <div class="card-label">App status</div>
     <div class="card-value">
@@ -52,25 +66,10 @@
       {% if selected_account_id %}acct <code>{{ selected_account_id }}</code>{% else %}<a href="/settings/broker">configure</a>{% endif %}
     </div>
   </div>
-
-  <div class="card">
-    <div class="card-label">Kill switch</div>
-    <div class="card-value">
-      {% if kill_switch_active %}
-        <span class="badge badge-bad plain">active</span>
-      {% else %}
-        <span class="badge badge-good plain">off</span>
-      {% endif %}
-    </div>
-    <div class="card-sub">
-      <div class="btn-row" style="margin-top: 4px;">
-        <button id="dash-ks-enable" class="btn btn-danger">activate</button>
-        <button id="dash-ks-disable" class="btn">deactivate</button>
-      </div>
-    </div>
-  </div>
 </section>
 
+{# Broker account card. Open positions/orders live here now — the old
+   separate "Open positions" card has been removed. #}
 <section class="section">
   <div class="card">
     <div class="card-row">
@@ -159,33 +158,8 @@
   </div>
 </section>
 
-<section class="grid grid-2 section">
-  <div class="card">
-    <div class="card-label">Webhook</div>
-    <div class="card-value sm mono" style="word-break: break-all;">{{ webhook_path }}</div>
-    <div class="card-sub">
-      secret:
-      {% if webhook_secret_set %}
-        <span class="badge badge-good">configured</span>
-      {% else %}
-        <span class="badge badge-bad">unset / default</span>
-      {% endif %}
-      · <a href="/tradingview">setup</a>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-label">Local webhook URL</div>
-    <div class="card-value sm mono" style="word-break: break-all;">{{ webhook_url_local }}</div>
-    <div class="card-sub">use TradingView page for tunnel URL examples</div>
-  </div>
-</section>
-
-<section class="grid grid-4 section">
-  <div class="card">
-    <div class="card-label">Open positions</div>
-    <div class="card-value lg">{{ open_position_count }}</div>
-    <div class="card-sub">live exposure</div>
-  </div>
+{# Per-day counters + performance summary. #}
+<section class="grid grid-3 section">
   <div class="card">
     <div class="card-label">Trades today</div>
     <div class="card-value lg">{{ trades_today }}</div>
@@ -205,73 +179,39 @@
 
 <section class="grid grid-3 section">
   <div class="card">
-    <div class="card-label">Paper P&amp;L today</div>
+    <div class="card-label">P&amp;L</div>
     <div class="card-value lg {{ 'good' if daily_pnl > 0 else ('bad' if daily_pnl < 0 else '') }}">
       {{ daily_pnl_display }}
     </div>
     <div class="card-sub">closed trades: {{ closed_trade_total }}</div>
   </div>
-
   <div class="card">
-    <div class="card-label">Allowed symbols</div>
-    {% if allowed_symbols %}
-      <ul class="chips">
-        {% for s in allowed_symbols %}<li>{{ s }}</li>{% endfor %}
-      </ul>
-    {% else %}
-      <div class="muted">none configured</div>
-    {% endif %}
+    <div class="card-label">Win rate</div>
+    <div class="card-value lg {{ 'muted' if win_rate == 'N/A' else '' }}">{{ win_rate }}</div>
     <div class="card-sub">
-      timeframe lock:
-      {% if timeframe_lock_enabled %}
-        <span class="badge badge-good">enabled</span>
-        <span class="muted">·</span>
-        <code>{{ allowed_timeframes_csv or '(none)' }}</code>
+      {% if win_rate == 'N/A' %}
+        not enough closed trades yet
       {% else %}
-        <span class="badge badge-warn">disabled</span>
+        over {{ closed_trade_total }} closed trades
       {% endif %}
-      · <a href="/settings/risk">edit</a>
     </div>
   </div>
-
   <div class="card">
-    <div class="card-label">Open positions ({{ open_position_count }})</div>
-    {% if open_positions %}
-      <div class="table-wrap" style="margin-top: 6px;">
-        <table class="mini">
-          <thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Avg</th></tr></thead>
-          <tbody>
-            {% for p in open_positions %}
-              <tr>
-                <td><strong>{{ p.symbol }}</strong></td>
-                <td>{{ p.side or '—' }}</td>
-                <td class="num">{{ p.quantity }}</td>
-                <td class="num">{{ '%.4f' % p.avg_price if p.avg_price is not none else '—' }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="empty"><strong>flat</strong>no open positions</div>
-    {% endif %}
-    {% if broker_provider == 'paper' %}
-      <div class="btn-row" style="margin-top: 8px;">
-        <button id="dash-paper-flatten" class="btn btn-danger" data-paper-flatten>Flatten All Paper Positions</button>
-        <button id="dash-paper-reset" class="btn" data-paper-reset>Reset Paper State</button>
-      </div>
-      <p class="muted" style="margin: 6px 0 0; font-size: 12px;">
-        Flatten zeroes open paper positions. Reset additionally clears in-memory
-        paper order state. Neither deletes the signal journal.
-      </p>
-    {% endif %}
+    <div class="card-label">Total points %</div>
+    <div class="card-value lg {{ 'muted' if total_points_percentage == 'N/A' else '' }}">
+      {{ total_points_percentage }}
+    </div>
+    <div class="card-sub">net points per closed trade</div>
   </div>
 </section>
 
+{# Open Orders — restyled to look like the old Recent Paper Orders block.
+   The separate Recent Paper Orders section has been removed because it
+   was redundant. #}
 <section class="section">
   <div class="card">
     <div class="card-row">
-      <div class="card-label">Recent paper orders</div>
+      <div class="card-label">Open orders</div>
       <span class="hint">latest 10 from the active adapter</span>
     </div>
     {% if recent_orders %}
@@ -361,43 +301,4 @@
     {% endif %}
   </div>
 </section>
-
-<script>
-async function _dashKs(path) {
-  try {
-    await fetch(path, { method: 'POST' });
-    location.reload();
-  } catch (e) { console.error('kill switch failed', e); }
-}
-document.getElementById('dash-ks-enable').addEventListener('click', () => _dashKs('/api/kill-switch/enable'));
-document.getElementById('dash-ks-disable').addEventListener('click', () => _dashKs('/api/kill-switch/disable'));
-
-async function _paperPost(path, confirmMsg) {
-  if (!window.confirm(confirmMsg)) return;
-  try {
-    const r = await fetch(path, { method: 'POST' });
-    const body = await r.json();
-    if (!body.ok) {
-      window.alert(body.message || 'paper action failed');
-    }
-    location.reload();
-  } catch (e) {
-    console.error('paper action failed', e);
-    window.alert('paper action failed: ' + e);
-  }
-}
-const _pf = document.getElementById('dash-paper-flatten');
-if (_pf) {
-  _pf.addEventListener('click', () =>
-    _paperPost('/api/paper/flatten', 'Flatten ALL open paper positions?')
-  );
-}
-const _pr = document.getElementById('dash-paper-reset');
-if (_pr) {
-  _pr.addEventListener('click', () =>
-    _paperPost('/api/paper/reset',
-      'Reset paper position/order state? (signal journal is kept)')
-  );
-}
-</script>
 {% endblock %}

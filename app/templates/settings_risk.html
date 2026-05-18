@@ -49,9 +49,6 @@
     <div class="card-label">Duplicate cooldown</div>
     <div class="card-value lg">{{ risk.duplicate_order_cooldown_seconds }}<span class="unit">sec</span></div>
   </div>
-</section>
-
-<section class="grid grid-4 section">
   <div class="card">
     <div class="card-label">Timeframe lock</div>
     <div class="card-value">
@@ -90,19 +87,6 @@
       {% endif %}
     </div>
   </div>
-  <div class="card">
-    <div class="card-label">Kill switch</div>
-    <div class="card-value">
-      {% if kill_switch_active %}
-        <span class="badge badge-bad plain">active</span>
-      {% elif risk.enable_kill_switch %}
-        <span class="badge badge-good plain">armed</span>
-      {% else %}
-        <span class="badge badge-warn plain">disabled</span>
-      {% endif %}
-    </div>
-    <div class="card-sub">{% if risk.enable_kill_switch %}ENABLE_KILL_SWITCH=true{% else %}ENABLE_KILL_SWITCH=false{% endif %}</div>
-  </div>
 </section>
 
 <section class="card section">
@@ -111,13 +95,6 @@
     <span class="hint">saved to SQLite · applies on next signal</span>
   </div>
   <form method="post" action="/settings/risk" class="form">
-    <div class="form-row">
-      <label for="allowed_symbols">Allowed symbols</label>
-      <input type="text" id="allowed_symbols" name="allowed_symbols"
-             value="{{ risk.allowed_symbols_csv }}"
-             placeholder="MES1!, MNQ1!">
-      <p class="muted" style="margin: 4px 0 0;">Comma-separated TradingView tickers.</p>
-    </div>
     <div class="form-row toggles">
       <label>
         <input type="checkbox" id="strategy_managed_risk"
@@ -128,17 +105,19 @@
     </div>
     <p class="muted" style="margin: 0 0 10px;">
       When enabled, SignalBridge uses the contract quantity sent by
-      TradingView. SignalBridge will still enforce max contracts and other
-      safety limits.
+      TradingView and disables the fixed-contracts input below. SignalBridge
+      still enforces max contracts and other safety limits.
     </p>
     <div class="grid grid-2">
-      <div class="form-row">
+      <div class="form-row" id="fixed-contracts-row"
+           data-strategy-managed="{{ 'true' if risk.strategy_managed_risk else 'false' }}">
         <label for="fixed_contracts_per_trade">Fixed contracts per trade</label>
         <input type="number" min="1" step="1" id="fixed_contracts_per_trade"
                name="fixed_contracts_per_trade"
-               value="{{ risk.fixed_contracts_per_trade }}">
+               value="{{ risk.fixed_contracts_per_trade }}"
+               {% if risk.strategy_managed_risk %}disabled aria-disabled="true"{% endif %}>
         <p class="muted" style="margin: 4px 0 0;">
-          Used only when the toggle above is off. Must be ≤ max contracts / trade.
+          Inactive when strategy-managed sizing is on. Must be ≤ max contracts / trade.
         </p>
       </div>
       <div class="form-row">
@@ -204,16 +183,6 @@
 </section>
 
 <section class="card section">
-  <h3>Allowed symbols</h3>
-  <p class="muted" style="margin: 0 0 6px;">Signals whose symbol isn't on this list are rejected before they reach the broker.</p>
-  {% if risk.allowed_symbols %}
-    <ul class="chips">{% for s in risk.allowed_symbols %}<li>{{ s }}</li>{% endfor %}</ul>
-  {% else %}
-    <div class="empty"><strong>empty</strong>add symbols above</div>
-  {% endif %}
-</section>
-
-<section class="card section">
   <div class="section-head">
     <h3>Kill switch control</h3>
     <span class="hint">manual override</span>
@@ -233,6 +202,24 @@
 </section>
 
 <script>
+// Greying out: keep the fixed-contracts input visually inactive when
+// strategy-managed is on. Mirrors the disabled attr the server renders
+// so a quick toggle preview works without a save.
+(function () {
+  var toggle = document.getElementById('strategy_managed_risk');
+  var row = document.getElementById('fixed-contracts-row');
+  var input = document.getElementById('fixed_contracts_per_trade');
+  if (!toggle || !row || !input) return;
+  function apply() {
+    var on = toggle.checked;
+    row.classList.toggle('is-disabled', on);
+    input.disabled = on;
+    input.setAttribute('aria-disabled', on ? 'true' : 'false');
+  }
+  toggle.addEventListener('change', apply);
+  apply();
+})();
+
 async function call(path) {
   const out = document.getElementById('ks-out');
   out.textContent = 'working…';

@@ -2,7 +2,7 @@
 {% block title %}Broker · SignalBridge{% endblock %}
 {% block page_title %}Broker{% endblock %}
 {% block content %}
-<h1>Broker settings</h1>
+<h1>Broker Settings</h1>
 <p class="subtitle">Pick the broker adapter + execution mode. Persisted in SQLite.</p>
 
 {% if flash %}
@@ -105,16 +105,6 @@
         —
       {% endif %}
     </dd>
-    <dt>isVisible</dt>
-    <dd>
-      {% if broker_status.selected_account.is_visible is true %}
-        <span class="badge badge-good plain">yes</span>
-      {% elif broker_status.selected_account.is_visible is false %}
-        <span class="badge badge-warn plain">no</span>
-      {% else %}
-        —
-      {% endif %}
-    </dd>
     <dt>auth</dt>
     <dd>
       <code>{{ broker_status.auth_status or '—' }}</code>
@@ -133,9 +123,6 @@
         <span class="badge badge-good plain">{{ broker_status.positions_count }} open</span>
       {% endif %}
       <span class="muted">status <code>{{ broker_status.positions_status or '—' }}</code></span>
-      {% if broker_status.positions_message %}
-        <span class="muted">· {{ broker_status.positions_message }}</span>
-      {% endif %}
     </dd>
     <dt>orders</dt>
     <dd>
@@ -145,9 +132,6 @@
         <span class="badge badge-good plain">{{ broker_status.orders_count }} known</span>
       {% endif %}
       <span class="muted">status <code>{{ broker_status.orders_status or '—' }}</code></span>
-      {% if broker_status.orders_message %}
-        <span class="muted">· {{ broker_status.orders_message }}</span>
-      {% endif %}
     </dd>
   </dl>
 </section>
@@ -165,193 +149,146 @@
 </section>
 {% endif %}
 
-{# ---- Form: provider + mode + selected account ---- #}
+{# ---- Form: provider + mode + selected account (collapsible) ---- #}
 <section class="card section">
-  <div class="section-head">
-    <h3>Broker / execution selection</h3>
-    <span class="hint">saved to SQLite · provider switch needs restart</span>
-  </div>
-  <form method="post" action="/settings/broker" class="form">
-    <div class="grid grid-2">
-      <div class="form-row">
-        <label for="broker_provider">Broker provider</label>
-        <select id="broker_provider" name="broker_provider">
-          {% for p in provider_options %}
-            <option value="{{ p }}" {% if p == configured_provider %}selected{% endif %}>{{ p }}</option>
-          {% endfor %}
-        </select>
-        <p class="muted" style="margin: 4px 0 0;">paper executes; topstep/tradovate return not implemented.</p>
-      </div>
-      <div class="form-row">
-        <label for="execution_mode">Execution mode</label>
-        <select id="execution_mode" name="execution_mode">
-          {% for m in execution_mode_options %}
-            <option value="{{ m }}" {% if m == configured_execution_mode %}selected{% endif %}>{{ m }}</option>
-          {% endfor %}
-        </select>
-        <p class="muted" style="margin: 4px 0 0;"><code>live</code> mode is intentionally disabled.</p>
-      </div>
-    </div>
-    <div class="form-row" style="margin-top: 10px;">
-      <label for="selected_account_id">Selected account ID</label>
-      <input id="selected_account_id" name="selected_account_id"
-             type="text" maxlength="128" autocomplete="off"
-             placeholder="e.g. PAPER-001 or your Topstep account id"
-             value="{{ selected_account_id_raw or '' }}" />
-      <p class="muted" style="margin: 4px 0 0;">
-        Empty → use the per-provider default (<code>PAPER-001</code>, <code>TOPSTEP_ACCOUNT_ID</code>, etc.).
-      </p>
-    </div>
+  <details class="collapsible">
+    <summary class="section-head collapsible-toggle">
+      <h3>Broker / execution selection</h3>
+      <span class="hint">saved to SQLite · provider switch needs restart</span>
+    </summary>
+    <div class="collapsible-body">
+      <form method="post" action="/settings/broker" class="form">
+        <div class="grid grid-2">
+          <div class="form-row">
+            <label for="broker_provider">Broker provider</label>
+            <select id="broker_provider" name="broker_provider">
+              {% for p in provider_options %}
+                <option value="{{ p }}" {% if p == configured_provider %}selected{% endif %}>{{ p }}</option>
+              {% endfor %}
+            </select>
+            <p class="muted" style="margin: 4px 0 0;">paper executes; topstep is read-only/dry-run; tradovate not implemented.</p>
+          </div>
+          <div class="form-row">
+            <label for="execution_mode">Execution mode</label>
+            <select id="execution_mode" name="execution_mode">
+              {% for m in execution_mode_options %}
+                <option value="{{ m }}" {% if m == configured_execution_mode %}selected{% endif %}>{{ m }}</option>
+              {% endfor %}
+            </select>
+            <p class="muted" style="margin: 4px 0 0;"><code>live</code> mode is intentionally disabled.</p>
+          </div>
+        </div>
 
-    <h3 style="margin-top: 18px;">Topstep / TopstepX (ProjectX)</h3>
-    <p class="muted" style="margin: 0 0 10px;">
-      Credentials for the future ProjectX adapter. The API key is never
-      echoed back — leave the field blank to keep the saved value.
-      Real auth/order routing is not implemented yet.
-    </p>
-    <div class="grid grid-2">
-      <div class="form-row">
-        <label for="topstep_username">TopstepX username</label>
-        <input id="topstep_username" name="topstep_username"
-               type="text" maxlength="256" autocomplete="off"
-               placeholder="your TopstepX username"
-               value="{{ topstep.username }}" />
-      </div>
-      <div class="form-row">
-        <label for="topstep_api_key">TopstepX API key</label>
-        <input id="topstep_api_key" name="topstep_api_key"
-               type="password" autocomplete="off"
-               placeholder="{{ 'leave blank to keep saved key (' + topstep.api_key_preview + ')' if topstep.api_key_set else 'paste your TopstepX API key' }}" />
-        <p class="muted" style="margin: 4px 0 0;">
-          {% if topstep.api_key_set %}
-            currently <code>{{ topstep.api_key_preview }}</code> · empty submit keeps it
-          {% else %}
-            not configured
-          {% endif %}
+        <div class="form-row" style="margin-top: 10px;">
+          <label for="selected_account_id">Selected account ID</label>
+          {# Dropdown of fetched Topstep accounts. Falls back to the raw
+             current value when no accounts have been fetched yet — the
+             operator can hit "Fetch accounts" below to populate it. #}
+          <select id="selected_account_id" name="selected_account_id" data-account-dropdown>
+            <option value="">— per-provider default —</option>
+            {% if selected_account_id_raw %}
+              <option value="{{ selected_account_id_raw }}" selected>
+                {{ selected_account_id_raw }} (current)
+              </option>
+            {% endif %}
+          </select>
+          <p class="muted" style="margin: 4px 0 0;">
+            Empty → use the per-provider default. Use <em>Fetch accounts</em> below to populate live Topstep accounts.
+            Saving updates <code>SELECTED_ACCOUNT_ID</code> and (for topstep) <code>TOPSTEP_ACCOUNT_ID</code>.
+          </p>
+        </div>
+
+        <h3 style="margin-top: 18px;">Topstep / TopstepX (ProjectX) credentials</h3>
+        <p class="muted" style="margin: 0 0 10px;">
+          Credentials for the ProjectX adapter. The API key is never echoed
+          back — leave the field blank to keep the saved value.
         </p>
-      </div>
-    </div>
-    <div class="grid grid-2">
-      <div class="form-row">
-        <label for="topstep_account_id">TopstepX account ID</label>
-        <input id="topstep_account_id" name="topstep_account_id"
-               type="text" maxlength="256" autocomplete="off"
-               placeholder="e.g. PRACTICE-XXXX"
-               value="{{ topstep.account_id }}" />
-      </div>
-      <div class="form-row">
-        <label for="topstep_env">TopstepX environment</label>
-        <select id="topstep_env" name="topstep_env">
-          {% for e in topstep.env_options %}
-            <option value="{{ e }}" {% if e == topstep.env %}selected{% endif %}>{{ e }}</option>
-          {% endfor %}
-        </select>
-        <p class="muted" style="margin: 4px 0 0;"><code>live</code> is intentionally disabled.</p>
-      </div>
-    </div>
-    <div class="grid grid-2">
-      <div class="form-row">
-        <label for="topstep_base_url">TopstepX base URL</label>
-        <input id="topstep_base_url" name="topstep_base_url"
-               type="text" maxlength="512" autocomplete="off"
-               placeholder="https://api.topstepx.com"
-               value="{{ topstep.base_url }}" />
-      </div>
-      <div class="form-row">
-        <label for="topstep_ws_url">TopstepX WebSocket URL</label>
-        <input id="topstep_ws_url" name="topstep_ws_url"
-               type="text" maxlength="512" autocomplete="off"
-               placeholder="https://rtc.topstepx.com"
-               value="{{ topstep.ws_url }}" />
-      </div>
-    </div>
+        <div class="grid grid-2">
+          <div class="form-row">
+            <label for="topstep_username">TopstepX username</label>
+            <input id="topstep_username" name="topstep_username"
+                   type="text" maxlength="256" autocomplete="off"
+                   placeholder="your TopstepX username"
+                   value="{{ topstep.username }}" />
+          </div>
+          <div class="form-row">
+            <label for="topstep_api_key">TopstepX API key</label>
+            <input id="topstep_api_key" name="topstep_api_key"
+                   type="password" autocomplete="off"
+                   placeholder="{{ 'leave blank to keep saved key (' + topstep.api_key_preview + ')' if topstep.api_key_set else 'paste your TopstepX API key' }}" />
+            <p class="muted" style="margin: 4px 0 0;">
+              {% if topstep.api_key_set %}
+                currently <code>{{ topstep.api_key_preview }}</code> · empty submit keeps it
+              {% else %}
+                not configured
+              {% endif %}
+            </p>
+          </div>
+        </div>
+        <div class="grid grid-2">
+          <div class="form-row">
+            <label for="topstep_account_id">TopstepX account ID</label>
+            <input id="topstep_account_id" name="topstep_account_id"
+                   type="text" maxlength="256" autocomplete="off"
+                   placeholder="e.g. PRACTICE-XXXX"
+                   value="{{ topstep.account_id }}" />
+          </div>
+          <div class="form-row">
+            <label for="topstep_env">TopstepX environment</label>
+            <select id="topstep_env" name="topstep_env">
+              {% for e in topstep.env_options %}
+                <option value="{{ e }}" {% if e == topstep.env %}selected{% endif %}>{{ e }}</option>
+              {% endfor %}
+            </select>
+            <p class="muted" style="margin: 4px 0 0;"><code>live</code> is intentionally disabled.</p>
+          </div>
+        </div>
+        <div class="grid grid-2">
+          <div class="form-row">
+            <label for="topstep_base_url">TopstepX base URL</label>
+            <input id="topstep_base_url" name="topstep_base_url"
+                   type="text" maxlength="512" autocomplete="off"
+                   placeholder="https://api.topstepx.com"
+                   value="{{ topstep.base_url }}" />
+          </div>
+          <div class="form-row">
+            <label for="topstep_ws_url">TopstepX WebSocket URL</label>
+            <input id="topstep_ws_url" name="topstep_ws_url"
+                   type="text" maxlength="512" autocomplete="off"
+                   placeholder="https://rtc.topstepx.com"
+                   value="{{ topstep.ws_url }}" />
+          </div>
+        </div>
 
-    <div class="btn-row">
-      <button type="submit" class="btn btn-primary">Save broker settings</button>
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary">Save broker settings</button>
+        </div>
+      </form>
     </div>
-  </form>
-</section>
-
-{# ---- Paper broker status ---- #}
-<section class="card section">
-  <div class="section-head">
-    <h3>Paper broker</h3>
-    <span class="hint">built-in, always available</span>
-  </div>
-  {% if broker_accounts.accounts %}
-    {% set acct = broker_accounts.accounts[0] %}
-    <dl class="kv">
-      <dt>account_id</dt><dd><code>{{ acct.account_id }}</code></dd>
-      <dt>balance</dt><dd>{{ '%.2f' % acct.balance }} {{ acct.currency }}</dd>
-      <dt>equity</dt><dd>{{ '%.2f' % acct.equity }} {{ acct.currency }}</dd>
-      <dt>realized P&L (points)</dt><dd>{{ '%+.2f' % acct.realized_pnl_points }}</dd>
-      <dt>daily P&L (points)</dt><dd>{{ '%+.2f' % acct.daily_pnl_points }}</dd>
-      <dt>open positions</dt><dd>{{ acct.open_position_count }}</dd>
-    </dl>
-  {% else %}
-    <p class="muted">
-      Paper account snapshot is unavailable
-      {% if broker_accounts.not_implemented %}
-        because the active provider is <code>{{ broker_accounts.provider }}</code>.
-        Switch to <code>paper</code> and restart to see it.
-      {% else %}
-        (no data yet).
-      {% endif %}
-    </p>
-  {% endif %}
-</section>
-
-{# ---- Paper controls: flatten / reset ---- #}
-<section class="card section">
-  <div class="section-head">
-    <h3>Paper controls</h3>
-    <span class="hint">test-position cleanup · paper provider only</span>
-  </div>
-  {% if active_broker_provider == 'paper' %}
-    <p class="muted" style="margin: 0 0 8px;">
-      Use these to return the simulated account to flat during testing.
-      Neither button deletes signal-journal rows or closed-trade history.
-    </p>
-    {% if broker_status.broker_connected and broker_accounts.accounts and broker_accounts.accounts[0].open_position_count %}
-      <p style="margin: 0 0 8px;">
-        <strong>{{ broker_accounts.accounts[0].open_position_count }}</strong>
-        open paper position(s).
-      </p>
-    {% else %}
-      <p class="muted" style="margin: 0 0 8px;">No open paper positions right now.</p>
-    {% endif %}
-    <div class="btn-row">
-      <button id="broker-paper-flatten" class="btn btn-danger" data-paper-flatten>Flatten All Paper Positions</button>
-      <button id="broker-paper-reset" class="btn" data-paper-reset>Reset Paper State</button>
-    </div>
-    <pre id="paper-action-out" class="output" style="margin-top: 10px;">no action yet</pre>
-  {% else %}
-    <p class="muted" style="margin: 0;">
-      Flatten / reset are only available when the active broker provider is
-      <code>paper</code>. Active provider: <code>{{ active_broker_provider }}</code>.
-    </p>
-  {% endif %}
+  </details>
 </section>
 
 {# ---- Test connection ---- #}
 <section class="card section">
   <div class="section-head">
-    <h2>Test connection</h2>
+    <h3>Test connection</h3>
     <span class="hint">probes the loaded adapter</span>
   </div>
   <p class="muted" style="margin: 0 0 10px;">
     Paper always returns <span class="good">ok</span>.
     Topstep runs a real <code>/api/Auth/loginKey</code> + <code>/api/Account/search</code> against ProjectX —
     no orders are placed.
-    Tradovate still returns <span class="warn">not implemented</span>.
   </p>
   <div class="btn-row">
     <button id="btn-test" class="btn btn-primary">Test {{ active_broker_provider }} connection</button>
+    <button id="btn-topstep-auth" class="btn">Test Topstep auth</button>
+    <button id="btn-topstep-accounts" class="btn">Fetch accounts</button>
   </div>
-  <pre id="test-out" class="output">click the button to probe the adapter…</pre>
+  <pre id="test-out" class="output">click a button to probe…</pre>
+  <div id="topstep-accounts-list" style="margin-top: 10px;"></div>
 </section>
 
-{# ---- Provider placeholders ---- #}
+{# ---- Provider credentials summary ---- #}
 <section class="grid grid-2 section">
   <div class="card">
     <div class="card-row">
@@ -370,12 +307,6 @@
       <dt>TOPSTEP_WS_URL</dt><dd><code>{{ topstep.ws_url or '—' }}</code></dd>
       <dt>token cached</dt><dd>{{ 'yes' if topstep.token_cached else 'no' }}{% if topstep.token_expires_at %} · expires <code>{{ topstep.token_expires_at }}</code>{% endif %}</dd>
     </dl>
-    <div class="btn-row" style="margin-top: 10px;">
-      <button id="btn-topstep-auth" class="btn">Test Topstep auth</button>
-      <button id="btn-topstep-accounts" class="btn">Fetch accounts</button>
-    </div>
-    <pre id="topstep-auth-out" class="output" style="margin-top: 10px;">click a button to call ProjectX…</pre>
-    <div id="topstep-accounts-list" style="margin-top: 10px;"></div>
   </div>
 
   <div class="card">
@@ -399,47 +330,59 @@
 </section>
 
 <script>
-document.getElementById('btn-test').addEventListener('click', async () => {
-  const out = document.getElementById('test-out');
-  out.textContent = 'testing…';
-  try {
-    const r = await fetch('/api/broker/test-connection', { method: 'POST' });
-    const body = await r.json();
-    out.textContent = JSON.stringify(body, null, 2);
-  } catch (e) {
-    out.textContent = 'request failed: ' + e;
-  }
-});
-
-async function _brokerPaperPost(path, confirmMsg) {
-  const out = document.getElementById('paper-action-out');
-  if (!window.confirm(confirmMsg)) return;
-  if (out) out.textContent = 'working…';
-  try {
-    const r = await fetch(path, { method: 'POST' });
-    const body = await r.json();
-    if (out) out.textContent = JSON.stringify(body, null, 2);
-  } catch (e) {
-    if (out) out.textContent = 'request failed: ' + e;
-  }
-}
-const _bpf = document.getElementById('broker-paper-flatten');
-if (_bpf) {
-  _bpf.addEventListener('click', () =>
-    _brokerPaperPost('/api/paper/flatten', 'Flatten ALL open paper positions?')
-  );
-}
-const _bpr = document.getElementById('broker-paper-reset');
-if (_bpr) {
-  _bpr.addEventListener('click', () =>
-    _brokerPaperPost('/api/paper/reset',
-      'Reset paper position/order state? (signal journal is kept)')
-  );
-}
-
-// --- Topstep auth / accounts -------------------------------------------------
-const _tsOut = document.getElementById('topstep-auth-out');
+const _out = document.getElementById('test-out');
 const _tsList = document.getElementById('topstep-accounts-list');
+const _acctSelect = document.querySelector('select[data-account-dropdown]');
+
+function _writeOut(body) {
+  if (_out) _out.textContent = JSON.stringify(body, null, 2);
+}
+
+async function _call(path, method) {
+  if (_out) _out.textContent = 'working…';
+  try {
+    const r = await fetch(path, { method: method || 'POST' });
+    const body = await r.json();
+    _writeOut(body);
+    return body;
+  } catch (e) {
+    if (_out) _out.textContent = 'request failed: ' + e;
+    return null;
+  }
+}
+
+function _populateAccountDropdown(accounts) {
+  if (!_acctSelect) return;
+  const current = _acctSelect.value;
+  // Wipe options except the "default" sentinel.
+  const sentinel = _acctSelect.querySelector('option[value=""]');
+  _acctSelect.innerHTML = '';
+  if (sentinel) _acctSelect.appendChild(sentinel);
+  accounts.forEach((a) => {
+    const id = String(a.id != null ? a.id : a.account_id || '');
+    if (!id) return;
+    const opt = document.createElement('option');
+    opt.value = id;
+    const bits = [id];
+    if (a.name) bits.push(a.name);
+    if (a.balance !== null && a.balance !== undefined) {
+      bits.push('bal ' + a.balance);
+    }
+    if (a.can_trade === true) bits.push('canTrade');
+    else if (a.can_trade === false) bits.push('noTrade');
+    opt.textContent = bits.join(' · ');
+    if (id === current) opt.selected = true;
+    _acctSelect.appendChild(opt);
+  });
+  if (!_acctSelect.value && current) {
+    // Re-insert the previous custom value so the operator doesn't lose it.
+    const opt = document.createElement('option');
+    opt.value = current;
+    opt.textContent = current + ' (current)';
+    opt.selected = true;
+    _acctSelect.appendChild(opt);
+  }
+}
 
 function _renderAccountsList(body) {
   if (!_tsList) return;
@@ -449,6 +392,7 @@ function _renderAccountsList(body) {
     _tsList.innerHTML = '<p class="muted">No accounts returned.</p>';
     return;
   }
+  _populateAccountDropdown(accounts);
   const wrap = document.createElement('div');
   wrap.innerHTML = '<h4 style="margin: 0 0 6px;">Active Topstep accounts</h4>';
   accounts.forEach((a) => {
@@ -472,19 +416,6 @@ function _renderAccountsList(body) {
   _tsList.appendChild(wrap);
 }
 
-async function _topstepCall(path, method) {
-  if (_tsOut) _tsOut.textContent = 'working…';
-  try {
-    const r = await fetch(path, { method: method || 'POST' });
-    const body = await r.json();
-    if (_tsOut) _tsOut.textContent = JSON.stringify(body, null, 2);
-    return body;
-  } catch (e) {
-    if (_tsOut) _tsOut.textContent = 'request failed: ' + e;
-    return null;
-  }
-}
-
 async function _topstepSelect(accountId) {
   if (!accountId) return;
   if (!window.confirm('Save ' + accountId + ' as SELECTED_ACCOUNT_ID / TOPSTEP_ACCOUNT_ID?')) return;
@@ -493,29 +424,27 @@ async function _topstepSelect(accountId) {
   try {
     const r = await fetch('/api/topstep/select-account', { method: 'POST', body: fd });
     const body = await r.json();
-    if (_tsOut) _tsOut.textContent = JSON.stringify(body, null, 2);
+    _writeOut(body);
     if (body && body.ok) {
-      // Reflect the new selection in the form field and reload to pick
-      // up the new account snapshot on the cards above.
-      const sel = document.getElementById('selected_account_id');
-      if (sel) sel.value = body.selected_account_id || accountId;
+      if (_acctSelect) _acctSelect.value = body.selected_account_id || accountId;
       window.setTimeout(() => window.location.reload(), 500);
     }
   } catch (e) {
-    if (_tsOut) _tsOut.textContent = 'select-account failed: ' + e;
+    if (_out) _out.textContent = 'select-account failed: ' + e;
   }
 }
 
-const _btnTsAuth = document.getElementById('btn-topstep-auth');
-if (_btnTsAuth) {
-  _btnTsAuth.addEventListener('click', () => _topstepCall('/api/topstep/authenticate', 'POST'));
-}
-const _btnTsAccts = document.getElementById('btn-topstep-accounts');
-if (_btnTsAccts) {
-  _btnTsAccts.addEventListener('click', async () => {
-    const body = await _topstepCall('/api/topstep/accounts', 'GET');
-    if (body) _renderAccountsList(body);
-  });
-}
+document.getElementById('btn-test').addEventListener('click', () =>
+  _call('/api/broker/test-connection', 'POST')
+);
+const _btnAuth = document.getElementById('btn-topstep-auth');
+if (_btnAuth) _btnAuth.addEventListener('click', () =>
+  _call('/api/topstep/authenticate', 'POST')
+);
+const _btnAccts = document.getElementById('btn-topstep-accounts');
+if (_btnAccts) _btnAccts.addEventListener('click', async () => {
+  const body = await _call('/api/topstep/accounts', 'GET');
+  if (body) _renderAccountsList(body);
+});
 </script>
 {% endblock %}

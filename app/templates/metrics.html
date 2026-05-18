@@ -5,7 +5,7 @@
 <h1>Metrics</h1>
 <p class="subtitle">Aggregate counts and performance from the local journal.</p>
 
-<section class="grid grid-4 section">
+<section class="grid grid-3 section">
   <div class="card">
     <div class="card-label">Accepted today</div>
     <div class="card-value lg good">{{ m.accepted_today }}</div>
@@ -18,12 +18,6 @@
     <div class="card-label">Total today</div>
     <div class="card-value lg">{{ m.total_today }}</div>
   </div>
-  <div class="card">
-    <div class="card-label">Paper P&amp;L today</div>
-    <div class="card-value lg {{ 'good' if m.daily_pnl > 0 else ('bad' if m.daily_pnl < 0 else '') }}">
-      {% if m.closed_total > 0 %}{{ '%+.4f' % m.daily_pnl }}<span class="unit">pts</span>{% else %}<span class="muted">N/A</span>{% endif %}
-    </div>
-  </div>
 </section>
 
 <section class="grid grid-3 section">
@@ -34,15 +28,45 @@
   </div>
   <div class="card">
     <div class="card-label">Win rate</div>
-    <div class="card-value lg">{{ m.win_rate }}</div>
+    <div class="card-value lg {{ 'muted' if m.win_rate == 'N/A' else '' }}">{{ m.win_rate }}</div>
     <div class="card-sub">{% if m.closed_total < 3 %}need {{ 3 - m.closed_total }} more closed trade(s){% else %}over {{ m.closed_total }} trades{% endif %}</div>
   </div>
   <div class="card">
-    <div class="card-label">Total points</div>
-    <div class="card-value lg {{ 'good' if m.total_points > 0 else ('bad' if m.total_points < 0 else '') }}">
-      {% if m.closed_total > 0 %}{{ '%+.4f' % m.total_points }}{% else %}<span class="muted">N/A</span>{% endif %}
+    <div class="card-label">Total points %</div>
+    <div class="card-value lg {{ 'muted' if m.total_points_percentage == 'N/A' else '' }}">
+      {{ m.total_points_percentage }}
     </div>
+    <div class="card-sub">net points per closed trade</div>
   </div>
+</section>
+
+<section class="card section">
+  <div class="section-head">
+    <h3>Profit (cumulative)</h3>
+    <span class="hint">closed-trade points, oldest → newest</span>
+  </div>
+  {% if m.profit_chart.empty %}
+    <div class="empty profit-graph-empty"><strong>no data</strong>No profit data yet.</div>
+  {% else %}
+    <div class="profit-graph">
+      <svg viewBox="0 0 {{ m.profit_chart.width }} {{ m.profit_chart.height }}"
+           preserveAspectRatio="none"
+           role="img"
+           aria-label="cumulative closed-trade points"
+           xmlns="http://www.w3.org/2000/svg">
+        <polyline
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          points="{{ m.profit_chart.points }}" />
+      </svg>
+      <div class="profit-graph-meta">
+        <span>min <strong>{{ '%+.2f' % m.profit_chart.min }}</strong></span>
+        <span>max <strong>{{ '%+.2f' % m.profit_chart.max }}</strong></span>
+        <span>final <strong class="{{ 'good' if m.profit_chart.final > 0 else ('bad' if m.profit_chart.final < 0 else '') }}">{{ '%+.2f' % m.profit_chart.final }}</strong></span>
+      </div>
+    </div>
+  {% endif %}
 </section>
 
 <section class="grid grid-2 section">
@@ -89,29 +113,5 @@
       <div class="empty"><strong>none</strong>no signals routed yet</div>
     {% endif %}
   </div>
-</section>
-
-<section class="card section">
-  <h3>Open positions</h3>
-  {% if m.open_positions %}
-    <div class="table-wrap">
-      <table class="mini">
-        <thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Avg</th><th>Updated</th></tr></thead>
-        <tbody>
-          {% for p in m.open_positions %}
-            <tr>
-              <td><strong>{{ p.symbol }}</strong></td>
-              <td>{{ p.side or '—' }}</td>
-              <td class="num">{{ p.quantity }}</td>
-              <td class="num">{{ '%.4f' % p.avg_price if p.avg_price is not none else '—' }}</td>
-              <td class="mono muted">{{ p.updated_at }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% else %}
-    <div class="empty"><strong>flat</strong>no open positions</div>
-  {% endif %}
 </section>
 {% endblock %}

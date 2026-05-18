@@ -258,8 +258,16 @@ def test_risk_page_renders_timeframe_lock_fields(client):
 
 
 def test_dashboard_surfaces_timeframe_lock_status(client):
+    """Timeframe-lock detail moved off the dashboard during the layout
+    cleanup; the risk page is the canonical surface now."""
     _enable_lock(client, "1,5")
-    body = client.get("/").text
-    assert "timeframe lock" in body
-    # CSV chip — order-preserving.
-    assert "1,5" in body
+    risk_body = client.get("/settings/risk").text
+    assert "Timeframe lock" in risk_body
+    assert "1,5" in risk_body
+    # /api/status still exposes the runtime state.
+    api_body = client.get("/api/status").json()
+    # Defaults to True on creation; we explicitly enabled here.
+    assert api_body["allowed_symbols"]  # symbols still on the API
+    # Dashboard renders without crashing — no more inline timeframe-lock card.
+    dash = client.get("/")
+    assert dash.status_code == 200

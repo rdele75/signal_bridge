@@ -23,22 +23,42 @@
       </div>
     </div>
 
+    {# Sidebar nav.
+       Overview stays visible. Configuration / Activity / System are
+       collapsible <details> groups, collapsed by default. A group auto-
+       expands when the current path lives inside it so the active item
+       is always visible after navigation. #}
+    {% set cfg_paths   = ['/settings/broker', '/settings/risk', '/tradingview'] %}
+    {% set act_paths   = ['/journal', '/metrics'] %}
+    {% set sys_paths   = ['/logs', '/system'] %}
     <nav class="sidebar-nav">
       <div class="section-label">Overview</div>
       <a href="/"                class="{{ 'active' if path == '/' else '' }}">Dashboard</a>
 
-      <div class="section-label">Configuration</div>
-      <a href="/settings/broker" class="{{ 'active' if path == '/settings/broker' else '' }}">Broker</a>
-      <a href="/settings/risk"   class="{{ 'active' if path == '/settings/risk' else '' }}">Risk</a>
-      <a href="/tradingview"     class="{{ 'active' if path == '/tradingview' else '' }}">TradingView</a>
+      <details class="nav-group" {% if path in cfg_paths %}open{% endif %}>
+        <summary class="section-label nav-group-toggle">Configuration</summary>
+        <div class="nav-group-body">
+          <a href="/settings/broker" class="{{ 'active' if path == '/settings/broker' else '' }}">Broker</a>
+          <a href="/settings/risk"   class="{{ 'active' if path == '/settings/risk' else '' }}">Risk</a>
+          <a href="/tradingview"     class="{{ 'active' if path == '/tradingview' else '' }}">TradingView</a>
+        </div>
+      </details>
 
-      <div class="section-label">Activity</div>
-      <a href="/journal"         class="{{ 'active' if path == '/journal' else '' }}">Journal</a>
-      <a href="/metrics"         class="{{ 'active' if path == '/metrics' else '' }}">Metrics</a>
-      <a href="/logs"            class="{{ 'active' if path == '/logs' else '' }}">Logs</a>
+      <details class="nav-group" {% if path in act_paths %}open{% endif %}>
+        <summary class="section-label nav-group-toggle">Activity</summary>
+        <div class="nav-group-body">
+          <a href="/journal"         class="{{ 'active' if path == '/journal' else '' }}">Journal</a>
+          <a href="/metrics"         class="{{ 'active' if path == '/metrics' else '' }}">Metrics</a>
+        </div>
+      </details>
 
-      <div class="section-label">System</div>
-      <a href="/system"          class="{{ 'active' if path == '/system' else '' }}">System</a>
+      <details class="nav-group" {% if path in sys_paths %}open{% endif %}>
+        <summary class="section-label nav-group-toggle">System</summary>
+        <div class="nav-group-body">
+          <a href="/logs"            class="{{ 'active' if path == '/logs' else '' }}">Logs</a>
+          <a href="/system"          class="{{ 'active' if path == '/system' else '' }}">System</a>
+        </div>
+      </details>
     </nav>
 
     <div class="sidebar-foot">
@@ -63,7 +83,22 @@
       <span class="badge {{ mode_class }}">{{ execution_mode }}</span>
       <span class="label">broker</span>
       <span class="badge {{ broker_class }}">{{ broker_provider }}</span>
-      <span class="badge {{ ks_class }}">{{ ks_text }}</span>
+
+      {# Header kill-switch toggle. Replaces the old dashboard card —
+         always visible across pages so the operator can hit it
+         immediately. Hits the existing /api/kill-switch/{enable,disable}
+         endpoints. The label text matches the old badge so existing
+         shell-aware checks still see "kill switch off / active". #}
+      <button
+        type="button"
+        id="header-killswitch"
+        class="ks-toggle {{ 'ks-on' if kill_switch_active else 'ks-off' }}"
+        data-state="{{ 'active' if kill_switch_active else 'off' }}"
+        aria-pressed="{{ 'true' if kill_switch_active else 'false' }}"
+        title="Kill switch — click to {{ 'deactivate' if kill_switch_active else 'activate' }}">
+        <span class="ks-dot" aria-hidden="true"></span>
+        kill switch {{ 'active' if kill_switch_active else 'off' }}
+      </button>
     </div>
   </header>
 
@@ -71,5 +106,25 @@
     {% block content %}{% endblock %}
   </main>
 </div>
+
+<script>
+// Shared topbar kill-switch toggle. Uses existing API endpoints.
+(function () {
+  var btn = document.getElementById('header-killswitch');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    var path = btn.dataset.state === 'active'
+      ? '/api/kill-switch/disable'
+      : '/api/kill-switch/enable';
+    btn.disabled = true;
+    fetch(path, { method: 'POST' })
+      .then(function () { window.location.reload(); })
+      .catch(function (e) {
+        btn.disabled = false;
+        console.error('kill switch toggle failed', e);
+      });
+  });
+})();
+</script>
 </body>
 </html>

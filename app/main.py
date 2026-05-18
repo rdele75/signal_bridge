@@ -750,7 +750,18 @@ def create_app() -> FastAPI:
             payload = await request.json()
         except Exception:
             payload = None
-        return handler.handle(payload)
+        # Xiznit native alerts can't carry our secret in the body —
+        # accept it from the query string or X-SignalBridge-Secret
+        # header. Body wins when present (handled inside ``handle``).
+        query_secret = request.query_params.get("secret")
+        header_secret = request.headers.get("x-signalbridge-secret")
+        request_secret = header_secret or query_secret
+        query_symbol = request.query_params.get("symbol")
+        return handler.handle(
+            payload,
+            request_secret=request_secret,
+            query_symbol=query_symbol,
+        )
 
     # ------------------------------------------------------------------
     # HTML pages
@@ -919,7 +930,6 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_admin_page)],
     )
     def post_settings_risk(
-        allowed_symbols: str = Form(""),
         max_contracts_per_trade: str = Form(...),
         strategy_managed_risk: str = Form("false"),
         fixed_contracts_per_trade: str = Form("1"),
@@ -930,11 +940,15 @@ def create_app() -> FastAPI:
         enable_shorts: str = Form("false"),
         enable_timeframe_lock: str = Form("false"),
         allowed_timeframes: str = Form(""),
+        # Allowed symbols is no longer surfaced on the risk page. The
+        # backend setting still exists (advanced/system settings will
+        # own it later). Accept the field optionally so legacy clients +
+        # tests can still update it.
+        allowed_symbols: Optional[str] = Form(None),
     ):
         # Coerce + validate every field individually first so a bad input
         # surfaces a typed error before we touch SQLite.
         raw_updates: list[tuple[str, Any]] = [
-            ("ALLOWED_SYMBOLS", allowed_symbols),
             ("MAX_CONTRACTS_PER_TRADE", max_contracts_per_trade),
             ("STRATEGY_MANAGED_RISK", strategy_managed_risk),
             ("FIXED_CONTRACTS_PER_TRADE", fixed_contracts_per_trade),
@@ -946,6 +960,8 @@ def create_app() -> FastAPI:
             ("ENABLE_TIMEFRAME_LOCK", enable_timeframe_lock),
             ("ALLOWED_TIMEFRAMES", allowed_timeframes),
         ]
+        if allowed_symbols is not None:
+            raw_updates.append(("ALLOWED_SYMBOLS", allowed_symbols))
         from .settings_store import coerce as _coerce_key, serialize as _serialize_key
 
         try:

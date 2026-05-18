@@ -193,24 +193,25 @@ def test_flatten_symbol_safe_message_for_topstep(make_app):
 
 # ---------- UI surfacing ----------
 
-def test_dashboard_shows_flatten_and_reset_buttons(client):
+def test_dashboard_no_longer_shows_inline_paper_controls(client):
+    """The paper flatten/reset buttons have been removed from the
+    dashboard as part of the layout cleanup. The /api/paper/* endpoints
+    are still wired (see api-level tests above)."""
     body = client.get("/").text
-    assert "data-paper-flatten" in body
-    assert "data-paper-reset" in body
-    assert "Flatten All Paper Positions" in body
-    assert "Reset Paper State" in body
+    assert "data-paper-flatten" not in body
+    assert "data-paper-reset" not in body
 
 
-def test_broker_page_shows_paper_controls(client):
+def test_broker_page_no_longer_shows_paper_controls(client):
+    """Paper-controls card removed from the broker settings page during
+    the dashboard cleanup. API still works."""
     body = client.get("/settings/broker").text
-    assert "Paper controls" in body
-    assert "data-paper-flatten" in body
-    assert "data-paper-reset" in body
+    assert "Paper controls" not in body
+    assert "data-paper-flatten" not in body
 
 
 def test_dashboard_hides_paper_controls_for_non_paper(make_app):
-    """When the configured provider is topstep, the dashboard should not
-    render the paper flatten/reset buttons."""
+    """Sanity: no paper controls on the dashboard for any provider."""
     app = make_app(provider="topstep")
     with TestClient(app) as c:
         body = c.get("/").text

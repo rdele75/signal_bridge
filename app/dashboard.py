@@ -10,6 +10,7 @@ import os
 import platform
 import socket
 import sys
+from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -18,6 +19,112 @@ from .config import PROJECT_ROOT, Settings
 from .execution.broker_base import BrokerBase
 from .journal import Journal
 from .kill_switch import KillSwitch
+
+
+# ET trading-session windows. Approximations — tweak here when the
+# operator wants something more precise (futures globex hours,
+# pre-/post-market, etc.).
+_SESSIONS_ET = (
+    # (label, start, end). Windows wrap across midnight if start > end.
+    ("New York", dtime(9, 30), dtime(16, 0)),
+    ("London",   dtime(3, 0),  dtime(9, 30)),
+    ("Asia",     dtime(18, 0), dtime(3, 0)),
+)
+
+
+def _et_now() -> datetime:
+    """Return 'now' in US/Eastern. Falls back to naive offset arithmetic
+    if zoneinfo can't load the tzdb (tests/CI without tzdata)."""
+    try:
+        from zoneinfo import ZoneInfo  # py3.9+
+        return datetime.now(ZoneInfo("America/New_York"))
+    except Exception:  # pragma: no cover - tzdata fallback
+        # Crude fallback: assume EST (UTC-5). Better than crashing.
+        return datetime.now(timezone.utc) - timedelta(hours=5)
+
+
+def _in_window(now_t: dtime, start: dtime, end: dtime) -> bool:
+    if start <= end:
+        return start <= now_t < end
+    # Window wraps across midnight (e.g. Asia 18:00 → 03:00 next day).
+    return now_t >= start or now_t < end
+
+
+def current_trading_session(now_et: Optional[datetime] = None) -> str:
+    """Return the futures-style session label for an ET datetime.
+
+    Returns "Asia", "London", "New York", or "Off-hours". Tweak
+    ``_SESSIONS_ET`` to adjust windows.
+    """
+    now_et = now_et or _et_now()
+    t = now_et.time()
+    for label, start, end in _SESSIONS_ET:
+        if _in_window(t, start, end):
+            return label
+    return "Off-hours"
+
+
+def current_session_time(now_et: Optional[datetime] = None) -> str:
+    """Pretty ET time string for the trading-session card."""
+    now_et = now_et or _et_now()
+    return now_et.strftime("%H:%M:%S ET")
+
+
+def win_rate(journal: Journal, *, min_trades: int = 3) -> str:
+    """Format the closed-trade win rate as a percentage string, or
+    'N/A' if there aren't enough trades yet."""
+    closed = journal.closed_trade_stats()
+    total = closed.get("total", 0)
+    wins = closed.get("wins", 0)
+    if total < min_trades or total <= 0:
+        return "N/A"
+    return f"{(wins / total) * 100:.1f}%"
+
+
+def total_points_percentage(journal: Journal) -> str:
+    """Total points expressed against the gross points traded.
+
+    `closed_trade_stats` only tracks signed PnL points, so we can't get a
+    true win-vs-loss ratio without absolute points per trade. Return the
+    net points percentage as |total_points| / max(|win_pts|, |loss_pts|)
+    style is overkill — instead, show a simple net % vs a configurable
+    target of 1 point per trade. If insufficient data, return 'N/A'.
+    """
+    closed = journal.closed_trade_stats()
+    total = closed.get("total", 0)
+    if total <= 0:
+        return "N/A"
+    total_pts = float(closed.get("total_points", 0.0) or 0.0)
+    denom = float(total)
+    pct = (total_pts / denom) * 100.0
+    return f"{pct:+.1f}%"
+
+
+def profit_series(journal: Journal, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Return a chronological list of closed-trade points for a sparkline.
+
+    Each item: {"closed_at": iso, "points": float, "cumulative": float}.
+    Empty list when there are no closed trades — the template renders
+    an empty-state graph container in that case.
+    """
+    rows = journal.list_recent_closed_trades(limit=limit)
+    # list_recent_closed_trades is newest-first. Reverse for a left-to-right
+    # cumulative series.
+    rows = list(reversed(rows))
+    series: list[dict[str, Any]] = []
+    running = 0.0
+    for r in rows:
+        pts = float(r.get("realized_pnl_points") or 0.0)
+        running += pts
+        series.append(
+            {
+                "closed_at": r.get("closed_at"),
+                "points": pts,
+                "cumulative": running,
+                "symbol": r.get("symbol"),
+            }
+        )
+    return series
 
 
 def _maybe_json(value: Optional[str]) -> Any:
@@ -48,13 +155,12 @@ def dashboard_summary(
         f"{daily_pnl:+.2f} pts" if closed["total"] > 0 else "N/A"
     )
 
-    webhook = _webhook_status(settings)
     configured_provider = settings.resolved_provider
     broker_status = broker_status_payload(settings=settings, broker=broker)
 
-    # Recent paper orders for the dashboard table. Only paper has fills
-    # right now — for placeholder providers the list comes back empty
-    # but still renders safely.
+    # Recent broker orders feed the dashboard "Open Orders" table that
+    # replaces the old paper-orders block. Only paper has fills right
+    # now — placeholder providers come back with an empty list.
     recent_orders_resp = _safe_get_orders(broker)
     recent_orders = recent_orders_resp.get("orders") or []
 
@@ -68,6 +174,8 @@ def dashboard_summary(
         positions=broker_positions,
         orders=broker_orders,
     )
+
+    session_now = _et_now()
 
     return {
         "app_name": settings.app_name,
@@ -102,9 +210,10 @@ def dashboard_summary(
         "daily_pnl": daily_pnl,
         "daily_pnl_display": pnl_display,
         "closed_trade_total": closed["total"],
-        "webhook_path": "/webhooks/tradingview",
-        "webhook_secret_set": webhook["secret_set"],
-        "webhook_url_local": webhook["url_local"],
+        "win_rate": win_rate(journal),
+        "total_points_percentage": total_points_percentage(journal),
+        "trading_session": current_trading_session(session_now),
+        "session_time": current_session_time(session_now),
     }
 
 
@@ -234,11 +343,7 @@ def system_summary(
 
 def metrics_summary(*, journal: Journal) -> dict[str, Any]:
     closed = journal.closed_trade_stats()
-    win_rate = (
-        f"{(closed['wins'] / closed['total']) * 100:.1f}%"
-        if closed["total"] >= 3
-        else "N/A"
-    )
+    series = profit_series(journal, limit=100)
     return {
         "accepted_today": journal.count_today(decision="accepted"),
         "rejected_today": journal.count_today(decision="rejected"),
@@ -251,8 +356,45 @@ def metrics_summary(*, journal: Journal) -> dict[str, Any]:
         "closed_wins": closed["wins"],
         "closed_losses": closed["losses"],
         "total_points": closed["total_points"],
-        "win_rate": win_rate,
+        "win_rate": win_rate(journal),
+        "total_points_percentage": total_points_percentage(journal),
         "daily_pnl": journal.get_daily_pnl(),
+        "profit_series": series,
+        "profit_chart": _profit_chart(series),
+    }
+
+
+def _profit_chart(series: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pre-compute SVG points/min/max for the metrics page profit graph.
+
+    Returns ``{"empty": True}`` when no data — the template renders the
+    empty-state box. Otherwise returns SVG-ready geometry so the
+    template stays dumb."""
+    if not series:
+        return {"empty": True, "points": "", "min": 0.0, "max": 0.0}
+    cumul = [float(p.get("cumulative") or 0.0) for p in series]
+    lo = min(cumul + [0.0])
+    hi = max(cumul + [0.0])
+    width = 600
+    height = 160
+    pad_x = 4
+    pad_y = 8
+    span = hi - lo if hi != lo else 1.0
+    n = max(len(cumul) - 1, 1)
+    coords: list[str] = []
+    for i, v in enumerate(cumul):
+        x = pad_x + (i / n) * (width - 2 * pad_x)
+        # SVG y grows downward — invert.
+        y = pad_y + (1 - (v - lo) / span) * (height - 2 * pad_y)
+        coords.append(f"{x:.1f},{y:.1f}")
+    return {
+        "empty": False,
+        "points": " ".join(coords),
+        "width": width,
+        "height": height,
+        "min": lo,
+        "max": hi,
+        "final": cumul[-1],
     }
 
 

@@ -643,3 +643,142 @@ pre.code {
   width: auto;
   accent-color: var(--accent);
 }
+
+/* Inactive form row — used to grey out fixed_contracts when
+   strategy-managed risk is on. */
+.form .form-row.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: grayscale(0.5);
+}
+.form input:disabled,
+.form select:disabled,
+.form textarea:disabled {
+  background: var(--bg-2);
+  color: var(--fg-mute);
+  cursor: not-allowed;
+  border-color: var(--border);
+}
+
+/* ----- Sidebar collapsible groups ----- */
+.sidebar-nav .nav-group { margin: 0; padding: 0; }
+.sidebar-nav .nav-group > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+.sidebar-nav .nav-group > summary::-webkit-details-marker { display: none; }
+.sidebar-nav .nav-group > summary::after {
+  content: "›";
+  color: var(--fg-mute);
+  font-size: 14px;
+  margin-right: 4px;
+  transition: transform 0.15s ease;
+  transform: rotate(0deg);
+}
+.sidebar-nav .nav-group[open] > summary::after { transform: rotate(90deg); }
+.sidebar-nav .nav-group > summary:hover { color: var(--fg-dim); }
+.sidebar-nav .nav-group .nav-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 4px;
+}
+
+/* ----- Kill-switch toggle (topbar) ----- */
+.ks-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 4px 14px 4px 10px;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  margin-left: 8px;
+  transition: all 0.15s ease;
+}
+.ks-toggle .ks-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--good);
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.45);
+  flex-shrink: 0;
+}
+.ks-toggle.ks-on {
+  color: var(--bad);
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(248, 113, 113, 0.10);
+}
+.ks-toggle.ks-on .ks-dot {
+  background: var(--bad);
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.6);
+  animation: ks-pulse 1.2s infinite ease-in-out;
+}
+.ks-toggle.ks-off {
+  color: var(--good);
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.06);
+}
+.ks-toggle:hover { filter: brightness(1.1); }
+.ks-toggle:disabled { opacity: 0.6; cursor: progress; }
+@keyframes ks-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+/* ----- Generic collapsible card section ----- */
+details.collapsible { margin: 0; }
+details.collapsible > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+details.collapsible > summary::-webkit-details-marker { display: none; }
+details.collapsible > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+details.collapsible > summary::after {
+  content: "›";
+  color: var(--fg-mute);
+  font-size: 16px;
+  transition: transform 0.15s ease;
+  transform: rotate(0deg);
+}
+details.collapsible[open] > summary::after { transform: rotate(90deg); }
+details.collapsible > summary:hover h3 { color: var(--accent); }
+.collapsible-body { padding-top: 10px; }
+
+/* ----- Profit graph (metrics page) ----- */
+.profit-graph { color: var(--accent); }
+.profit-graph svg {
+  display: block;
+  width: 100%;
+  height: 160px;
+  background: linear-gradient(180deg, rgba(124,140,255,0.05), transparent 80%);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.profit-graph-meta {
+  margin-top: 8px;
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+}
+.profit-graph-meta strong { color: var(--fg); font-weight: 600; }
+.profit-graph-empty { color: var(--fg-mute); }

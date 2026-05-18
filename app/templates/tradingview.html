@@ -62,55 +62,74 @@
 </section>
 
 <section class="card section">
-  <h3>Webhook URL — three forms</h3>
-  <p class="muted" style="margin: 0 0 6px;">
-    SignalBridge is bound to <code>{{ host }}:{{ port }}</code>. TradingView's servers
-    can't reach <code>127.0.0.1</code> directly — for real alerts, expose it via ngrok
-    or Cloudflare Tunnel and use the public HTTPS URL.
-  </p>
-  <div class="code-frame">
-    <span class="copy-hint">local</span>
-    <pre class="code">http://127.0.0.1:{{ port }}/webhooks/tradingview</pre>
-  </div>
-  <div class="code-frame">
-    <span class="copy-hint">lan / tailscale</span>
-    <pre class="code">http://HOST:{{ port }}/webhooks/tradingview</pre>
-  </div>
-  <div class="code-frame">
-    <span class="copy-hint">public tunnel (https)</span>
-    <pre class="code">https://YOUR-TUNNEL-URL/webhooks/tradingview</pre>
-  </div>
-  <p class="muted" style="margin: 8px 0 0;">
-    Replace <code>HOST</code> with the machine's LAN or Tailscale magic-DNS name,
-    and <code>YOUR-TUNNEL-URL</code> with the hostname your ngrok / Cloudflare Tunnel prints.
-  </p>
+  <details class="collapsible">
+    <summary class="section-head collapsible-toggle">
+      <h3>Webhook URL — three forms</h3>
+      <span class="hint">click to expand</span>
+    </summary>
+    <div class="collapsible-body">
+      <p class="muted" style="margin: 0 0 6px;">
+        SignalBridge is bound to <code>{{ host }}:{{ port }}</code>. TradingView's servers
+        can't reach <code>127.0.0.1</code> directly — for real alerts, expose it via ngrok
+        or Cloudflare Tunnel and use the public HTTPS URL.
+      </p>
+      <div class="code-frame">
+        <span class="copy-hint">local</span>
+        <pre class="code">http://127.0.0.1:{{ port }}/webhooks/tradingview</pre>
+      </div>
+      <div class="code-frame">
+        <span class="copy-hint">lan / tailscale</span>
+        <pre class="code">http://HOST:{{ port }}/webhooks/tradingview</pre>
+      </div>
+      <div class="code-frame">
+        <span class="copy-hint">public tunnel (https)</span>
+        <pre class="code">https://YOUR-TUNNEL-URL/webhooks/tradingview</pre>
+      </div>
+      <p class="muted" style="margin: 8px 0 0;">
+        Replace <code>HOST</code> with the machine's LAN or Tailscale magic-DNS name,
+        and <code>YOUR-TUNNEL-URL</code> with the hostname your ngrok / Cloudflare Tunnel prints.
+      </p>
+    </div>
+  </details>
 </section>
 
 <section class="card section">
-  <h3>Alert JSON template</h3>
-  <p class="muted" style="margin: 0 0 6px;">
-    Paste this into the TradingView alert's <em>Message</em> field. Replace
-    <code>&lt;your TRADINGVIEW_WEBHOOK_SECRET&gt;</code> with the actual secret saved above.
-  </p>
-  <div class="code-frame">
-    <span class="copy-hint">json</span>
-    <pre class="code">{{ alert_template }}</pre>
-  </div>
-  <p class="muted" style="margin: 8px 0 0;">
-    <strong>Note:</strong> For strategy / indicator alerts, <code>{{ '{{interval}}' }}</code>
-    sends the chart timeframe (e.g. <code>1</code>, <code>5</code>, <code>60</code>,
-    <code>D</code>). TradingView may return <code>1</code> for some price-only or
-    Range chart alerts — keep that in mind if you enable the timeframe lock on the
-    <a href="/settings/risk">Risk page</a>.
-  </p>
+  <details class="collapsible">
+    <summary class="section-head collapsible-toggle">
+      <h3>Alert JSON template</h3>
+      <span class="hint">click to expand</span>
+    </summary>
+    <div class="collapsible-body">
+      <p class="muted" style="margin: 0 0 6px;">
+        Paste this into the TradingView alert's <em>Message</em> field. Replace
+        <code>&lt;your TRADINGVIEW_WEBHOOK_SECRET&gt;</code> with the actual secret saved above.
+      </p>
+      <div class="code-frame">
+        <span class="copy-hint">json</span>
+        <pre class="code">{{ alert_template }}</pre>
+      </div>
+      <p class="muted" style="margin: 8px 0 0;">
+        <strong>Note:</strong> For strategy / indicator alerts, <code>{{ '{{interval}}' }}</code>
+        sends the chart timeframe (e.g. <code>1</code>, <code>5</code>, <code>60</code>,
+        <code>D</code>). TradingView may return <code>1</code> for some price-only or
+        Range chart alerts — keep that in mind if you enable the timeframe lock on the
+        <a href="/settings/risk">Risk page</a>.
+      </p>
+    </div>
+  </details>
 </section>
 
 <section class="card section">
-  <h3>Local curl test</h3>
-  <p class="muted" style="margin: 0 0 6px;">Verify the bridge accepts and routes a synthetic signal without touching TradingView.</p>
-  <div class="code-frame">
-    <span class="copy-hint">bash</span>
-    <pre class="code">curl -X POST {{ webhook_url }} \
+  <details class="collapsible">
+    <summary class="section-head collapsible-toggle">
+      <h3>Local curl test</h3>
+      <span class="hint">click to expand</span>
+    </summary>
+    <div class="collapsible-body">
+      <p class="muted" style="margin: 0 0 6px;">Verify the bridge accepts and routes a synthetic signal without touching TradingView.</p>
+      <div class="code-frame">
+        <span class="copy-hint">bash</span>
+        <pre class="code">curl -X POST {{ webhook_url }} \
   -H 'Content-Type: application/json' \
   -d '{
     "secret": "<your TRADINGVIEW_WEBHOOK_SECRET>",
@@ -120,7 +139,9 @@
     "price": "5000.25",
     "order_id": "manual-test-001"
   }'</pre>
-  </div>
+      </div>
+    </div>
+  </details>
 </section>
 
 <section class="grid grid-2 section">
