@@ -71,6 +71,94 @@
   </div>
 </section>
 
+<section class="section">
+  <div class="card">
+    <div class="card-row">
+      <div class="card-label">Broker account · {{ broker_account_card.provider }}</div>
+      {% if broker_account_card.broker_connected %}
+        <span class="badge badge-good">connected</span>
+      {% elif broker_account_card.not_implemented %}
+        <span class="badge badge-warn">not implemented</span>
+      {% else %}
+        <span class="badge badge-bad">offline</span>
+      {% endif %}
+    </div>
+    <div class="grid grid-4" style="margin-top: 8px;">
+      <div>
+        <div class="card-label">Selected account</div>
+        <div class="card-value sm mono">{{ broker_account_card.selected_account_id or '—' }}</div>
+        <div class="card-sub">{{ broker_account_card.selected_account_name or '—' }}</div>
+      </div>
+      <div>
+        <div class="card-label">Balance</div>
+        <div class="card-value sm">
+          {% if broker_account_card.balance is not none %}
+            {{ '%.2f' % broker_account_card.balance }}
+          {% else %}
+            —
+          {% endif %}
+        </div>
+        <div class="card-sub">
+          {% if broker_account_card.can_trade is true %}
+            <span class="badge badge-good plain">canTrade</span>
+          {% elif broker_account_card.can_trade is false %}
+            <span class="badge badge-bad plain">noTrade</span>
+          {% else %}
+            <span class="muted">canTrade unknown</span>
+          {% endif %}
+          {% if broker_account_card.is_visible is false %}
+            <span class="badge badge-warn plain">hidden</span>
+          {% endif %}
+        </div>
+      </div>
+      <div>
+        <div class="card-label">Open positions</div>
+        <div class="card-value sm">
+          {% if broker_account_card.positions_not_implemented %}
+            <span class="muted">n/a</span>
+          {% else %}
+            {{ broker_account_card.positions_count }}
+          {% endif %}
+        </div>
+        <div class="card-sub">
+          {% if broker_account_card.positions_not_implemented %}
+            {{ broker_account_card.provider }} positions endpoint not implemented yet
+          {% else %}
+            live broker positions
+          {% endif %}
+        </div>
+      </div>
+      <div>
+        <div class="card-label">Orders</div>
+        <div class="card-value sm">
+          {% if broker_account_card.orders_not_implemented %}
+            <span class="muted">n/a</span>
+          {% else %}
+            {{ broker_account_card.orders_count }}
+          {% endif %}
+        </div>
+        <div class="card-sub">
+          {% if broker_account_card.orders_not_implemented %}
+            {{ broker_account_card.provider }} orders endpoint not implemented yet
+          {% else %}
+            recent broker orders
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="card-sub" style="margin-top: 8px;">
+      auth: <code>{{ broker_account_card.auth_status or '—' }}</code>
+      {% if broker_account_card.token_cached %}
+        · token cached
+        {% if broker_account_card.token_expires_at %}
+          · expires <code>{{ broker_account_card.token_expires_at }}</code>
+        {% endif %}
+      {% endif %}
+      · <a href="/settings/broker">broker settings</a>
+    </div>
+  </div>
+</section>
+
 <section class="grid grid-2 section">
   <div class="card">
     <div class="card-label">Webhook</div>

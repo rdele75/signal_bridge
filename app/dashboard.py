@@ -58,6 +58,17 @@ def dashboard_summary(
     recent_orders_resp = _safe_get_orders(broker)
     recent_orders = recent_orders_resp.get("orders") or []
 
+    broker_positions_resp = _safe_get_positions(broker)
+    broker_positions = broker_positions_resp.get("positions") or []
+    broker_orders = recent_orders
+    broker_account_card = _broker_account_card(
+        broker_status=broker_status,
+        positions_resp=broker_positions_resp,
+        orders_resp=recent_orders_resp,
+        positions=broker_positions,
+        orders=broker_orders,
+    )
+
     return {
         "app_name": settings.app_name,
         "app_version": __version__,
@@ -70,6 +81,7 @@ def dashboard_summary(
         "broker_connected": broker_status["broker_connected"],
         "broker_message": broker_status["broker_message"],
         "broker_not_implemented": broker_status["not_implemented"],
+        "broker_account_card": broker_account_card,
         "recent_orders": recent_orders[:10],
         "recent_orders_not_implemented": bool(
             recent_orders_resp.get("not_implemented")
@@ -102,6 +114,53 @@ def _safe_get_orders(broker: BrokerBase) -> dict[str, Any]:
     except Exception:  # pragma: no cover - defensive
         return {"ok": False, "orders": [], "not_implemented": False}
     return result if isinstance(result, dict) else {"ok": False, "orders": []}
+
+
+def _safe_get_positions(broker: BrokerBase) -> dict[str, Any]:
+    try:
+        result = broker.get_positions()
+    except Exception:  # pragma: no cover - defensive
+        return {"ok": False, "positions": [], "not_implemented": False}
+    return (
+        result
+        if isinstance(result, dict)
+        else {"ok": False, "positions": []}
+    )
+
+
+def _broker_account_card(
+    *,
+    broker_status: dict[str, Any],
+    positions_resp: dict[str, Any],
+    orders_resp: dict[str, Any],
+    positions: list[Any],
+    orders: list[Any],
+) -> dict[str, Any]:
+    """Compact summary card the dashboard renders for the active broker
+    account. Surfaces what's reliably available; any field the adapter
+    doesn't expose is ``None`` and the template renders a dash."""
+    return {
+        "provider": broker_status.get("provider"),
+        "broker_provider": broker_status.get("broker_provider"),
+        "broker_connected": broker_status.get("broker_connected"),
+        "broker_message": broker_status.get("broker_message"),
+        "status": broker_status.get("status"),
+        "auth_status": broker_status.get("auth_status"),
+        "not_implemented": broker_status.get("not_implemented"),
+        "selected_account_id": broker_status.get("selected_account_id"),
+        "selected_account_name": broker_status.get("selected_account_name"),
+        "balance": broker_status.get("balance"),
+        "can_trade": broker_status.get("can_trade"),
+        "is_visible": broker_status.get("is_visible"),
+        "token_cached": broker_status.get("token_cached"),
+        "token_expires_at": broker_status.get("token_expires_at"),
+        "positions_count": len(positions),
+        "positions_not_implemented": bool(positions_resp.get("not_implemented")),
+        "positions_message": positions_resp.get("message", ""),
+        "orders_count": len(orders),
+        "orders_not_implemented": bool(orders_resp.get("not_implemented")),
+        "orders_message": orders_resp.get("message", ""),
+    }
 
 
 def _webhook_status(settings: Settings) -> dict[str, Any]:
@@ -218,12 +277,48 @@ def _broker_account_id(settings: Settings, provider: str) -> Optional[str]:
     return resolved or None
 
 
+_TOKEN_EXPIRY_VISIBLE_CHARS = 19  # "YYYY-MM-DDTHH:MM:SS"
+
+
+def _mask_token_expiry(value: Optional[str]) -> str:
+    """Trim a cached token's ISO expiry to a stable, dashboard-safe
+    prefix. Empty values come back empty."""
+    if not value:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    return text[:_TOKEN_EXPIRY_VISIBLE_CHARS]
+
+
+def _account_view(account: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Project a Topstep account into the dashboard-friendly subset.
+
+    Returns ``None`` when no account is supplied so the template can
+    cleanly render "no selected account" without poking into a dict.
+    """
+    if not isinstance(account, dict):
+        return None
+    raw_id = account.get("id", account.get("account_id"))
+    return {
+        "id": raw_id,
+        "account_id": raw_id,
+        "id_str": "" if raw_id is None else str(raw_id),
+        "name": account.get("name"),
+        "balance": account.get("balance"),
+        "can_trade": account.get("can_trade"),
+        "is_visible": account.get("is_visible"),
+    }
+
+
 def broker_status_payload(
     *, settings: Settings, broker: BrokerBase
 ) -> dict[str, Any]:
     """Snapshot used by /api/broker/status and the dashboard cards.
 
     Never raises — the dashboard/API rely on it always returning JSON.
+    Surfaces the selected account snapshot (id, name, balance, canTrade,
+    isVisible) and the cached-token state for adapters that expose them.
     """
     try:
         probe = broker.test_connection()
@@ -235,6 +330,15 @@ def broker_status_payload(
             "not_implemented": False,
             "message": f"test_connection raised: {exc.__class__.__name__}",
         }
+    credentials = probe.get("credentials") if isinstance(probe, dict) else None
+    creds = credentials if isinstance(credentials, dict) else {}
+    selected_account = _account_view(probe.get("selected_account"))
+    selected_account_name = (
+        selected_account.get("name") if selected_account else None
+    )
+    balance = selected_account.get("balance") if selected_account else None
+    can_trade = selected_account.get("can_trade") if selected_account else None
+    is_visible = selected_account.get("is_visible") if selected_account else None
     return {
         "ok": bool(probe.get("ok")),
         "provider": broker.provider,
@@ -242,10 +346,19 @@ def broker_status_payload(
         "active_broker_provider": broker.provider,
         "execution_mode": settings.execution_mode,
         "selected_account_id": settings.resolved_account_id or None,
+        "selected_account_name": selected_account_name,
+        "selected_account": selected_account,
         "broker_connected": bool(probe.get("ok")),
         "broker_message": probe.get("message", ""),
         "not_implemented": bool(probe.get("not_implemented")),
         "status": probe.get("status", "unknown"),
+        "auth_status": probe.get("status", "unknown"),
+        "balance": balance,
+        "can_trade": can_trade,
+        "is_visible": is_visible,
+        "accounts_count": probe.get("accounts_count"),
+        "token_cached": bool(creds.get("token_cached")),
+        "token_expires_at": _mask_token_expiry(creds.get("token_expires_at")),
         "restart_required": settings.resolved_provider != broker.provider,
     }
 

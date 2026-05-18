@@ -36,14 +36,18 @@ MANAGED_KEYS: tuple[str, ...] = (
     "DUPLICATE_ORDER_COOLDOWN_SECONDS",
     "ENABLE_TIMEFRAME_LOCK",
     "ALLOWED_TIMEFRAMES",
-    # Topstep / TopstepX (ProjectX) — scaffolded adapter, persisted so the
-    # dashboard can configure credentials ahead of the real auth phase.
+    # Topstep / TopstepX (ProjectX) — credentials + cached auth artifacts.
+    # TOKEN / TOKEN_EXPIRES_AT are written by the adapter after a successful
+    # loginKey call, never by the user, but they need to be persisted so the
+    # token survives a restart.
     "TOPSTEP_USERNAME",
     "TOPSTEP_API_KEY",
     "TOPSTEP_ACCOUNT_ID",
     "TOPSTEP_ENV",
     "TOPSTEP_BASE_URL",
     "TOPSTEP_WS_URL",
+    "TOPSTEP_TOKEN",
+    "TOPSTEP_TOKEN_EXPIRES_AT",
 )
 
 # Keys whose change can be applied to the in-memory Settings instance
@@ -74,6 +78,8 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "TOPSTEP_ENV",
         "TOPSTEP_BASE_URL",
         "TOPSTEP_WS_URL",
+        "TOPSTEP_TOKEN",
+        "TOPSTEP_TOKEN_EXPIRES_AT",
     }
 )
 
@@ -270,7 +276,9 @@ def coerce(key: str, raw: Any) -> Any:
     if key == "TOPSTEP_API_KEY":
         # Allow empty (cleared) or any non-empty secret string. We do not
         # impose a strict format because ProjectX issues opaque keys.
-        text = str(raw) if raw is not None else ""
+        # Stripped because dashboard paste-in commonly carries a trailing
+        # newline / space, which causes silent errorCode=3 on ProjectX.
+        text = (str(raw) if raw is not None else "").strip()
         if len(text) > 1024:
             raise SettingsValidationError("TOPSTEP_API_KEY is unexpectedly long")
         return text
@@ -295,6 +303,20 @@ def coerce(key: str, raw: Any) -> Any:
             )
         if len(text) > 512:
             raise SettingsValidationError(f"{key} is too long")
+        return text
+
+    if key == "TOPSTEP_TOKEN":
+        # Opaque JWT-ish blob written by the adapter. Allow empty (cleared)
+        # or any non-empty value up to a generous ceiling.
+        text = str(raw) if raw is not None else ""
+        if len(text) > 8192:
+            raise SettingsValidationError("TOPSTEP_TOKEN is unexpectedly long")
+        return text
+
+    if key == "TOPSTEP_TOKEN_EXPIRES_AT":
+        text = (str(raw) if raw is not None else "").strip()
+        if len(text) > 64:
+            raise SettingsValidationError("TOPSTEP_TOKEN_EXPIRES_AT is too long")
         return text
 
     raise SettingsValidationError(f"unknown setting: {key}")
@@ -331,6 +353,8 @@ _KEY_TO_ATTR: dict[str, str] = {
     "TOPSTEP_ENV": "topstep_env",
     "TOPSTEP_BASE_URL": "topstep_base_url",
     "TOPSTEP_WS_URL": "topstep_ws_url",
+    "TOPSTEP_TOKEN": "topstep_token",
+    "TOPSTEP_TOKEN_EXPIRES_AT": "topstep_token_expires_at",
 }
 
 

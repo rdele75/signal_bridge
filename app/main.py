@@ -50,7 +50,8 @@ from .settings_store import (
     generate_secret,
     webhook_secret_preview,
 )
-from .signal_router import build_broker
+from .execution.topstep import TopstepBroker
+from .signal_router import _topstep_token_sink, build_broker
 from .symbol_map import SymbolMap
 from .webhook import WebhookHandler
 
@@ -117,7 +118,7 @@ def create_app() -> FastAPI:
         enabled=settings.enable_kill_switch,
     )
     risk = RiskEngine(settings=settings, journal=journal, kill_switch=kill_switch)
-    broker = build_broker(settings, journal)
+    broker = build_broker(settings, journal, settings_store=settings_store)
     symbol_map = SymbolMap(settings.symbols_map_abs_path)
     handler = WebhookHandler(
         settings=settings,
@@ -330,6 +331,118 @@ def create_app() -> FastAPI:
     def api_broker_accounts() -> dict[str, Any]:
         return _safe_broker_call("get_accounts")
 
+    def _topstep_adapter_for_admin() -> TopstepBroker:
+        """Topstep adapter for admin endpoints.
+
+        Re-uses the live broker when it's already a TopstepBroker (so its
+        cached token sticks around). Otherwise it builds a transient
+        TopstepBroker from current settings so the admin endpoints work
+        before the operator has flipped BROKER_PROVIDER + restarted.
+        """
+        if isinstance(broker, TopstepBroker):
+            return broker
+        return TopstepBroker(
+            username=settings.topstep_username,
+            password=settings.topstep_password,
+            api_key=settings.topstep_api_key,
+            account_id=(
+                settings.topstep_account_id or settings.selected_account_id
+            ),
+            env=settings.topstep_env,
+            base_url=settings.topstep_base_url,
+            ws_url=settings.topstep_ws_url,
+            token=settings.topstep_token,
+            token_expires_at=settings.topstep_token_expires_at,
+            token_sink=_topstep_token_sink(settings, settings_store),
+        )
+
+    def _safe_topstep_call(method_name: str, *args, **kwargs) -> dict[str, Any]:
+        topstep = _topstep_adapter_for_admin()
+        fn = getattr(topstep, method_name)
+        try:
+            result = fn(*args, **kwargs)
+        except NotImplementedError as exc:
+            return {
+                "ok": False,
+                "provider": "topstep",
+                "not_implemented": True,
+                "status": "not_implemented",
+                "message": str(exc) or f"topstep {method_name} not implemented",
+            }
+        except Exception as exc:  # pragma: no cover - defensive
+            return {
+                "ok": False,
+                "provider": "topstep",
+                "status": "error",
+                "message": f"{method_name} raised: {exc.__class__.__name__}",
+            }
+        return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+    @app.post(
+        "/api/topstep/authenticate",
+        dependencies=[Depends(require_admin_api)],
+    )
+    def api_topstep_authenticate() -> JSONResponse:
+        result = _safe_topstep_call("authenticate")
+        return JSONResponse(content=result, status_code=200)
+
+    @app.get(
+        "/api/topstep/accounts", dependencies=[Depends(require_admin_api)]
+    )
+    def api_topstep_accounts_get() -> JSONResponse:
+        result = _safe_topstep_call("get_accounts")
+        return JSONResponse(content=result, status_code=200)
+
+    @app.post(
+        "/api/topstep/accounts", dependencies=[Depends(require_admin_api)]
+    )
+    def api_topstep_accounts_post() -> JSONResponse:
+        result = _safe_topstep_call("get_accounts")
+        return JSONResponse(content=result, status_code=200)
+
+    @app.post(
+        "/api/topstep/select-account",
+        dependencies=[Depends(require_admin_api)],
+    )
+    def api_topstep_select_account(
+        account_id: str = Form(...),
+    ) -> JSONResponse:
+        try:
+            topstep_acct = settings_store.update_typed(
+                "TOPSTEP_ACCOUNT_ID", account_id
+            )
+            selected_acct = settings_store.update_typed(
+                "SELECTED_ACCOUNT_ID", account_id
+            )
+        except SettingsValidationError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "message": str(exc)},
+            )
+        settings_store.apply_to_settings(
+            settings, "TOPSTEP_ACCOUNT_ID", topstep_acct
+        )
+        settings_store.apply_to_settings(
+            settings, "SELECTED_ACCOUNT_ID", selected_acct
+        )
+        # Mirror onto the active broker so the next call reflects the
+        # new selection without a restart.
+        if isinstance(broker, TopstepBroker):
+            broker.account_id = topstep_acct
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "provider": "topstep",
+                "selected_account_id": selected_acct,
+                "topstep_account_id": topstep_acct,
+                "message": (
+                    f"Saved {topstep_acct or '(empty)'} as the selected "
+                    "Topstep account."
+                ),
+            },
+        )
+
     @app.get(
         "/api/broker/positions", dependencies=[Depends(require_admin_api)]
     )
@@ -437,7 +550,21 @@ def create_app() -> FastAPI:
         ctx = _page_ctx(request)
         configured = settings.resolved_provider
         broker_snapshot = broker_status_payload(settings=settings, broker=broker)
-        accounts = _safe_broker_call("get_accounts")
+        # Only ask the active broker for accounts when it's paper — paper's
+        # call is in-memory and cheap. Topstep would otherwise blow out to
+        # the network on every page render; the UI has a dedicated "Fetch
+        # accounts" button that goes through /api/topstep/accounts.
+        if broker.provider == "paper":
+            accounts = _safe_broker_call("get_accounts")
+        else:
+            accounts = {
+                "ok": False,
+                "provider": broker.provider,
+                "not_implemented": True,
+                "status": "not_loaded_for_this_provider",
+                "accounts": [],
+                "message": "paper account snapshot only shown when paper is active",
+            }
         api_key = settings.topstep_api_key or ""
         api_key_preview = (
             f"…{api_key[-4:]}" if len(api_key) >= 4 else ""

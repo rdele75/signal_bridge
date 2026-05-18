@@ -6,15 +6,41 @@ back to paper — the safe default for a single-user bot.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from .config import Settings
 from .execution.broker_base import BrokerBase
 from .execution.paper import PaperBroker
 from .execution.topstep import TopstepBroker
 from .execution.tradovate import TradovateBroker
 from .journal import Journal
+from .settings_store import SettingsStore
 
 
-def build_broker(settings: Settings, journal: Journal) -> BrokerBase:
+def _topstep_token_sink(
+    settings: Settings, settings_store: SettingsStore
+):
+    """Persist freshly minted Topstep tokens back into SQLite + Settings.
+
+    Called by ``TopstepBroker`` immediately after a successful loginKey
+    response so the token survives a restart.
+    """
+
+    def _persist(token: str, expires_at: str) -> None:
+        settings_store.set_setting("TOPSTEP_TOKEN", token)
+        settings_store.set_setting("TOPSTEP_TOKEN_EXPIRES_AT", expires_at)
+        settings.topstep_token = token
+        settings.topstep_token_expires_at = expires_at
+
+    return _persist
+
+
+def build_broker(
+    settings: Settings,
+    journal: Journal,
+    *,
+    settings_store: Optional[SettingsStore] = None,
+) -> BrokerBase:
     provider = settings.resolved_provider
 
     if provider == "paper":
@@ -24,6 +50,11 @@ def build_broker(settings: Settings, journal: Journal) -> BrokerBase:
         )
 
     if provider == "topstep":
+        token_sink = (
+            _topstep_token_sink(settings, settings_store)
+            if settings_store is not None
+            else None
+        )
         return TopstepBroker(
             username=settings.topstep_username,
             password=settings.topstep_password,
@@ -34,6 +65,7 @@ def build_broker(settings: Settings, journal: Journal) -> BrokerBase:
             ws_url=settings.topstep_ws_url,
             token=settings.topstep_token,
             token_expires_at=settings.topstep_token_expires_at,
+            token_sink=token_sink,
         )
 
     if provider == "tradovate":

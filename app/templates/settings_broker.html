@@ -12,9 +12,9 @@
 {% endif %}
 
 <div class="banner warn">
-  <span class="t">Paper-only:</span> SignalBridge currently only executes against the
-  built-in paper adapter. Topstep and Tradovate are scaffolded but not connected to
-  a real broker API yet. <code>live</code> execution mode is disabled in this build.
+  <span class="t">Execution still paper-only:</span> Topstep authentication and active-account
+  discovery are wired up against the real ProjectX API, but order placement is intentionally
+  disabled in this phase. <code>live</code> execution mode is also off in this build.
 </div>
 
 {# ---- Top status cards ---- #}
@@ -71,6 +71,80 @@
     <div class="card-sub">{{ broker_status.broker_message or '—' }}</div>
   </div>
 </section>
+
+{# ---- Selected broker account snapshot ---- #}
+{% if broker_status.selected_account %}
+<section class="card section">
+  <div class="section-head">
+    <h3>Selected {{ broker_status.provider }} account</h3>
+    <span class="hint">live snapshot from the broker</span>
+  </div>
+  <dl class="kv">
+    <dt>account id</dt><dd><code>{{ broker_status.selected_account.id_str or '—' }}</code></dd>
+    <dt>name</dt><dd>{{ broker_status.selected_account.name or '—' }}</dd>
+    <dt>balance</dt>
+    <dd>
+      {% if broker_status.selected_account.balance is not none %}
+        {{ '%.2f' % broker_status.selected_account.balance }}
+      {% else %}
+        —
+      {% endif %}
+    </dd>
+    <dt>canTrade</dt>
+    <dd>
+      {% if broker_status.selected_account.can_trade is true %}
+        <span class="badge badge-good plain">yes</span>
+      {% elif broker_status.selected_account.can_trade is false %}
+        <span class="badge badge-bad plain">no</span>
+      {% else %}
+        —
+      {% endif %}
+    </dd>
+    <dt>isVisible</dt>
+    <dd>
+      {% if broker_status.selected_account.is_visible is true %}
+        <span class="badge badge-good plain">yes</span>
+      {% elif broker_status.selected_account.is_visible is false %}
+        <span class="badge badge-warn plain">no</span>
+      {% else %}
+        —
+      {% endif %}
+    </dd>
+    <dt>auth</dt>
+    <dd>
+      <code>{{ broker_status.auth_status or '—' }}</code>
+      {% if broker_status.token_cached %}
+        · token cached
+        {% if broker_status.token_expires_at %}
+          · expires <code>{{ broker_status.token_expires_at }}</code>
+        {% endif %}
+      {% endif %}
+    </dd>
+    <dt>positions</dt>
+    <dd>
+      <span class="badge badge-warn plain">not implemented yet</span>
+      <span class="muted">read-only positions endpoint coming next</span>
+    </dd>
+    <dt>orders</dt>
+    <dd>
+      <span class="badge badge-warn plain">not implemented yet</span>
+      <span class="muted">read-only orders endpoint coming next</span>
+    </dd>
+  </dl>
+</section>
+{% elif active_broker_provider == 'topstep' %}
+<section class="card section">
+  <div class="section-head">
+    <h3>Selected Topstep account</h3>
+    <span class="hint">live snapshot from the broker</span>
+  </div>
+  <p class="muted">
+    No selected account snapshot yet — current status:
+    <code>{{ broker_status.auth_status or broker_status.status or '—' }}</code>.
+    {% if broker_status.broker_message %} {{ broker_status.broker_message }}{% endif %}
+  </p>
+</section>
+{% endif %}
 
 {# ---- Form: provider + mode + selected account ---- #}
 <section class="card section">
@@ -248,7 +322,9 @@
   </div>
   <p class="muted" style="margin: 0 0 10px;">
     Paper always returns <span class="good">ok</span>.
-    Topstep and Tradovate return <span class="warn">not implemented (501)</span>.
+    Topstep runs a real <code>/api/Auth/loginKey</code> + <code>/api/Account/search</code> against ProjectX —
+    no orders are placed.
+    Tradovate still returns <span class="warn">not implemented</span>.
   </p>
   <div class="btn-row">
     <button id="btn-test" class="btn btn-primary">Test {{ active_broker_provider }} connection</button>
@@ -261,11 +337,11 @@
   <div class="card">
     <div class="card-row">
       <h3>Topstep / TopstepX</h3>
-      <span class="badge badge-warn">scaffolded</span>
+      <span class="badge badge-warn">auth + accounts only</span>
     </div>
     <p class="muted">Primary futures broker (ProjectX REST + WebSocket).
-    Adapter scaffolded — real auth and order routing are not implemented yet.
-    Save credentials above to prepare for the next phase.</p>
+    Real ProjectX authentication and active-account discovery are implemented —
+    order placement is intentionally off in this phase.</p>
     <dl class="kv">
       <dt>TOPSTEP_ENV</dt><dd>{{ topstep.env or '—' }}</dd>
       <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username_preview or ('configured' if topstep.username_set else '—') }}</dd>
@@ -273,8 +349,14 @@
       <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>
       <dt>TOPSTEP_BASE_URL</dt><dd><code>{{ topstep.base_url or '—' }}</code></dd>
       <dt>TOPSTEP_WS_URL</dt><dd><code>{{ topstep.ws_url or '—' }}</code></dd>
-      <dt>token cached</dt><dd>{{ 'yes' if topstep.token_cached else 'no' }}</dd>
+      <dt>token cached</dt><dd>{{ 'yes' if topstep.token_cached else 'no' }}{% if topstep.token_expires_at %} · expires <code>{{ topstep.token_expires_at }}</code>{% endif %}</dd>
     </dl>
+    <div class="btn-row" style="margin-top: 10px;">
+      <button id="btn-topstep-auth" class="btn">Test Topstep auth</button>
+      <button id="btn-topstep-accounts" class="btn">Fetch accounts</button>
+    </div>
+    <pre id="topstep-auth-out" class="output" style="margin-top: 10px;">click a button to call ProjectX…</pre>
+    <div id="topstep-accounts-list" style="margin-top: 10px;"></div>
   </div>
 
   <div class="card">
@@ -334,6 +416,87 @@ if (_bpr) {
     _brokerPaperPost('/api/paper/reset',
       'Reset paper position/order state? (signal journal is kept)')
   );
+}
+
+// --- Topstep auth / accounts -------------------------------------------------
+const _tsOut = document.getElementById('topstep-auth-out');
+const _tsList = document.getElementById('topstep-accounts-list');
+
+function _renderAccountsList(body) {
+  if (!_tsList) return;
+  _tsList.innerHTML = '';
+  const accounts = (body && body.accounts) || [];
+  if (!accounts.length) {
+    _tsList.innerHTML = '<p class="muted">No accounts returned.</p>';
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.innerHTML = '<h4 style="margin: 0 0 6px;">Active Topstep accounts</h4>';
+  accounts.forEach((a) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border,#333);';
+    const label = document.createElement('span');
+    label.style.flex = '1';
+    const bal = (a.balance !== null && a.balance !== undefined) ? a.balance : '—';
+    const ct = a.can_trade === true ? 'canTrade' : (a.can_trade === false ? 'noTrade' : '');
+    label.innerHTML = '<code>' + (a.id || '?') + '</code> · ' + (a.name || '(unnamed)')
+      + ' · bal ' + bal + (ct ? ' · ' + ct : '');
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.type = 'button';
+    btn.textContent = 'Use this account';
+    btn.addEventListener('click', () => _topstepSelect(a.id));
+    row.appendChild(label);
+    row.appendChild(btn);
+    wrap.appendChild(row);
+  });
+  _tsList.appendChild(wrap);
+}
+
+async function _topstepCall(path, method) {
+  if (_tsOut) _tsOut.textContent = 'working…';
+  try {
+    const r = await fetch(path, { method: method || 'POST' });
+    const body = await r.json();
+    if (_tsOut) _tsOut.textContent = JSON.stringify(body, null, 2);
+    return body;
+  } catch (e) {
+    if (_tsOut) _tsOut.textContent = 'request failed: ' + e;
+    return null;
+  }
+}
+
+async function _topstepSelect(accountId) {
+  if (!accountId) return;
+  if (!window.confirm('Save ' + accountId + ' as SELECTED_ACCOUNT_ID / TOPSTEP_ACCOUNT_ID?')) return;
+  const fd = new FormData();
+  fd.append('account_id', accountId);
+  try {
+    const r = await fetch('/api/topstep/select-account', { method: 'POST', body: fd });
+    const body = await r.json();
+    if (_tsOut) _tsOut.textContent = JSON.stringify(body, null, 2);
+    if (body && body.ok) {
+      // Reflect the new selection in the form field and reload to pick
+      // up the new account snapshot on the cards above.
+      const sel = document.getElementById('selected_account_id');
+      if (sel) sel.value = body.selected_account_id || accountId;
+      window.setTimeout(() => window.location.reload(), 500);
+    }
+  } catch (e) {
+    if (_tsOut) _tsOut.textContent = 'select-account failed: ' + e;
+  }
+}
+
+const _btnTsAuth = document.getElementById('btn-topstep-auth');
+if (_btnTsAuth) {
+  _btnTsAuth.addEventListener('click', () => _topstepCall('/api/topstep/authenticate', 'POST'));
+}
+const _btnTsAccts = document.getElementById('btn-topstep-accounts');
+if (_btnTsAccts) {
+  _btnTsAccts.addEventListener('click', async () => {
+    const body = await _topstepCall('/api/topstep/accounts', 'GET');
+    if (body) _renderAccountsList(body);
+  });
 }
 </script>
 {% endblock %}
