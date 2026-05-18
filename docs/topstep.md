@@ -1,179 +1,261 @@
-# Topstep / TopstepX integration (read-only account data)
+# Topstep / TopstepX integration
 
-SignalBridge currently supports the following with Topstep:
+SignalBridge talks to Topstep through the
+[**ProjectX**](https://www.topstepx.com/) REST API. Three layers are
+wired up — only the first is on by default:
 
-- **Authentication** against TopstepX/ProjectX (`/api/Auth/loginKey`)
-  using your **TopstepX email address** as `TOPSTEP_USERNAME` and a
-  ProjectX API key.
-- **Account discovery** (`/api/Account/search`) — returns the
-  **numeric ProjectX account id**, account name, balance, `canTrade`,
-  and `isVisible` for each active account.
-- **Read-only account status** surfaced on the dashboard and
-  `/api/broker/status` (selected account id/name, balance, canTrade,
-  isVisible, cached-token state).
+| Layer                                  | Default | Notes |
+|----------------------------------------|---------|-------|
+| Read-only account / position / order data | **on** | `Auth/loginKey`, `Account/search`, `Position/searchOpen`, `Order/searchOpen`, `Order/search` |
+| Dry-run market-order *previews* (no submission) | **on** | builds `/api/Order/place` payload, journals it, never POSTs |
+| Demo/sim market-order *execution* (real POST `/api/Order/place`) | **off** | gated by four safety switches; live/funded execution stays locked |
 
-Open-positions and working-orders read endpoints are **scaffolded** —
-they return a structured `not_implemented` envelope until the
-ProjectX response shapes are pinned down. The endpoints stay
-read-only and never hit the wire while scaffolded.
+Bracket orders, flatten/cancel via REST, WebSocket streams, and
+live/funded execution are **not implemented** and not planned for this
+build.
 
-**Order placement is still disabled** — the webhook handler rejects
-Topstep-routed signals with a clearly labeled reason
-(`broker_not_implemented: topstep_order_submission_disabled:
-topstep_execution_not_enabled: …`) so no real orders leave the
-building, and never silently falls back to paper.
+## Credentials
 
-**Do not share or commit API keys or tokens.** The `TOPSTEP_API_KEY`
-and `TOPSTEP_TOKEN` are masked in the dashboard and in API responses
-(last 4 characters only). `.env` is gitignored.
+- `TOPSTEP_USERNAME` is your **TopstepX login email address** — not the
+  friendly account label (e.g. `PRACTICEDEC1100146-21434541`). The
+  label is the account `name` returned by `/api/Account/search`; the
+  auth call wants the email tied to the user.
+- `TOPSTEP_API_KEY` comes from **TopstepX → API tab** (the API generator
+  page; ProjectX is a paid add-on, make sure your account has it
+  enabled). The UI shows the key once — copy it somewhere safe.
+- **Do not share or commit API keys or tokens.** `.env` is gitignored.
+  `TOPSTEP_API_KEY` and `TOPSTEP_TOKEN` are masked everywhere they
+  appear in the dashboard / API (last 4 characters only). Short values
+  show as `configured`.
 
-## How Topstep exposes its API
+## Read-only data (Phase 1)
 
-Topstep/TopstepX uses [**ProjectX**](https://www.topstepx.com/) for
-programmatic access. ProjectX provides:
+The adapter calls these endpoints. Each one returns a structured
+envelope (`ok`, `status`, `provider`, the response payload, masked
+credential summary) and never crashes.
 
-- REST and WebSocket APIs
-- API-key authentication (per-user TopstepX API key)
-- Market and historical data feeds
-- Account access and order routing
+| Method                                 | Endpoint                      | Body                              |
+|----------------------------------------|-------------------------------|-----------------------------------|
+| `authenticate()`                       | `POST /api/Auth/loginKey`     | `{userName, apiKey}`              |
+| `get_accounts()`                       | `POST /api/Account/search`    | `{onlyActiveAccounts: true}`      |
+| `get_selected_account()`               | (in-memory match on accounts) | compares ids as **trimmed strings** so numeric ProjectX ids and the user-saved string form match |
+| `get_positions()`                      | `POST /api/Position/searchOpen` | `{accountId: <int>}`            |
+| `get_orders()`                         | `POST /api/Order/searchOpen`  | `{accountId: <int>}`              |
+| `search_orders(start, end)`            | `POST /api/Order/search`      | `{accountId, startTimestamp?, endTimestamp?}` |
+| `test_connection()`                    | auth + accounts               | reports `selected_account`, `accounts_count`, masked token cache |
 
-### Get TopstepX API access
+`TOPSTEP_ACCOUNT_ID` must be the **numeric ProjectX account id** (the
+`id` field returned by `/api/Account/search` — e.g. `5001`). The value
+is stored as a string but compared as a trimmed string against the
+numeric returned by ProjectX, so both shapes match cleanly.
 
-1. Sign in to your TopstepX account.
-2. Make sure your account has **API Access enabled / subscribed** —
-   ProjectX is a paid add-on.
-3. Open **Settings → API** (or whichever tab TopstepX surfaces the API
-   key generator under).
-4. **Generate an API key**. The UI shows it once; copy it somewhere safe.
-5. `TOPSTEP_USERNAME` is your **TopstepX login email**, not the friendly
-   account label (e.g. `"PRACTICEDEC1100146-21434541"`). The label
-   shows up on `/api/Account/search` as the account `name`; the auth
-   call wants the user account's email.
+If `TOPSTEP_ACCOUNT_ID` is set to a non-numeric value, the read-only
+endpoints return a `non_numeric_account_id` envelope and **never hit
+the wire**.
 
-> Never share or commit your API key. Treat it like a password.
+## Dry-run order builder (Phase 2)
 
-## What this phase implements
+The dry-run path is the default for any TradingView webhook routed
+through Topstep. It runs the normal risk checks, builds a
+`/api/Order/place` payload via
+`app/execution/topstep_order_builder.py`, journals it, and **does not
+submit**.
 
-| Capability                  | Status                                |
-|-----------------------------|---------------------------------------|
-| `authenticate()`            | **real** — `POST /api/Auth/loginKey` with username + apiKey |
-| `get_auth_headers()`        | **real** — returns `Authorization: Bearer <token>`, auths on demand |
-| `refresh_token()`           | re-auths via `loginKey` (ProjectX doesn't issue a separate refresh token) |
-| `get_accounts()`            | **real** — `POST /api/Account/search` with `onlyActiveAccounts=true`; returns numeric ProjectX account ids plus `balance`, `canTrade`, `isVisible` |
-| `get_selected_account()`    | **real** — matches `TOPSTEP_ACCOUNT_ID` / `SELECTED_ACCOUNT_ID` against the active list. Compares ids as **trimmed strings**, so a numeric ProjectX id (e.g. `5001`) and the stored string form (`"5001"`) match without int/string surprises |
-| `get_positions()`           | **scaffolded** — returns a safe `status=not_implemented` envelope with the selected account id; never crashes, never hits the wire |
-| `get_orders()`              | **scaffolded** — same shape as `get_positions()` |
-| `test_connection()`         | **real** — auths, fetches accounts, reports `accounts_count`, `selected_account_id`, and the parsed `selected_account` snapshot |
-| `submit_market_order()`     | refused — `status=topstep_execution_not_enabled` |
-| `flatten_position()`        | refused — `status=topstep_execution_not_enabled` |
-| `cancel_all_orders()`       | refused — `status=topstep_execution_not_enabled` |
-| `execute()` (webhook path)  | raises `NotImplementedError` — webhook rejects with `broker_not_implemented: topstep_execution_not_enabled…` and journals the rejection |
+ProjectX market-order payload shape:
 
-Tokens are cached in the `settings` table (`TOPSTEP_TOKEN`,
-`TOPSTEP_TOKEN_EXPIRES_AT`) with a conservative 23-hour expiry, so the
-adapter doesn't burn an auth call on every request.
+```
+POST /api/Order/place
+{
+  "accountId":  <int>,                # numeric ProjectX account id
+  "contractId": "<str>",              # ProjectX contract id (NOT a TV ticker)
+  "type":       2,                    # 1 limit · 2 market · 4 stop · 5 trail · 6 join-bid · 7 join-ask
+  "side":       0 | 1,                # 0 bid/buy · 1 ask/sell
+  "size":       <int>,                # contracts
+  "limitPrice": null,
+  "stopPrice":  null,
+  "trailPrice": null,
+  "customTag":  "<str|null>"          # SignalBridge order_id / comment, truncated to 64 chars
+}
+```
 
-`EXECUTION_MODE=live` and `TOPSTEP_ENV=live` are still blocked across
-SignalBridge.
+### Action → side mapping
 
-### `/api/broker/status` payload
+| Internal action | ProjectX side | Notes |
+|-----------------|---------------|-------|
+| `BUY`           | `0` (bid)     | open or add long |
+| `COVER`         | `0` (bid)     | close short |
+| `SELL`          | `1` (ask)     | close long or open short |
+| `SHORT`         | `1` (ask)     | open short |
+| `EXIT`          | refused       | the builder doesn't know which side closes — returns `unsupported_exit_without_position` |
 
-For the active Topstep adapter, the status endpoint exposes:
+### Symbol mapping (required)
+
+ProjectX expects real contract ids (e.g. `CON.F.US.MES.M26`), not
+TradingView tickers. The builder refuses to guess: if there's no
+explicit Topstep entry for the ticker, it returns
+`symbol_mapping_missing` and the dry-run is journaled as a build
+failure.
+
+Add mappings in `config/symbols.json` (copy from
+`config/symbols.example.json`):
+
+```json
+{
+  "MES1!": { "paper": "MES1!", "topstep": "CON.F.US.MES.M26" },
+  "MNQ1!": { "paper": "MNQ1!", "topstep": "CON.F.US.MNQ.M26" }
+}
+```
+
+Contract ids roll over by quarter. Update the file when you roll.
+
+### `/api/topstep/build-order-preview`
+
+```
+POST /api/topstep/build-order-preview
+Content-Type: application/json
+
+# Optional body: a TradingViewAlert. If omitted (or empty), the most
+# recent journaled signal is reused.
+{ "secret": "...", "symbol": "MES1!", "action": "buy", "contracts": 1 }
+```
+
+Response includes the normalized signal, account id, contract id,
+side, size, full order payload, the safety state, and **always**
+`would_submit: false`.
+
+## Demo/sim execution (Phase 3)
+
+Disabled by default. **All five** of the following must be true to
+allow a demo POST to `/api/Order/place`:
+
+| Setting                            | Required value | Default |
+|------------------------------------|---------------:|---------|
+| `BROKER_PROVIDER`                  | `topstep`      | `paper` |
+| `EXECUTION_MODE`                   | `demo`         | `paper` |
+| `ENABLE_TOPSTEP_ORDER_EXECUTION`   | `true`         | `false` |
+| `TOPSTEP_EXECUTION_CONFIRM`        | `DEMO_ONLY`    | `disabled` |
+| `ENABLE_LIVE_TRADING`              | `false`        | `false` (locked) |
+
+`EXECUTION_MODE=live` is blocked by the settings layer and by the
+adapter itself. `ENABLE_LIVE_TRADING=true` is rejected by the
+settings layer — the live/funded path stays locked in this build.
+
+Behavior under each combination:
+
+| Provider | Mode | Exec on? | Confirm | Outcome |
+|----------|------|----------|---------|---------|
+| paper    | any  | n/a      | n/a     | paper fills as before |
+| topstep  | any  | false    | any     | **dry-run preview**, journaled, no POST |
+| topstep  | demo | true     | `DEMO_ONLY` | **POST `/api/Order/place`** with the demo account |
+| topstep  | demo | true     | `disabled`  | refused (`topstep_execution_confirm_missing`) |
+| topstep  | paper | true    | any     | refused (`execution_mode_not_demo`) |
+| topstep  | live | any      | any     | refused (`live_execution_locked`) |
+| any      | any  | any      | any     | `ENABLE_LIVE_TRADING=true` → refused (`live_execution_locked`) |
+
+### `/api/topstep/submit-test-order`
+
+A manual demo-order helper. Requires admin auth and obeys every
+safety switch above. Body is optional:
+
+```
+POST /api/topstep/submit-test-order
+Content-Type: application/json
+
+{ "symbol": "MES1!", "action": "BUY", "contracts": 1 }
+```
+
+If any safety gate is open the response is an `ok: false` envelope
+labeled with the failing gate (e.g. `topstep_execution_disabled`,
+`execution_mode_not_demo`, `live_execution_locked`).
+
+## Webhook behavior summary
+
+| `BROKER_PROVIDER` | `ENABLE_TOPSTEP_ORDER_EXECUTION` | `EXECUTION_MODE` | Webhook outcome |
+|-------------------|----------------------------------|------------------|----------------|
+| topstep           | false                            | any non-`live`   | risk checks → dry-run preview → journal `topstep_dry_run_order_built` |
+| topstep           | true                             | `demo`           | risk checks → builder → POST `/api/Order/place` |
+| topstep           | true                             | `live`           | refused (`live_execution_locked`) |
+| paper             | n/a                              | any              | paper fills (unchanged) |
+
+In all Topstep paths the journal records:
+
+- raw payload
+- normalized signal
+- risk decision
+- dry-run payload **or** broker response (`success`, `orderId`,
+  `errorCode`, `errorMessage`)
+- `broker_order_id` (the ProjectX `orderId`) when the order was placed
+- `execution_mode`
+- `broker_provider=topstep`
+- **never** API keys, JWTs, or any other secret material
+
+## `/api/broker/status` payload (Topstep adapter)
+
+For the active Topstep adapter, `/api/broker/status` exposes:
 
 - `provider`, `broker_provider`, `active_broker_provider`,
   `execution_mode`
 - `broker_connected`, `status` (`ok` / `missing_credentials` /
-  `auth_failed` / `account_not_found` / …), `auth_status` (mirror of
-  `status` for templates), `broker_message`
+  `auth_failed` / `account_not_found` / `non_numeric_account_id` /
+  …), `auth_status`, `broker_message`
 - `selected_account_id` (string), `selected_account_name`,
   `selected_account` (`{id, account_id, id_str, name, balance,
   can_trade, is_visible}` — `None` when no account is selected /
   found)
 - `balance` / `account_balance`, `can_trade`, `is_visible` — flat
-  mirrors of the selected account snapshot for compact card rendering
+  mirrors of the selected account snapshot
 - `token_cached` (bool) and `token_expires_at` (ISO prefix, never the
   raw JWT)
-- `positions_status` (`not_implemented` in this phase),
-  `positions_count`, `positions_not_implemented`, `positions_message`
-- `orders_status` (`not_implemented` in this phase), `orders_count`,
-  `orders_not_implemented`, `orders_message`
-- `accounts_count` (total active accounts), `restart_required`
+- `positions_status`, `positions_count`, `positions_message`
+- `orders_status`, `orders_count`, `open_orders_count` (alias),
+  `orders_message`
+- `accounts_count`, `restart_required`
+- `enable_topstep_order_dry_run`, `enable_topstep_order_execution`,
+  `topstep_execution_confirm`, `enable_live_trading` — safety state
 
-Tokens and API keys are **never** returned in full — only the
-last-four preview and the masked `token_cached` / `token_expires_at`
-state appear in the payload.
+Secrets are never returned in full.
 
-## Configuration
+## Configuration reference
 
-Configure either through the `.env` file or the dashboard
-(`/settings/broker`). Persisted values in SQLite override `.env` on
-the next start.
-
-| Variable                  | Default                       | Notes                                  |
-|---------------------------|-------------------------------|----------------------------------------|
-| `BROKER_PROVIDER`         | `paper`                       | set to `topstep` to load this adapter at startup |
-| `EXECUTION_MODE`          | `paper`                       | stays `paper` or `demo`; live is blocked |
-| `TOPSTEP_USERNAME`        | *(empty)*                     | your TopstepX **login email** — not the account label/name |
-| `TOPSTEP_API_KEY`         | *(empty)*                     | API key from TopstepX/ProjectX. **Never displayed in full** — last 4 chars only |
-| `TOPSTEP_ACCOUNT_ID`      | *(empty)*                     | numeric ProjectX account id returned by `/api/Account/search` (e.g. `5001`); stored as a string |
-| `SELECTED_ACCOUNT_ID`     | *(empty)*                     | global override for the active account; the **Use this account** button writes both keys |
-| `TOPSTEP_ENV`             | `demo`                        | `live` is blocked                       |
-| `TOPSTEP_BASE_URL`        | `https://api.topstepx.com`    | ProjectX REST base URL                  |
-| `TOPSTEP_WS_URL`          | `https://rtc.topstepx.com`    | ProjectX WebSocket URL (not used yet)   |
-| `TOPSTEP_TOKEN`           | *(empty, written by adapter)* | cached JWT — never displayed in full    |
-| `TOPSTEP_TOKEN_EXPIRES_AT`| *(empty, written by adapter)* | ISO-8601 token expiry                   |
-
-The dashboard masks `TOPSTEP_USERNAME` and `TOPSTEP_API_KEY`. The API
-key form input keeps the saved value when submitted blank.
+| Variable                          | Default                       | Notes |
+|-----------------------------------|-------------------------------|-------|
+| `BROKER_PROVIDER`                 | `paper`                       | set to `topstep` to load this adapter |
+| `EXECUTION_MODE`                  | `paper`                       | `live` is blocked |
+| `TOPSTEP_USERNAME`                | *(empty)*                     | **TopstepX login email** |
+| `TOPSTEP_API_KEY`                 | *(empty)*                     | from TopstepX/ProjectX API tab |
+| `TOPSTEP_ACCOUNT_ID`              | *(empty)*                     | numeric ProjectX account id (e.g. `5001`); stored as a string |
+| `SELECTED_ACCOUNT_ID`             | *(empty)*                     | global override for the active account |
+| `TOPSTEP_ENV`                     | `demo`                        | `live` is blocked |
+| `TOPSTEP_BASE_URL`                | `https://api.topstepx.com`    | REST base URL |
+| `TOPSTEP_WS_URL`                  | `https://rtc.topstepx.com`    | reserved for a future phase |
+| `TOPSTEP_TOKEN`                   | *(empty, written by adapter)* | cached JWT; masked everywhere |
+| `TOPSTEP_TOKEN_EXPIRES_AT`        | *(empty, written by adapter)* | ISO-8601 expiry |
+| `ENABLE_TOPSTEP_ORDER_DRY_RUN`    | `true`                        | builds previews, never submits |
+| `ENABLE_TOPSTEP_ORDER_EXECUTION`  | `false`                       | required for demo submission |
+| `TOPSTEP_EXECUTION_CONFIRM`       | `disabled`                    | must be `DEMO_ONLY` to submit |
+| `ENABLE_LIVE_TRADING`             | `false`                       | locked; setting `true` is rejected |
 
 ## Try it locally
 
-1. In `/settings/broker`, paste your TopstepX **username** and
-   **API key**, save.
-2. Click **Test Topstep auth** under the Topstep card. You should see
-   ``status: authenticated``. The token is cached in SQLite for 23h.
-3. Click **Fetch accounts**. SignalBridge will call
-   `POST /api/Account/search` with `{"onlyActiveAccounts": true}` and
-   render the returned accounts.
-4. Click **Use this account** on the account row you want to trade
-   from. That writes the id into both `SELECTED_ACCOUNT_ID` and
-   `TOPSTEP_ACCOUNT_ID`.
-5. (Optional) Flip `BROKER_PROVIDER` to `topstep` and restart. **No
-   orders are placed** — the webhook keeps rejecting Topstep-routed
-   signals with `broker_not_implemented: topstep_execution_not_enabled…`.
-
-Equivalent API calls (admin auth required):
-
-```
-POST /api/topstep/authenticate
-GET  /api/topstep/accounts
-POST /api/topstep/select-account     # form field: account_id
-GET  /api/broker/status
-POST /api/broker/test-connection
-GET  /api/broker/accounts
-```
+1. Set `TOPSTEP_USERNAME` (email) + `TOPSTEP_API_KEY` in `/settings/broker`.
+2. Click **Test Topstep auth** → expect `status: authenticated`.
+3. Click **Fetch accounts** → pick **Use this account** on the row you
+   trade from. That writes both `SELECTED_ACCOUNT_ID` and
+   `TOPSTEP_ACCOUNT_ID` to the numeric ProjectX id.
+4. Flip `BROKER_PROVIDER=topstep` and restart. Webhooks now dry-run.
+   The dashboard shows the built payload but nothing leaves the
+   building.
+5. To enable demo/sim execution later: flip `EXECUTION_MODE=demo`,
+   `ENABLE_TOPSTEP_ORDER_EXECUTION=true`,
+   `TOPSTEP_EXECUTION_CONFIRM=DEMO_ONLY`, and confirm
+   `ENABLE_LIVE_TRADING=false`.
 
 ## Secrets / safety reminders
 
-- Never share your TopstepX API key. Anyone holding it can issue
-  authenticated ProjectX calls on your behalf.
-- Never commit `.env` or any file containing credentials. `.env` is
-  already in `.gitignore`.
-- `TOPSTEP_API_KEY` and `TOPSTEP_TOKEN` are **never** echoed back in
-  full from the dashboard or API — only the last 4 characters appear,
-  and short values are reported as `configured`.
-
-## Next phase (not in this build)
-
-Still off-limits until explicitly green-lit:
-
-- Wiring `get_positions()` to `POST /api/Position/searchOpen` and
-  `get_orders()` to `POST /api/Order/searchOpen` once the response
-  schemas are confirmed against a real ProjectX account. Today both
-  return a structured `not_implemented` envelope and never hit the
-  wire.
-- Routing `submit_market_order` over `POST /api/Order/place` (or the
-  TopstepX equivalent) — currently refuses.
-- `flatten_position` / `cancel_all_orders` over REST.
-- WebSocket market and user streams (`TOPSTEP_WS_URL`).
-- Switching `EXECUTION_MODE=live` from a blocked value to a routed one.
+- **Never share or commit API keys or tokens.** `.env` is gitignored.
+  `TOPSTEP_API_KEY` and `TOPSTEP_TOKEN` are masked in the dashboard
+  and in API responses.
+- Live/funded execution stays locked until a future phase. There is
+  no path through the dashboard to enable it in this build.
+- The copier, MCP server, bracket orders, and the dashboard overhaul
+  are explicitly out of scope here.

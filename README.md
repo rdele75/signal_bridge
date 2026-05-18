@@ -162,7 +162,9 @@ All env defaults (see `.env.example` for the full list):
 | `BROKER`                            | legacy alias for `BROKER_PROVIDER` |
 | `TRADINGVIEW_WEBHOOK_SECRET`        | shared secret in the alert body |
 | `ALLOWED_SYMBOLS`                   | comma-separated allow-list |
-| `MAX_CONTRACTS_PER_TRADE`           | hard cap per signal |
+| `MAX_CONTRACTS_PER_TRADE`           | hard cap per signal (always enforced) |
+| `STRATEGY_MANAGED_RISK`             | `true` (default) → trade sizing comes from the alert's `contracts`; `false` → use `FIXED_CONTRACTS_PER_TRADE`. See [docs/risk.md](docs/risk.md). |
+| `FIXED_CONTRACTS_PER_TRADE`         | quantity used when `STRATEGY_MANAGED_RISK=false` (must be ≤ `MAX_CONTRACTS_PER_TRADE`) |
 | `MAX_DAILY_LOSS`                    | daily realized PnL floor |
 | `MAX_OPEN_POSITIONS`                | concurrent open positions cap |
 | `ENABLE_LONGS`, `ENABLE_SHORTS`     | direction toggles |

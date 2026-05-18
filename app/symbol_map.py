@@ -55,3 +55,24 @@ class SymbolMap:
             if isinstance(mapped, str) and mapped:
                 return mapped
         return ticker
+
+    def resolve_explicit(
+        self, ticker: Optional[str], provider: str
+    ) -> Optional[str]:
+        """Return the broker-specific symbol only when explicitly mapped.
+
+        Differs from ``resolve()`` in that it returns ``None`` rather than
+        falling back to the TradingView ticker. The Topstep order builder
+        uses this to refuse silently routing a guessed contract id —
+        ProjectX expects real contract ids (e.g. ``CON.F.US.MES.M26``,
+        not just ``MES``), so a missing mapping must surface as a
+        ``symbol_mapping_missing`` rejection rather than a fabricated id.
+        """
+        if not ticker:
+            return None
+        entry = self._map.get(ticker)
+        if isinstance(entry, dict):
+            mapped = entry.get(provider)
+            if isinstance(mapped, str) and mapped:
+                return mapped
+        return None

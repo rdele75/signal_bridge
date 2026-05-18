@@ -29,6 +29,8 @@ MANAGED_KEYS: tuple[str, ...] = (
     "TRADINGVIEW_WEBHOOK_SECRET",
     "ALLOWED_SYMBOLS",
     "MAX_CONTRACTS_PER_TRADE",
+    "STRATEGY_MANAGED_RISK",
+    "FIXED_CONTRACTS_PER_TRADE",
     "MAX_DAILY_LOSS",
     "MAX_OPEN_POSITIONS",
     "ENABLE_LONGS",
@@ -48,6 +50,12 @@ MANAGED_KEYS: tuple[str, ...] = (
     "TOPSTEP_WS_URL",
     "TOPSTEP_TOKEN",
     "TOPSTEP_TOKEN_EXPIRES_AT",
+    # Order routing safety switches. False by default. Live/funded
+    # execution stays blocked across all combinations.
+    "ENABLE_TOPSTEP_ORDER_DRY_RUN",
+    "ENABLE_TOPSTEP_ORDER_EXECUTION",
+    "TOPSTEP_EXECUTION_CONFIRM",
+    "ENABLE_LIVE_TRADING",
 )
 
 # Keys whose change can be applied to the in-memory Settings instance
@@ -61,6 +69,8 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "TRADINGVIEW_WEBHOOK_SECRET",
         "ALLOWED_SYMBOLS",
         "MAX_CONTRACTS_PER_TRADE",
+        "STRATEGY_MANAGED_RISK",
+        "FIXED_CONTRACTS_PER_TRADE",
         "MAX_DAILY_LOSS",
         "MAX_OPEN_POSITIONS",
         "ENABLE_LONGS",
@@ -80,6 +90,10 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "TOPSTEP_WS_URL",
         "TOPSTEP_TOKEN",
         "TOPSTEP_TOKEN_EXPIRES_AT",
+        "ENABLE_TOPSTEP_ORDER_DRY_RUN",
+        "ENABLE_TOPSTEP_ORDER_EXECUTION",
+        "TOPSTEP_EXECUTION_CONFIRM",
+        "ENABLE_LIVE_TRADING",
     }
 )
 
@@ -251,8 +265,15 @@ def coerce(key: str, raw: Any) -> Any:
     if key == "ALLOWED_SYMBOLS":
         return parse_symbols(raw)
 
-    if key in {"MAX_CONTRACTS_PER_TRADE", "MAX_OPEN_POSITIONS"}:
+    if key in {
+        "MAX_CONTRACTS_PER_TRADE",
+        "MAX_OPEN_POSITIONS",
+        "FIXED_CONTRACTS_PER_TRADE",
+    }:
         return parse_int(raw, min_value=1)
+
+    if key == "STRATEGY_MANAGED_RISK":
+        return parse_bool(raw)
 
     if key == "MAX_DAILY_LOSS":
         return parse_float(raw, min_value=0.0)
@@ -319,6 +340,32 @@ def coerce(key: str, raw: Any) -> Any:
             raise SettingsValidationError("TOPSTEP_TOKEN_EXPIRES_AT is too long")
         return text
 
+    if key in {"ENABLE_TOPSTEP_ORDER_DRY_RUN", "ENABLE_TOPSTEP_ORDER_EXECUTION"}:
+        return parse_bool(raw)
+
+    if key == "ENABLE_LIVE_TRADING":
+        # Live/funded execution is intentionally locked in this build. The
+        # only honored value is False. A True submission is refused so the
+        # dashboard cannot quietly flip the kill into "on" — a future
+        # phase will rework this once funded execution is green-lit.
+        val = parse_bool(raw)
+        if val:
+            raise SettingsValidationError(
+                "ENABLE_LIVE_TRADING=true is not allowed yet — live/funded "
+                "execution is intentionally blocked in this build"
+            )
+        return False
+
+    if key == "TOPSTEP_EXECUTION_CONFIRM":
+        text = (str(raw) if raw is not None else "").strip()
+        if not text:
+            return "disabled"
+        if text not in {"disabled", "DEMO_ONLY"}:
+            raise SettingsValidationError(
+                "TOPSTEP_EXECUTION_CONFIRM must be 'disabled' or 'DEMO_ONLY'"
+            )
+        return text
+
     raise SettingsValidationError(f"unknown setting: {key}")
 
 
@@ -340,6 +387,8 @@ _KEY_TO_ATTR: dict[str, str] = {
     "TRADINGVIEW_WEBHOOK_SECRET": "webhook_secret",
     "ALLOWED_SYMBOLS": "allowed_symbols",
     "MAX_CONTRACTS_PER_TRADE": "max_contracts_per_trade",
+    "STRATEGY_MANAGED_RISK": "strategy_managed_risk",
+    "FIXED_CONTRACTS_PER_TRADE": "fixed_contracts_per_trade",
     "MAX_DAILY_LOSS": "max_daily_loss",
     "MAX_OPEN_POSITIONS": "max_open_positions",
     "ENABLE_LONGS": "enable_longs",
@@ -355,6 +404,10 @@ _KEY_TO_ATTR: dict[str, str] = {
     "TOPSTEP_WS_URL": "topstep_ws_url",
     "TOPSTEP_TOKEN": "topstep_token",
     "TOPSTEP_TOKEN_EXPIRES_AT": "topstep_token_expires_at",
+    "ENABLE_TOPSTEP_ORDER_DRY_RUN": "enable_topstep_order_dry_run",
+    "ENABLE_TOPSTEP_ORDER_EXECUTION": "enable_topstep_order_execution",
+    "TOPSTEP_EXECUTION_CONFIRM": "topstep_execution_confirm",
+    "ENABLE_LIVE_TRADING": "enable_live_trading",
 }
 
 

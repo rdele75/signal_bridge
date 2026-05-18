@@ -12,9 +12,14 @@
 {% endif %}
 
 <div class="banner warn">
-  <span class="t">Execution still paper-only:</span> Topstep authentication and active-account
-  discovery are wired up against the real ProjectX API, but order placement is intentionally
-  disabled in this phase. <code>live</code> execution mode is also off in this build.
+  <span class="t">Topstep order routing safety:</span>
+  dry-run previews are
+  {% if broker_status.enable_topstep_order_dry_run %}<strong>on</strong>{% else %}<strong>off</strong>{% endif %}
+  · demo execution is
+  {% if broker_status.enable_topstep_order_execution %}<strong class="warn">enabled</strong>{% else %}<strong>disabled</strong>{% endif %}
+  · confirm token <code>{{ broker_status.topstep_execution_confirm or '—' }}</code>
+  · live trading kill <strong>{{ 'on' if broker_status.enable_live_trading else 'off (locked)' }}</strong>.
+  <code>live</code> execution mode stays blocked in this build.
 </div>
 
 {# ---- Top status cards ---- #}

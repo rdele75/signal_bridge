@@ -66,6 +66,11 @@ def build_broker(
             token=settings.topstep_token,
             token_expires_at=settings.topstep_token_expires_at,
             token_sink=token_sink,
+            enable_order_execution=settings.enable_topstep_order_execution,
+            enable_order_dry_run=settings.enable_topstep_order_dry_run,
+            execution_confirm=settings.topstep_execution_confirm,
+            enable_live_trading=settings.enable_live_trading,
+            execution_mode=settings.execution_mode,
         )
 
     if provider == "tradovate":

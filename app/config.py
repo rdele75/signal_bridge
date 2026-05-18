@@ -79,6 +79,17 @@ class Settings(BaseModel):
     max_contracts_per_trade: int = Field(
         default_factory=lambda: _int("MAX_CONTRACTS_PER_TRADE", 1)
     )
+    # When true (the default), trade sizing is taken from the TradingView
+    # alert's ``contracts`` field — the strategy owns position size.
+    # When false, the alert's contracts are ignored for execution sizing
+    # and ``fixed_contracts_per_trade`` is used instead. The hard cap
+    # ``max_contracts_per_trade`` is always enforced on top.
+    strategy_managed_risk: bool = Field(
+        default_factory=lambda: _bool("STRATEGY_MANAGED_RISK", True)
+    )
+    fixed_contracts_per_trade: int = Field(
+        default_factory=lambda: _int("FIXED_CONTRACTS_PER_TRADE", 1)
+    )
     max_daily_loss: float = Field(default_factory=lambda: _float("MAX_DAILY_LOSS", 250.0))
     max_open_positions: int = Field(
         default_factory=lambda: _int("MAX_OPEN_POSITIONS", 1)
@@ -123,6 +134,30 @@ class Settings(BaseModel):
     topstep_token: str = Field(default_factory=lambda: os.getenv("TOPSTEP_TOKEN", ""))
     topstep_token_expires_at: str = Field(
         default_factory=lambda: os.getenv("TOPSTEP_TOKEN_EXPIRES_AT", "")
+    )
+
+    # Topstep order routing safety switches. By default the adapter only
+    # builds dry-run order previews — nothing reaches /api/Order/place.
+    # To enable demo/sim execution the operator must also set
+    # TOPSTEP_EXECUTION_CONFIRM=DEMO_ONLY, EXECUTION_MODE=demo, and
+    # BROKER_PROVIDER=topstep. Live/funded execution stays blocked.
+    enable_topstep_order_dry_run: bool = Field(
+        default_factory=lambda: _bool("ENABLE_TOPSTEP_ORDER_DRY_RUN", True)
+    )
+    enable_topstep_order_execution: bool = Field(
+        default_factory=lambda: _bool("ENABLE_TOPSTEP_ORDER_EXECUTION", False)
+    )
+    topstep_execution_confirm: str = Field(
+        default_factory=lambda: os.getenv(
+            "TOPSTEP_EXECUTION_CONFIRM", "disabled"
+        )
+    )
+    # Hard kill: even if every other flag is on, this MUST be false for any
+    # order to leave the building. Lives here so a future "unlock live"
+    # phase has one obvious place to flip — and tests can assert that a
+    # true value blocks demo execution too (defense in depth).
+    enable_live_trading: bool = Field(
+        default_factory=lambda: _bool("ENABLE_LIVE_TRADING", False)
     )
 
     # Tradovate placeholders — not used until the adapter is implemented.

@@ -1,33 +1,32 @@
-"""Topstep / TopstepX (ProjectX) broker adapter — read-only account data.
+"""Topstep / TopstepX (ProjectX) broker adapter.
 
-This phase implements everything SignalBridge needs to *observe* the
-configured TopstepX account, without ever placing or cancelling an order:
+This adapter implements:
 
-* ``authenticate()``  — POSTs ``/api/Auth/loginKey`` with the configured
-  username/API key, caches the JWT, conservatively expires it 23h later.
-* ``get_auth_headers()`` — returns ``Authorization: Bearer <token>``,
-  authenticating first if the cached token is missing or expired.
-* ``get_accounts()`` — POSTs ``/api/Account/search`` with
-  ``onlyActiveAccounts=true`` and returns the parsed list.
-* ``get_selected_account()`` — picks the account matching the configured
-  ``TOPSTEP_ACCOUNT_ID`` / ``SELECTED_ACCOUNT_ID``. Compares ids as
-  strings so a numeric ProjectX id (e.g. ``5001``) and the stored
-  string form (``"5001"``) match cleanly.
-* ``get_positions()`` / ``get_orders()`` — scaffolded read-only calls.
-  Endpoint shapes for live Topstep positions / orders are not yet
-  pinned down for this build, so both return a structured
-  ``status=not_implemented`` envelope with the selected account info
-  attached. They must never crash and must never reach a write API.
-* ``test_connection()`` — runs auth + account discovery and reports a
-  structured envelope including the selected account snapshot,
-  ``accounts_count``, ``selected_account_id``, and the masked token
-  cache state.
+* ``authenticate()`` / ``get_auth_headers()`` / ``refresh_token()`` —
+  ``/api/Auth/loginKey`` + JWT cache (23h TTL).
+* ``get_accounts()`` / ``get_selected_account()`` —
+  ``/api/Account/search`` with ``onlyActiveAccounts=true``. Account ids
+  compare as trimmed strings so ProjectX's numeric ids and the
+  user-saved string form match cleanly.
+* ``get_positions()`` — ``/api/Position/searchOpen`` (Phase 1).
+* ``get_orders()`` — ``/api/Order/searchOpen`` (Phase 1).
+* ``search_orders(startTimestamp, endTimestamp)`` —
+  ``/api/Order/search`` (Phase 1).
+* ``submit_market_order()`` — builds a payload via
+  ``topstep_order_builder.build_market_order_payload`` and conditionally
+  POSTs ``/api/Order/place`` (Phase 3).
 
-Order routing is intentionally disabled in this phase. Every mutating
-method refuses with ``status=topstep_execution_not_enabled`` and
-``execute()`` raises ``NotImplementedError`` so the webhook handler
-records a clearly labeled rejection instead of silently no-op'ing real
-trading.
+Order routing safety is layered (defense in depth):
+
+  1. ``ENABLE_TOPSTEP_ORDER_EXECUTION`` must be true.
+  2. ``EXECUTION_MODE`` must be ``demo`` (never ``live``).
+  3. ``TOPSTEP_EXECUTION_CONFIRM`` must be ``DEMO_ONLY``.
+  4. ``ENABLE_LIVE_TRADING`` must be false (the hard kill).
+  5. The selected account must be numeric and (if known) ``canTrade``.
+
+If any of those gates is open, ``submit_market_order`` refuses with a
+structured envelope and never touches the wire. Dry-run mode (the
+default) goes through the same builder but stops short of POSTing.
 """
 from __future__ import annotations
 
@@ -39,6 +38,7 @@ import httpx
 
 from ..schemas import ExecutionResult, NormalizedSignal
 from .broker_base import BrokerBase
+from .topstep_order_builder import build_market_order_payload
 
 
 log = logging.getLogger("signalbridge.broker.topstep")
@@ -99,6 +99,16 @@ class TopstepBroker(BrokerBase):
         token_expires_at: str = "",
         token_sink: Optional[TokenSink] = None,
         http_timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        # Phase 2/3 safety: nothing here flips on order execution by
+        # itself. The settings layer + webhook handler are still
+        # authoritative; the broker holds them so admin endpoints and
+        # programmatic callers can interrogate them without re-reading
+        # settings.
+        enable_order_execution: bool = False,
+        enable_order_dry_run: bool = True,
+        execution_confirm: str = "disabled",
+        enable_live_trading: bool = False,
+        execution_mode: str = "demo",
     ) -> None:
         # Strip credentials on load: stray whitespace in the dashboard /
         # .env was the cause of phantom errorCode=3 responses that worked
@@ -116,6 +126,15 @@ class TopstepBroker(BrokerBase):
         self.token_expires_at = (token_expires_at or "").strip()
         self._token_sink = token_sink
         self._http_timeout = http_timeout
+        self.enable_order_execution = bool(enable_order_execution)
+        self.enable_order_dry_run = bool(enable_order_dry_run)
+        self.execution_confirm = (execution_confirm or "disabled").strip()
+        self.enable_live_trading = bool(enable_live_trading)
+        # Adapter-level execution mode (paper/demo/live). The webhook
+        # layer's settings.execution_mode wins on conflict but this is
+        # used for ExecutionResult.broker / .execution_mode labelling
+        # and as a final safety check below.
+        self.execution_mode = (execution_mode or "demo").lower()
 
     # ------------------------------------------------------------------
     # Credential helpers
@@ -615,51 +634,220 @@ class TopstepBroker(BrokerBase):
         }
 
     # ------------------------------------------------------------------
-    # Read-only queries (positions / orders) — scaffolded.
+    # Read-only queries (positions / orders / order search)
     #
-    # The exact ProjectX request/response shapes for open positions and
-    # working orders are not yet pinned down for this build, so both
-    # methods return a structured ``not_implemented`` envelope that
-    # still carries the configured account id, credential state, and
-    # auth-cache info. Callers (the dashboard, /api/broker/*) get a
-    # consistent shape and never crash. The mutating endpoints stay
-    # disabled regardless.
-    #
-    # TODO(topstep): wire ``get_positions`` to
-    # ``POST /api/Position/searchOpen`` (body ``{"accountId": <int>}``)
-    # and ``get_orders`` to ``POST /api/Order/searchOpen`` once the
-    # response schemas are confirmed against a real ProjectX account.
+    # All three POST a JSON body containing ``accountId`` (numeric
+    # ProjectX id). They never mutate state and never reach a write
+    # API. Each returns a structured envelope so the dashboard and
+    # /api/broker/* endpoints can render uniformly.
     # ------------------------------------------------------------------
 
-    def _read_only_not_implemented(
-        self, op: str, *, container_key: str
+    def _numeric_account_id(self) -> Optional[int]:
+        """Return ``int(account_id)`` when it parses, else ``None``.
+
+        ProjectX position/order search endpoints expect a numeric
+        ``accountId``. The user-saved id is stored as a string (see
+        ``settings_store``), so we coerce here and surface a
+        ``non_numeric_account_id`` envelope when the value isn't usable.
+        """
+        target = str(self.account_id or "").strip()
+        if not target:
+            return None
+        try:
+            return int(target)
+        except ValueError:
+            return None
+
+    def _read_only_envelope_setup(
+        self, *, container_key: str
+    ) -> tuple[Optional[dict[str, Any]], Optional[int]]:
+        """Shared prelude for the read-only POSTs.
+
+        Returns ``(early_return, account_id)``. When ``early_return`` is
+        not ``None`` the caller should return it verbatim — credentials
+        are missing, auth failed, or the account id isn't numeric. When
+        ``early_return`` is ``None`` the second element is the numeric
+        accountId ready to be sent in the request body.
+        """
+        if not self._has_required_credentials():
+            payload = self._missing_credentials_envelope()
+            payload[container_key] = []
+            return payload, None
+
+        numeric_id = self._numeric_account_id()
+        if numeric_id is None:
+            return (
+                {
+                    "ok": False,
+                    "provider": self.provider,
+                    "status": "non_numeric_account_id",
+                    "not_implemented": False,
+                    "selected_account_id": self.account_id or None,
+                    "credentials": self._credentials_summary(),
+                    "message": (
+                        "Topstep account id is not numeric — set "
+                        "TOPSTEP_ACCOUNT_ID to the ProjectX numeric id "
+                        "returned by /api/Account/search"
+                    ),
+                    container_key: [],
+                },
+                None,
+            )
+
+        if not self._is_token_valid():
+            auth = self.authenticate()
+            if not auth.get("ok"):
+                return (
+                    {
+                        "ok": False,
+                        "provider": self.provider,
+                        "status": auth.get("status", "auth_failed"),
+                        "http_status": auth.get("http_status"),
+                        "error_code": auth.get("error_code"),
+                        "error_message": auth.get("error_message"),
+                        "message": auth.get(
+                            "message", "topstep auth failed"
+                        ),
+                        "selected_account_id": self.account_id or None,
+                        "credentials": self._credentials_summary(),
+                        container_key: [],
+                    },
+                    None,
+                )
+
+        return None, numeric_id
+
+    def _post_read_only(
+        self,
+        path: str,
+        body: dict[str, Any],
+        *,
+        container_key: str,
+        response_key: str,
+        op_label: str,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "ok": False,
+        status, response = self._post_json(path, body, auth=True)
+        if status == 0:
+            return {
+                "ok": False,
+                "provider": self.provider,
+                "status": "network_error",
+                "selected_account_id": self.account_id or None,
+                "credentials": self._credentials_summary(),
+                "message": (
+                    response
+                    if isinstance(response, str)
+                    else f"topstep {op_label} request failed"
+                ),
+                container_key: [],
+            }
+        if not isinstance(response, dict):
+            return {
+                "ok": False,
+                "provider": self.provider,
+                "status": f"{op_label}_failed",
+                "http_status": status,
+                "selected_account_id": self.account_id or None,
+                "credentials": self._credentials_summary(),
+                "message": (
+                    f"topstep {op_label} returned non-JSON ({status})"
+                ),
+                container_key: [],
+            }
+        if status >= 400 or response.get("success") is False:
+            return {
+                "ok": False,
+                "provider": self.provider,
+                "status": f"{op_label}_failed",
+                "http_status": status,
+                "error_code": response.get("errorCode"),
+                "error_message": response.get("errorMessage"),
+                "selected_account_id": self.account_id or None,
+                "credentials": self._credentials_summary(),
+                "message": (
+                    str(response.get("errorMessage"))
+                    if response.get("errorMessage")
+                    else f"topstep {op_label} request failed ({status})"
+                ),
+                container_key: [],
+            }
+        raw = response.get(response_key)
+        if not isinstance(raw, list):
+            raw = []
+        return {
+            "ok": True,
             "provider": self.provider,
-            "status": "not_implemented",
-            "not_implemented": True,
+            "status": "ok",
+            "http_status": status,
             "selected_account_id": self.account_id or None,
             "credentials": self._credentials_summary(),
-            "message": (
-                f"Topstep {op} endpoint not implemented yet"
-            ),
+            "message": f"{len(raw)} {op_label}",
+            container_key: raw,
         }
-        payload[container_key] = []
-        return payload
 
     def get_positions(self) -> dict[str, Any]:
-        return self._read_only_not_implemented(
-            "positions", container_key="positions"
+        early, numeric_id = self._read_only_envelope_setup(
+            container_key="positions"
+        )
+        if early is not None:
+            return early
+        return self._post_read_only(
+            "/api/Position/searchOpen",
+            {"accountId": numeric_id},
+            container_key="positions",
+            response_key="positions",
+            op_label="positions",
         )
 
     def get_orders(self) -> dict[str, Any]:
-        return self._read_only_not_implemented(
-            "orders", container_key="orders"
+        early, numeric_id = self._read_only_envelope_setup(
+            container_key="orders"
+        )
+        if early is not None:
+            return early
+        return self._post_read_only(
+            "/api/Order/searchOpen",
+            {"accountId": numeric_id},
+            container_key="orders",
+            response_key="orders",
+            op_label="orders",
+        )
+
+    def search_orders(
+        self,
+        *,
+        start_timestamp: Optional[str] = None,
+        end_timestamp: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """POST ``/api/Order/search`` with an optional time window.
+
+        ProjectX accepts ``startTimestamp`` / ``endTimestamp`` as ISO-8601
+        strings. Both are optional — when neither is supplied we send
+        just the account id and let the broker pick its default window.
+        """
+        early, numeric_id = self._read_only_envelope_setup(
+            container_key="orders"
+        )
+        if early is not None:
+            return early
+        body: dict[str, Any] = {"accountId": numeric_id}
+        if start_timestamp:
+            body["startTimestamp"] = start_timestamp
+        if end_timestamp:
+            body["endTimestamp"] = end_timestamp
+        return self._post_read_only(
+            "/api/Order/search",
+            body,
+            container_key="orders",
+            response_key="orders",
+            op_label="search_orders",
         )
 
     # ------------------------------------------------------------------
-    # Mutating actions — disabled in this phase
+    # Mutating actions
+    #
+    # ``submit_market_order`` is the only routed write API. Bracket
+    # orders, flatten, and cancel stay disabled in this build.
     # ------------------------------------------------------------------
 
     def _execution_disabled_envelope(
@@ -671,22 +859,238 @@ class TopstepBroker(BrokerBase):
             "status": "topstep_execution_not_enabled",
             "not_implemented": True,
             "message": (
-                "Topstep auth/account discovery is implemented, but order "
-                "submission is disabled."
+                "Topstep order submission is disabled by configuration."
             ),
         }
         payload.update(extra)
         return payload
 
-    def submit_market_order(self, signal: NormalizedSignal) -> dict[str, Any]:
-        return self._execution_disabled_envelope(
-            "submit_market_order",
-            accepted=False,
-            symbol=signal.symbol,
-            broker_symbol=signal.broker_symbol,
-            action=signal.action,
-            contracts=signal.contracts,
+    def _safety_state(self) -> dict[str, Any]:
+        """Snapshot of every safety gate. Safe to expose to admins —
+        contains no secrets."""
+        return {
+            "broker_provider": self.provider,
+            "execution_mode": self.execution_mode,
+            "enable_order_execution": self.enable_order_execution,
+            "enable_order_dry_run": self.enable_order_dry_run,
+            "execution_confirm": self.execution_confirm,
+            "enable_live_trading": self.enable_live_trading,
+            "selected_account_id": self.account_id or None,
+        }
+
+    def _execution_safety_check(self) -> Optional[str]:
+        """Return ``None`` when every gate is satisfied, else the
+        identifier of the first failing gate. The caller turns the
+        identifier into a labelled envelope.
+
+        Order is deliberate: ``topstep_execution_disabled`` is reported
+        first when execution simply isn't on yet so the operator gets
+        an actionable label instead of a less-informative
+        ``execution_mode_not_demo`` for the mode the build defaults to.
+        ``live_execution_locked`` and ``EXECUTION_MODE=live`` still
+        short-circuit — the kill switch always wins.
+        """
+        if self.enable_live_trading:
+            return "live_execution_locked"
+        if self.execution_mode == "live":
+            return "live_execution_locked"
+        if not self.enable_order_execution:
+            return "topstep_execution_disabled"
+        if self.execution_mode != "demo":
+            return "execution_mode_not_demo"
+        if self.execution_confirm != "DEMO_ONLY":
+            return "topstep_execution_confirm_missing"
+        if not self._has_required_credentials():
+            return "missing_credentials"
+        if self._numeric_account_id() is None:
+            return "non_numeric_account_id"
+        return None
+
+    def build_order_preview(
+        self,
+        signal: NormalizedSignal,
+        *,
+        symbol_map: Any = None,
+    ) -> dict[str, Any]:
+        """Build a dry-run market-order preview for ``signal``.
+
+        Pure: does not authenticate, does not touch the network. Used
+        by ``/api/topstep/build-order-preview`` and by the webhook
+        handler's dry-run path.
+        """
+        result = build_market_order_payload(
+            signal,
+            account_id=self.account_id,
+            symbol_map=symbol_map,
+            provider=self.provider,
         )
+        result.setdefault("provider", self.provider)
+        result.setdefault("selected_account_id", self.account_id or None)
+        result.setdefault("execution_mode", self.execution_mode)
+        return result
+
+    def submit_market_order(
+        self,
+        signal: NormalizedSignal,
+        *,
+        symbol_map: Any = None,
+    ) -> dict[str, Any]:
+        """Submit a market order via ``POST /api/Order/place``.
+
+        Returns ``{"ok": True, "accepted": True, ...}`` on a successful
+        ProjectX submission (HTTP 200 + ``success=true`` + ``orderId``).
+        Refuses with a structured envelope if any safety gate is open,
+        the order builder rejects, or ProjectX rejects.
+
+        No paper fallback: a refusal here surfaces clearly back to the
+        webhook handler / admin endpoint instead of silently no-op'ing.
+        """
+        safety_gate = self._execution_safety_check()
+        if safety_gate is not None:
+            envelope = self._execution_disabled_envelope(
+                "submit_market_order",
+                accepted=False,
+                status=safety_gate,
+                symbol=signal.symbol,
+                broker_symbol=signal.broker_symbol,
+                action=signal.action,
+                contracts=signal.contracts,
+                safety=self._safety_state(),
+            )
+            envelope["message"] = (
+                f"Topstep order submission refused: {safety_gate}"
+            )
+            envelope["would_submit"] = False
+            return envelope
+
+        built = self.build_order_preview(signal, symbol_map=symbol_map)
+        if not built.get("ok"):
+            envelope = dict(built)
+            envelope.update(
+                {
+                    "ok": False,
+                    "accepted": False,
+                    "status": built.get("reason", "order_build_failed"),
+                    "provider": self.provider,
+                    "would_submit": False,
+                    "safety": self._safety_state(),
+                }
+            )
+            envelope.setdefault(
+                "message",
+                f"Topstep order build failed: {built.get('reason')}",
+            )
+            return envelope
+
+        if not self._is_token_valid():
+            auth = self.authenticate()
+            if not auth.get("ok"):
+                return {
+                    "ok": False,
+                    "accepted": False,
+                    "status": auth.get("status", "auth_failed"),
+                    "provider": self.provider,
+                    "http_status": auth.get("http_status"),
+                    "error_code": auth.get("error_code"),
+                    "error_message": auth.get("error_message"),
+                    "message": auth.get(
+                        "message", "topstep auth failed"
+                    ),
+                    "would_submit": False,
+                    "safety": self._safety_state(),
+                }
+
+        payload = built["payload"]
+        http_status, response = self._post_json(
+            "/api/Order/place", payload, auth=True
+        )
+        if http_status == 0:
+            return {
+                "ok": False,
+                "accepted": False,
+                "status": "network_error",
+                "provider": self.provider,
+                "would_submit": True,
+                "message": (
+                    response
+                    if isinstance(response, str)
+                    else "topstep /api/Order/place network error"
+                ),
+                "payload": payload,
+                "safety": self._safety_state(),
+            }
+        if not isinstance(response, dict):
+            return {
+                "ok": False,
+                "accepted": False,
+                "status": "submit_failed",
+                "provider": self.provider,
+                "http_status": http_status,
+                "would_submit": True,
+                "message": (
+                    f"topstep /api/Order/place returned non-JSON ({http_status})"
+                ),
+                "payload": payload,
+                "safety": self._safety_state(),
+            }
+
+        success_flag = bool(response.get("success"))
+        order_id = response.get("orderId")
+        error_code = response.get("errorCode")
+        error_message = response.get("errorMessage")
+
+        log.info(
+            "topstep order place http_status=%d success=%s order_id_present=%s "
+            "errorCode=%s",
+            http_status,
+            success_flag,
+            order_id is not None,
+            error_code,
+        )
+
+        if http_status == 200 and success_flag and order_id is not None:
+            return {
+                "ok": True,
+                "accepted": True,
+                "status": "submitted",
+                "provider": self.provider,
+                "http_status": http_status,
+                "broker_order_id": str(order_id),
+                "order_id": str(order_id),
+                "message": "topstep demo order submitted",
+                "payload": payload,
+                "safety": self._safety_state(),
+                "response": {
+                    "success": True,
+                    "orderId": order_id,
+                    "errorCode": error_code,
+                    "errorMessage": error_message,
+                },
+            }
+
+        return {
+            "ok": False,
+            "accepted": False,
+            "status": "submit_rejected",
+            "provider": self.provider,
+            "http_status": http_status,
+            "error_code": error_code,
+            "error_message": error_message,
+            "message": (
+                str(error_message)
+                if error_message
+                else f"topstep order rejected (errorCode={error_code})"
+            ),
+            "would_submit": True,
+            "payload": payload,
+            "safety": self._safety_state(),
+            "response": {
+                "success": success_flag,
+                "orderId": order_id,
+                "errorCode": error_code,
+                "errorMessage": error_message,
+            },
+        }
 
     def flatten_position(self, symbol: Optional[str] = None) -> dict[str, Any]:
         return self._execution_disabled_envelope(
@@ -699,14 +1103,18 @@ class TopstepBroker(BrokerBase):
         )
 
     def execute(self, signal: NormalizedSignal) -> ExecutionResult:
-        # Webhook handler catches this and converts it into a clearly
-        # labeled rejection rather than silently no-op'ing a real order.
-        # Both labels are present so journal/log consumers can match on
-        # either ``topstep_execution_not_enabled`` (adapter-level) or
-        # ``topstep_order_submission_disabled`` (intent-level).
+        """Execute path used by the webhook handler.
+
+        This method intentionally does not consult settings or
+        ``submit_market_order`` — the webhook handler owns the
+        provider-aware dispatch (so it can journal a dry-run preview
+        without calling the network). It is kept here so the base
+        ``BrokerBase.execute`` contract holds; calling it directly is a
+        misuse and surfaces as a clear ``NotImplementedError``.
+        """
         raise NotImplementedError(
-            "topstep_order_submission_disabled: "
-            "topstep_execution_not_enabled: Topstep auth and account "
-            "discovery are wired up, but order routing is intentionally "
-            "disabled in this phase. Use BROKER_PROVIDER=paper to execute."
+            "topstep_execute_via_webhook_handler: Topstep order routing "
+            "goes through the webhook handler's dispatch, not "
+            "broker.execute(). Use submit_market_order() or the "
+            "/api/topstep/* endpoints."
         )

@@ -12,7 +12,7 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -207,6 +207,9 @@ def create_app() -> FastAPI:
             kill_switch_active=kill_switch.is_active(),
             open_positions=journal.list_open_positions(),
             database_path=str(settings.database_abs_path),
+            strategy_managed_risk=settings.strategy_managed_risk,
+            fixed_contracts_per_trade=settings.fixed_contracts_per_trade,
+            max_contracts_per_trade=settings.max_contracts_per_trade,
         )
 
     @app.get(
@@ -340,6 +343,15 @@ def create_app() -> FastAPI:
         before the operator has flipped BROKER_PROVIDER + restarted.
         """
         if isinstance(broker, TopstepBroker):
+            # Mirror the latest settings onto the live broker so admin
+            # endpoints reflect runtime changes without a restart.
+            broker.enable_order_execution = (
+                settings.enable_topstep_order_execution
+            )
+            broker.enable_order_dry_run = settings.enable_topstep_order_dry_run
+            broker.execution_confirm = settings.topstep_execution_confirm
+            broker.enable_live_trading = settings.enable_live_trading
+            broker.execution_mode = settings.execution_mode
             return broker
         return TopstepBroker(
             username=settings.topstep_username,
@@ -354,6 +366,11 @@ def create_app() -> FastAPI:
             token=settings.topstep_token,
             token_expires_at=settings.topstep_token_expires_at,
             token_sink=_topstep_token_sink(settings, settings_store),
+            enable_order_execution=settings.enable_topstep_order_execution,
+            enable_order_dry_run=settings.enable_topstep_order_dry_run,
+            execution_confirm=settings.topstep_execution_confirm,
+            enable_live_trading=settings.enable_live_trading,
+            execution_mode=settings.execution_mode,
         )
 
     def _safe_topstep_call(method_name: str, *args, **kwargs) -> dict[str, Any]:
@@ -399,6 +416,217 @@ def create_app() -> FastAPI:
     def api_topstep_accounts_post() -> JSONResponse:
         result = _safe_topstep_call("get_accounts")
         return JSONResponse(content=result, status_code=200)
+
+    @app.post(
+        "/api/topstep/build-order-preview",
+        dependencies=[Depends(require_admin_api)],
+    )
+    async def api_topstep_build_order_preview(
+        request: Request,
+    ) -> JSONResponse:
+        """Build a dry-run Topstep market-order payload.
+
+        Body is an optional sample TradingViewAlert. When omitted, the
+        most recent journaled signal is reused. Nothing is submitted —
+        ``would_submit`` is always false. The response includes the
+        normalized signal, account id, contract id, side, size, full
+        order payload, and the full set of safety gates so the operator
+        can see exactly why an order would or wouldn't go through.
+        """
+        from .risk_engine import (
+            normalize_action,
+            normalize_timeframe,
+            parse_float as _pfloat,
+            parse_int as _pint,
+        )
+        from .schemas import NormalizedSignal, TradingViewAlert
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+
+        signal: Optional[NormalizedSignal] = None
+        source_label = "request_body"
+
+        def _from_payload(payload: dict[str, Any]) -> Optional[NormalizedSignal]:
+            try:
+                alert = TradingViewAlert.model_validate(payload)
+            except Exception:
+                return None
+            action = normalize_action(alert.action) or alert.action
+            broker_symbol = (
+                symbol_map.resolve(alert.symbol, broker.provider)
+                if symbol_map is not None
+                else alert.symbol
+            )
+            return NormalizedSignal(
+                source=alert.source or "tradingview",
+                strategy=alert.strategy,
+                symbol=alert.symbol,
+                broker_symbol=broker_symbol,
+                exchange=alert.exchange,
+                action=action,
+                contracts=_pint(alert.contracts, default=1) or 1,
+                price=_pfloat(alert.price),
+                order_id=alert.order_id,
+                comment=alert.comment,
+                timeframe=normalize_timeframe(alert.timeframe),
+                raw=payload,
+            )
+
+        if isinstance(body, dict) and body.get("symbol") and body.get("action"):
+            signal = _from_payload(body)
+        elif isinstance(body, dict) and isinstance(body.get("alert"), dict):
+            signal = _from_payload(body["alert"])
+        if signal is None:
+            latest = journal.latest_signal(decision="accepted") or journal.latest_signal()
+            if latest is None:
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "ok": False,
+                        "status": "no_signal_available",
+                        "message": (
+                            "POST a TradingViewAlert JSON body, or wait for a "
+                            "signal to appear in the journal."
+                        ),
+                        "would_submit": False,
+                    },
+                )
+            source_label = "latest_journal_signal"
+            try:
+                raw = json.loads(latest["raw_payload"] or "{}")
+            except (TypeError, ValueError):
+                raw = {}
+            if isinstance(raw, dict) and raw.get("symbol") and raw.get("action"):
+                signal = _from_payload(raw)
+            if signal is None:
+                signal = NormalizedSignal(
+                    source=latest.get("source") or "tradingview",
+                    strategy=latest.get("strategy"),
+                    symbol=latest.get("symbol") or "",
+                    broker_symbol=latest.get("broker_symbol")
+                    or (
+                        symbol_map.resolve(latest.get("symbol"), broker.provider)
+                        if symbol_map is not None
+                        else latest.get("symbol")
+                    ),
+                    exchange=None,
+                    action=latest.get("action") or "BUY",
+                    contracts=int(latest.get("contracts") or 1),
+                    price=latest.get("price"),
+                    order_id=latest.get("order_id"),
+                    comment=None,
+                    timeframe=latest.get("timeframe"),
+                    raw=raw if isinstance(raw, dict) else {},
+                )
+
+        topstep = _topstep_adapter_for_admin()
+        preview = topstep.build_order_preview(signal, symbol_map=symbol_map)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": bool(preview.get("ok")),
+                "would_submit": False,
+                "execution_mode": settings.execution_mode,
+                "broker_provider": broker.provider,
+                "signal_source": source_label,
+                "normalized_signal": {
+                    "source": signal.source,
+                    "strategy": signal.strategy,
+                    "symbol": signal.symbol,
+                    "broker_symbol": signal.broker_symbol,
+                    "action": signal.action,
+                    "contracts": signal.contracts,
+                    "price": signal.price,
+                    "order_id": signal.order_id,
+                    "comment": signal.comment,
+                    "timeframe": signal.timeframe,
+                },
+                "account_id": preview.get("account_id"),
+                "contract_id": preview.get("contract_id"),
+                "side": preview.get("side"),
+                "size": preview.get("size"),
+                "payload": preview.get("payload"),
+                "reason": preview.get("reason"),
+                "safety": topstep._safety_state(),
+            },
+        )
+
+    @app.post(
+        "/api/topstep/submit-test-order",
+        dependencies=[Depends(require_admin_api)],
+    )
+    async def api_topstep_submit_test_order(
+        request: Request,
+    ) -> JSONResponse:
+        """Manually submit a tiny demo/sim Topstep order.
+
+        Strictly gated:
+          * BROKER_PROVIDER must be ``topstep``
+          * EXECUTION_MODE must be ``demo``
+          * ENABLE_TOPSTEP_ORDER_EXECUTION must be true
+          * TOPSTEP_EXECUTION_CONFIRM must be ``DEMO_ONLY``
+          * ENABLE_LIVE_TRADING must be false
+
+        ``submit_market_order`` enforces all of these; this endpoint
+        merely wires up a tiny sample signal (1 contract, BUY) using the
+        configured Topstep symbol map. Returns the ProjectX response
+        envelope, never silently no-ops.
+        """
+        from .schemas import NormalizedSignal
+
+        if broker.provider != "topstep":
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "status": "broker_provider_not_topstep",
+                    "message": (
+                        f"active provider is {broker.provider} — switch "
+                        "BROKER_PROVIDER=topstep and restart"
+                    ),
+                    "would_submit": False,
+                },
+            )
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        body = body if isinstance(body, dict) else {}
+
+        symbol = (
+            str(body.get("symbol") or "").strip()
+            or (settings.allowed_symbols[0] if settings.allowed_symbols else "MES1!")
+        )
+        action = str(body.get("action") or "BUY").upper()
+        contracts = int(body.get("contracts") or 1)
+
+        broker_symbol = (
+            symbol_map.resolve(symbol, broker.provider)
+            if symbol_map is not None
+            else symbol
+        )
+        signal = NormalizedSignal(
+            source="manual_test",
+            strategy="topstep_submit_test_order",
+            symbol=symbol,
+            broker_symbol=broker_symbol,
+            exchange=None,
+            action=action,
+            contracts=max(1, contracts),
+            price=None,
+            order_id=body.get("order_id"),
+            comment="topstep_submit_test_order",
+            timeframe=None,
+            raw=body,
+        )
+
+        topstep = _topstep_adapter_for_admin()
+        result = topstep.submit_market_order(signal, symbol_map=symbol_map)
+        return JSONResponse(status_code=200, content=result)
 
     @app.post(
         "/api/topstep/select-account",
@@ -670,6 +898,8 @@ def create_app() -> FastAPI:
         ctx = _page_ctx(request)
         ctx["risk"] = {
             "max_contracts_per_trade": settings.max_contracts_per_trade,
+            "strategy_managed_risk": settings.strategy_managed_risk,
+            "fixed_contracts_per_trade": settings.fixed_contracts_per_trade,
             "max_open_positions": settings.max_open_positions,
             "max_daily_loss": settings.max_daily_loss,
             "duplicate_order_cooldown_seconds": settings.duplicate_order_cooldown_seconds,
@@ -691,6 +921,8 @@ def create_app() -> FastAPI:
     def post_settings_risk(
         allowed_symbols: str = Form(""),
         max_contracts_per_trade: str = Form(...),
+        strategy_managed_risk: str = Form("false"),
+        fixed_contracts_per_trade: str = Form("1"),
         max_daily_loss: str = Form(...),
         max_open_positions: str = Form(...),
         duplicate_order_cooldown_seconds: str = Form(...),
@@ -699,26 +931,45 @@ def create_app() -> FastAPI:
         enable_timeframe_lock: str = Form("false"),
         allowed_timeframes: str = Form(""),
     ):
-        updates = {
-            "ALLOWED_SYMBOLS": allowed_symbols,
-            "MAX_CONTRACTS_PER_TRADE": max_contracts_per_trade,
-            "MAX_DAILY_LOSS": max_daily_loss,
-            "MAX_OPEN_POSITIONS": max_open_positions,
-            "DUPLICATE_ORDER_COOLDOWN_SECONDS": duplicate_order_cooldown_seconds,
-            "ENABLE_LONGS": enable_longs,
-            "ENABLE_SHORTS": enable_shorts,
-            "ENABLE_TIMEFRAME_LOCK": enable_timeframe_lock,
-            "ALLOWED_TIMEFRAMES": allowed_timeframes,
-        }
+        # Coerce + validate every field individually first so a bad input
+        # surfaces a typed error before we touch SQLite.
+        raw_updates: list[tuple[str, Any]] = [
+            ("ALLOWED_SYMBOLS", allowed_symbols),
+            ("MAX_CONTRACTS_PER_TRADE", max_contracts_per_trade),
+            ("STRATEGY_MANAGED_RISK", strategy_managed_risk),
+            ("FIXED_CONTRACTS_PER_TRADE", fixed_contracts_per_trade),
+            ("MAX_DAILY_LOSS", max_daily_loss),
+            ("MAX_OPEN_POSITIONS", max_open_positions),
+            ("DUPLICATE_ORDER_COOLDOWN_SECONDS", duplicate_order_cooldown_seconds),
+            ("ENABLE_LONGS", enable_longs),
+            ("ENABLE_SHORTS", enable_shorts),
+            ("ENABLE_TIMEFRAME_LOCK", enable_timeframe_lock),
+            ("ALLOWED_TIMEFRAMES", allowed_timeframes),
+        ]
+        from .settings_store import coerce as _coerce_key, serialize as _serialize_key
+
         try:
-            coerced = {
-                key: settings_store.update_typed(key, value)
-                for key, value in updates.items()
-            }
+            coerced: dict[str, Any] = {}
+            for key, value in raw_updates:
+                coerced[key] = _coerce_key(key, value)
         except SettingsValidationError as exc:
             return _flash_redirect("/settings/risk", str(exc), kind="error")
 
+        # Cross-field: FIXED_CONTRACTS_PER_TRADE must not exceed
+        # MAX_CONTRACTS_PER_TRADE. Otherwise a non-strategy-managed run
+        # could only ever produce a "contracts_above_max" rejection.
+        if (
+            coerced["FIXED_CONTRACTS_PER_TRADE"]
+            > coerced["MAX_CONTRACTS_PER_TRADE"]
+        ):
+            return _flash_redirect(
+                "/settings/risk",
+                "FIXED_CONTRACTS_PER_TRADE cannot exceed MAX_CONTRACTS_PER_TRADE",
+                kind="error",
+            )
+
         for key, value in coerced.items():
+            settings_store.set_setting(key, _serialize_key(key, value))
             settings_store.apply_to_settings(settings, key, value)
         return _flash_redirect(
             "/settings/risk", "Risk settings saved.", kind="ok"

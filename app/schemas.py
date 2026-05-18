@@ -97,6 +97,14 @@ class NormalizedSignal(BaseModel):
     # Normalized timeframe value (e.g. "1", "5", "60", "D"). None when the
     # alert didn't include one.
     timeframe: Optional[str] = None
+    # Audit fields — populated by the webhook handler when applying the
+    # strategy-managed vs fixed sizing logic. ``alert_contracts`` is the
+    # raw quantity the alert asked for (None when missing/invalid).
+    # ``strategy_managed_risk`` records which mode produced
+    # ``contracts``: True means the alert's quantity flowed through,
+    # False means SignalBridge overrode it with the fixed setting.
+    alert_contracts: Optional[int] = None
+    strategy_managed_risk: Optional[bool] = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -113,6 +121,10 @@ class ExecutionResult(BaseModel):
     order_id: Optional[str] = None
     message: str = ""
     position_after: Optional[dict[str, Any]] = None
+    # Adapter-specific extras (e.g. dry-run order payload, ProjectX
+    # response body). Stored alongside the result in the journal so
+    # operators can audit what was built or what the broker returned.
+    details: Optional[dict[str, Any]] = None
 
 
 # ---------- Outbound webhook response ----------
@@ -139,3 +151,7 @@ class StatusResponse(BaseModel):
     kill_switch_active: bool
     open_positions: list[dict[str, Any]]
     database_path: str
+    # Risk sizing knobs (surfaced for the dashboard/JS).
+    strategy_managed_risk: bool = True
+    fixed_contracts_per_trade: int = 1
+    max_contracts_per_trade: int = 1

@@ -13,8 +13,26 @@
 
 <section class="grid grid-4 section">
   <div class="card">
+    <div class="card-label">Sizing mode</div>
+    <div class="card-value">
+      {% if risk.strategy_managed_risk %}
+        <span class="badge badge-good plain">strategy-managed</span>
+      {% else %}
+        <span class="badge badge-warn plain">fixed ({{ risk.fixed_contracts_per_trade }})</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">
+      {% if risk.strategy_managed_risk %}
+        uses alert <code>contracts</code>
+      {% else %}
+        alert <code>contracts</code> ignored
+      {% endif %}
+    </div>
+  </div>
+  <div class="card">
     <div class="card-label">Max contracts / trade</div>
     <div class="card-value lg">{{ risk.max_contracts_per_trade }}</div>
+    <div class="card-sub">hard cap — always enforced</div>
   </div>
   <div class="card">
     <div class="card-label">Max open positions</div>
@@ -24,6 +42,9 @@
     <div class="card-label">Max daily loss</div>
     <div class="card-value lg">{{ '%.2f' % risk.max_daily_loss }}<span class="unit">pts</span></div>
   </div>
+</section>
+
+<section class="grid grid-4 section">
   <div class="card">
     <div class="card-label">Duplicate cooldown</div>
     <div class="card-value lg">{{ risk.duplicate_order_cooldown_seconds }}<span class="unit">sec</span></div>
@@ -97,12 +118,37 @@
              placeholder="MES1!, MNQ1!">
       <p class="muted" style="margin: 4px 0 0;">Comma-separated TradingView tickers.</p>
     </div>
+    <div class="form-row toggles">
+      <label>
+        <input type="checkbox" id="strategy_managed_risk"
+               name="strategy_managed_risk" value="true"
+               {% if risk.strategy_managed_risk %}checked{% endif %}>
+        Risk settings are set by the strategy
+      </label>
+    </div>
+    <p class="muted" style="margin: 0 0 10px;">
+      When enabled, SignalBridge uses the contract quantity sent by
+      TradingView. SignalBridge will still enforce max contracts and other
+      safety limits.
+    </p>
     <div class="grid grid-2">
+      <div class="form-row">
+        <label for="fixed_contracts_per_trade">Fixed contracts per trade</label>
+        <input type="number" min="1" step="1" id="fixed_contracts_per_trade"
+               name="fixed_contracts_per_trade"
+               value="{{ risk.fixed_contracts_per_trade }}">
+        <p class="muted" style="margin: 4px 0 0;">
+          Used only when the toggle above is off. Must be ≤ max contracts / trade.
+        </p>
+      </div>
       <div class="form-row">
         <label for="max_contracts_per_trade">Max contracts / trade</label>
         <input type="number" min="1" step="1" id="max_contracts_per_trade"
                name="max_contracts_per_trade"
                value="{{ risk.max_contracts_per_trade }}">
+        <p class="muted" style="margin: 4px 0 0;">
+          Hard cap. Always enforced, even when the strategy manages sizing.
+        </p>
       </div>
       <div class="form-row">
         <label for="max_open_positions">Max open positions</label>

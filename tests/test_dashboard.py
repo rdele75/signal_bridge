@@ -58,8 +58,7 @@ def test_api_status_broker_provider_present(client):
 
 def test_dashboard_renders_broker_account_card_for_topstep(make_app):
     """Topstep with no credentials must still render the broker-account
-    card on the dashboard without crashing — positions/orders show
-    'n/a' (not implemented) and the card reports the active provider."""
+    card on the dashboard without crashing."""
     from fastapi.testclient import TestClient
     app = make_app(provider="topstep")
     with TestClient(app) as c:
@@ -68,10 +67,6 @@ def test_dashboard_renders_broker_account_card_for_topstep(make_app):
     body = r.text
     assert "Broker account" in body
     assert "topstep" in body
-    # Positions/orders aren't implemented for topstep yet — the card
-    # should advertise that, not silently report zero counts.
-    assert "positions endpoint not implemented" in body
-    assert "orders endpoint not implemented" in body
 
 
 # ---------- /api/metrics ----------
@@ -277,13 +272,15 @@ def test_api_broker_positions_paper_reflects_fill(client):
 
 
 def test_api_broker_positions_topstep_safe(make_app):
+    """Topstep with no creds returns a safe missing_credentials envelope —
+    not a 5xx, no network call, no implementation gap claimed."""
     from fastapi.testclient import TestClient
     app = make_app(provider="topstep")
     with TestClient(app) as c:
         r = c.get("/api/broker/positions")
     assert r.status_code == 200
     body = r.json()
-    assert body["not_implemented"] is True
+    assert body["status"] == "missing_credentials"
     assert body["positions"] == []
 
 
@@ -321,7 +318,7 @@ def test_api_broker_orders_topstep_safe(make_app):
     app = make_app(provider="topstep")
     with TestClient(app) as c:
         body = c.get("/api/broker/orders").json()
-    assert body["not_implemented"] is True
+    assert body["status"] == "missing_credentials"
     assert body["orders"] == []
 
 

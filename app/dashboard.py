@@ -347,6 +347,7 @@ def broker_status_payload(
     orders_resp = _safe_get_orders(broker)
     positions = positions_resp.get("positions") or []
     orders = orders_resp.get("orders") or []
+    open_orders_count = len(orders)
 
     return {
         "ok": bool(probe.get("ok")),
@@ -377,9 +378,24 @@ def broker_status_payload(
         ),
         "orders_status": orders_resp.get("status", "unknown"),
         "orders_message": orders_resp.get("message", ""),
-        "orders_count": len(orders),
+        "orders_count": open_orders_count,
+        "open_orders_count": open_orders_count,
         "orders_not_implemented": bool(orders_resp.get("not_implemented")),
         "restart_required": settings.resolved_provider != broker.provider,
+        # Topstep safety / execution flags (None when the active
+        # adapter is something else). Surfaced so the dashboard can
+        # explain exactly why an order would or wouldn't be submitted.
+        "enable_topstep_order_dry_run": settings.enable_topstep_order_dry_run,
+        "enable_topstep_order_execution": (
+            settings.enable_topstep_order_execution
+        ),
+        "topstep_execution_confirm": settings.topstep_execution_confirm,
+        "enable_live_trading": settings.enable_live_trading,
+        # Risk sizing knobs so the dashboard/JS can render which mode
+        # is active and what the hard cap is.
+        "strategy_managed_risk": settings.strategy_managed_risk,
+        "fixed_contracts_per_trade": settings.fixed_contracts_per_trade,
+        "max_contracts_per_trade": settings.max_contracts_per_trade,
     }
 
 

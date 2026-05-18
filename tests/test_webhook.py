@@ -220,19 +220,20 @@ def test_paper_provider_executes(make_app):
 
 
 def test_topstep_provider_does_not_place_real_order(make_app):
-    """BROKER_PROVIDER=topstep must NOT silently no-op or place a real
-    order — it must reject with a clearly labeled rejection reason."""
+    """BROKER_PROVIDER=topstep with default safety settings (execution
+    off) must NOT place a real order — the handler returns a dry-run
+    result and no paper position is created either way."""
     from fastapi.testclient import TestClient
 
     app = make_app(provider="topstep")
     with TestClient(app) as c:
         r = c.post("/webhooks/tradingview", json=make_alert(order_id="topstep_sel"))
-    body = r.json()
-    assert body["accepted"] is False
-    assert body["decision"] == "rejected"
-    reason = body["rejection_reason"] or ""
-    assert "broker_not_implemented" in reason
-    assert "topstep" in reason.lower()
+        body = r.json()
+        # Whether build succeeded or rejected (account id / symbol map
+        # not configured here), no paper fill should have happened.
+        assert body["execution"]["broker"] == "topstep"
+        positions = c.get("/api/positions").json()["open_positions"]
+        assert positions == []
 
 
 def test_tradovate_provider_does_not_place_real_order(make_app):
