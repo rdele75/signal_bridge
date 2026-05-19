@@ -8,7 +8,7 @@
 #   logs/server.out            captured stdout/stderr of the server
 #   logs/signalbridge.log      application logger output (rotated)
 #
-# Commands: start | stop | restart | status | logs | health
+# Commands: start | stop | restart | status | logs | health | audit
 #
 # Defaults to host 127.0.0.1 and port 8000. APP_HOST/APP_PORT in .env
 # override; pass --host / --port to override the env. Tailscale Funnel
@@ -242,6 +242,111 @@ cmd_health() {
   return $rc
 }
 
+cmd_audit() {
+  # Print a non-secret safety snapshot suitable for visual review.
+  # Reads the SQLite settings store directly via a small Python helper
+  # so it works whether or not the server is running. No tokens, no
+  # passwords, no webhook secret values — only set/unset flags and
+  # masked previews.
+  cd "$PROJECT_ROOT"
+  if [ -f ".venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+  fi
+  python - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.getcwd())
+
+from app.config import get_settings  # noqa: E402
+from app.settings_store import SettingsStore  # noqa: E402
+from app.symbol_map import SymbolMap  # noqa: E402
+
+s = get_settings()
+store = SettingsStore(s.database_abs_path)
+store.initialize_settings_from_env(s)
+sm = SymbolMap(s.symbols_map_abs_path)
+mappings = sm.all_mappings()
+
+def yn(b):
+    return "yes" if bool(b) else "no"
+
+def mask(v):
+    if not v:
+        return "(unset)"
+    text = str(v)
+    if len(text) <= 4:
+        return "configured"
+    return f"set (…{text[-4:]})"
+
+execution_mode = s.execution_mode
+provider = s.resolved_provider
+demo_armed = (
+    provider == "topstep"
+    and execution_mode == "demo"
+    and bool(s.enable_topstep_order_execution)
+    and (s.topstep_execution_confirm or "") == "DEMO_ONLY"
+    and bool(s.resolved_account_id)
+)
+live_armed = (
+    provider == "topstep"
+    and execution_mode == "live"
+    and bool(s.enable_topstep_order_execution)
+    and (s.topstep_execution_confirm or "") == "LIVE_CONFIRMED"
+    and bool(s.enable_live_trading)
+    and (s.live_trading_confirm or "") == "I_UNDERSTAND_LIVE_ORDERS"
+    and bool(s.live_trading_account_ack)
+    and bool(s.resolved_account_id)
+)
+
+print("=== SignalBridge audit ===")
+print(f"broker_provider          : {provider}")
+print(f"execution_mode           : {execution_mode}")
+print(f"kill_switch_enabled      : {yn(s.enable_kill_switch)}")
+kill_path = s.database_abs_path.parent / 'kill_switch.active'
+print(f"kill_switch_active       : {yn(kill_path.exists())}")
+print(f"webhook secret configured: {yn(s.webhook_secret and s.webhook_secret != 'change_me_to_a_long_random_secret')}")
+print(f"admin auth enabled       : {yn(s.admin_auth_enabled)}")
+print(f"admin password storage   : {'hash' if s.admin_password_hash else 'plaintext-env-fallback'}")
+print()
+print("--- topstep ---")
+print(f"topstep username         : {yn(bool(s.topstep_username))}")
+print(f"topstep api key          : {mask(s.topstep_api_key)}")
+print(f"topstep account id       : {s.topstep_account_id or '(unset)'}")
+print(f"topstep selected account : {s.resolved_account_id or '(unset)'}")
+print(f"topstep token cached     : {yn(bool(s.topstep_token))}")
+print()
+print("--- symbol map ---")
+print(f"symbol map path          : {s.symbols_map_abs_path}")
+print(f"symbol map entries       : {len(mappings)}")
+for ticker, m in sorted(mappings.items()):
+    paper = m.get('paper') or '—'
+    topstep = m.get('topstep') or '—'
+    tradovate = m.get('tradovate') or '—'
+    print(f"  {ticker:<10} paper={paper} topstep={topstep} tradovate={tradovate}")
+print()
+print("--- demo execution ---")
+print(f"ENABLE_TOPSTEP_ORDER_DRY_RUN   : {yn(s.enable_topstep_order_dry_run)}")
+print(f"ENABLE_TOPSTEP_ORDER_EXECUTION : {yn(s.enable_topstep_order_execution)}")
+print(f"TOPSTEP_EXECUTION_CONFIRM      : {s.topstep_execution_confirm}")
+print(f"demo execution armed           : {yn(demo_armed)}")
+print()
+print("--- live execution ---")
+print(f"ENABLE_LIVE_TRADING            : {yn(s.enable_live_trading)}")
+print(f"LIVE_TRADING_CONFIRM           : {s.live_trading_confirm}")
+print(f"LIVE_TRADING_ACCOUNT_ACK       : {yn(s.live_trading_account_ack)}")
+print(f"LIVE_MAX_CONTRACTS_PER_TRADE   : {s.live_max_contracts_per_trade}")
+print(f"MAX_CONTRACTS_PER_TRADE        : {s.max_contracts_per_trade}")
+print(f"LIVE_ALLOWED_SYMBOLS           : {','.join(s.live_allowed_symbols) or '(none)'}")
+print(f"LIVE_REQUIRE_KILL_SWITCH_OFF   : {yn(s.live_require_kill_switch_off)}")
+print(f"live execution armed           : {yn(live_armed)}")
+if live_armed:
+    print()
+    print("!!! WARNING: live execution is currently ARMED — orders WILL be submitted to the funded Topstep account.")
+PY
+}
+
 usage() {
   cat <<'EOF'
 sbctl — SignalBridge control script
@@ -253,6 +358,7 @@ Usage:
   sbctl status     show pid / port / health
   sbctl logs       tail logs/server.out and logs/signalbridge.log
   sbctl health     curl /health and print the response
+  sbctl audit      print broker/execution gate snapshot (no secrets, no tokens)
 
 Reads APP_HOST / APP_PORT from .env if present; defaults to 127.0.0.1:8000.
 EOF
@@ -268,6 +374,7 @@ case "$cmd" in
   status)  cmd_status ;;
   logs)    cmd_logs ;;
   health)  cmd_health ;;
+  audit)   cmd_audit ;;
   ""|-h|--help|help) usage ;;
   *)
     err "unknown command: $cmd"

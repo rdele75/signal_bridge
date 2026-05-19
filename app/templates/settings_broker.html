@@ -3,7 +3,7 @@
 {% block page_title %}Broker{% endblock %}
 {% block content %}
 <h1>Broker Settings</h1>
-<p class="subtitle">Pick the broker adapter + execution mode. Persisted in SQLite.</p>
+<p class="subtitle">Configure broker provider credentials and selected account. Execution controls live on the <a href="/">Dashboard</a>.</p>
 
 {% if flash %}
   <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
@@ -11,19 +11,24 @@
   </div>
 {% endif %}
 
-<div class="banner warn">
-  <span class="t">Topstep order routing safety:</span>
-  dry-run previews are
-  {% if broker_status.enable_topstep_order_dry_run %}<strong>on</strong>{% else %}<strong>off</strong>{% endif %}
-  · demo execution is
-  {% if broker_status.enable_topstep_order_execution %}<strong class="warn">enabled</strong>{% else %}<strong>disabled</strong>{% endif %}
-  · confirm token <code>{{ broker_status.topstep_execution_confirm or '—' }}</code>
-  · live trading kill <strong>{{ 'on' if broker_status.enable_live_trading else 'off (locked)' }}</strong>.
-  <code>live</code> execution mode stays blocked in this build.
-</div>
+{# ---- Execution controls relocation pointer ---- #}
+<section class="card section" id="execution-relocation">
+  <div class="card-row">
+    <div>
+      <div class="card-label">Execution controls</div>
+      <div class="card-value sm">
+        Execution controls moved to <a href="/">Dashboard → Execution card</a>.
+      </div>
+      <div class="card-sub">
+        Mode select, demo/live arming, kill switch, and exit-all live there now.
+      </div>
+    </div>
+    <a href="/" class="btn">Open Dashboard</a>
+  </div>
+</section>
 
 {# ---- Top status cards ---- #}
-<section class="grid grid-4 section">
+<section class="grid grid-3 section">
   <div class="card">
     <div class="card-label">Selected broker provider</div>
     <div class="card-value">
@@ -40,14 +45,6 @@
         active adapter
       {% endif %}
     </div>
-  </div>
-
-  <div class="card">
-    <div class="card-label">Execution mode</div>
-    <div class="card-value">
-      <span class="badge badge-paper plain">{{ configured_execution_mode }}</span>
-    </div>
-    <div class="card-sub">no live orders are placed</div>
   </div>
 
   <div class="card">
@@ -149,135 +146,19 @@
 </section>
 {% endif %}
 
-{# ---- Topstep Demo Execution controls + status ---- #}
-<section class="card section" id="topstep-demo-execution">
-  <div class="section-head">
-    <h3>Topstep Demo Execution</h3>
-    <span class="hint">demo/sim only · live/funded execution stays locked</span>
-  </div>
-  <div class="banner {% if demo_execution.state_kind == 'good' %}{% elif demo_execution.state_kind == 'warn' %}warn{% else %}warn{% endif %}">
-    <span class="t">State:</span>
-    <strong>{{ demo_execution.state_label }}</strong>
-    {% if demo_execution.is_live_locked %}
-      · live mode is blocked and cannot be armed
-    {% elif demo_execution.is_armed %}
-      · Topstep <code>/api/Order/place</code> is reachable for demo signals
-    {% else %}
-      · webhooks build dry-run previews and never POST
-    {% endif %}
-  </div>
-
-  <dl class="kv">
-    <dt>BROKER_PROVIDER</dt><dd><code>{{ demo_execution.broker_provider or '—' }}</code></dd>
-    <dt>EXECUTION_MODE</dt><dd><code>{{ demo_execution.execution_mode or '—' }}</code></dd>
-    <dt>ENABLE_TOPSTEP_ORDER_EXECUTION</dt>
-    <dd>
-      {% if demo_execution.enable_topstep_order_execution %}
-        <span class="badge badge-warn plain">true</span>
-      {% else %}
-        <span class="badge badge-good plain">false</span>
-      {% endif %}
-    </dd>
-    <dt>TOPSTEP_EXECUTION_CONFIRM</dt>
-    <dd><code>{{ demo_execution.topstep_execution_confirm or 'disabled' }}</code></dd>
-    <dt>ENABLE_LIVE_TRADING</dt>
-    <dd>
-      {% if demo_execution.enable_live_trading %}
-        <span class="badge badge-bad plain">true — locked</span>
-      {% else %}
-        <span class="badge badge-good plain">false (locked)</span>
-      {% endif %}
-    </dd>
-    <dt>selected account id</dt>
-    <dd><code>{{ demo_execution.selected_account_id or '—' }}</code></dd>
-    <dt>selected account name</dt>
-    <dd>{{ demo_execution.selected_account_name or '—' }}</dd>
-    <dt>canTrade</dt>
-    <dd>
-      {% if demo_execution.can_trade is true %}
-        <span class="badge badge-good plain">yes</span>
-      {% elif demo_execution.can_trade is false %}
-        <span class="badge badge-bad plain">no</span>
-      {% else %}
-        —
-      {% endif %}
-    </dd>
-    <dt>kill switch</dt>
-    <dd>
-      {% if demo_execution.kill_switch_active %}
-        <span class="badge badge-bad plain">active</span>
-      {% else %}
-        <span class="badge badge-good plain">off</span>
-      {% endif %}
-    </dd>
-  </dl>
-
-  {% if demo_execution.blockers %}
-    <p class="muted" style="margin: 6px 0 10px;">
-      Cannot arm demo execution yet:
-      <ul style="margin: 4px 0 0 20px;">
-        {% for b in demo_execution.blockers %}
-          <li>{{ b }}</li>
-        {% endfor %}
-      </ul>
-    </p>
-  {% endif %}
-
-  <div class="grid grid-2" style="margin-top: 10px;">
-    <form id="form-demo-execution-enable" class="form">
-      <h4 style="margin: 0 0 4px;">Enable Demo Execution</h4>
-      <p class="muted" style="margin: 0 0 8px;">
-        Type <code>{{ demo_execution.confirm_token }}</code> below to arm
-        demo-mode execution. Live trading stays locked regardless.
-      </p>
-      <div class="form-row">
-        <label for="demo_confirm">Confirmation token</label>
-        <input
-          id="demo_confirm"
-          name="confirm"
-          type="text"
-          autocomplete="off"
-          placeholder="{{ demo_execution.confirm_token }}"
-          {% if demo_execution.is_armed %}disabled{% endif %}
-        />
-      </div>
-      <div class="btn-row">
-        <button
-          type="submit"
-          class="btn btn-primary"
-          {% if not demo_execution.can_enable or demo_execution.is_armed %}disabled{% endif %}>
-          Enable Demo Execution
-        </button>
-      </div>
-    </form>
-
-    <form id="form-demo-execution-disable" class="form">
-      <h4 style="margin: 0 0 4px;">Disable Demo Execution</h4>
-      <p class="muted" style="margin: 0 0 8px;">
-        Returns Topstep to dry-run only. Broker provider and selected
-        account stay where you set them.
-      </p>
-      <div class="btn-row">
-        <button
-          type="submit"
-          class="btn"
-          {% if not demo_execution.is_armed and not demo_execution.enable_topstep_order_execution %}disabled{% endif %}>
-          Disable Demo Execution
-        </button>
-      </div>
-    </form>
-  </div>
-  <pre id="demo-execution-out" class="output" style="margin-top: 8px;">demo execution controls ready…</pre>
-</section>
-
-{# ---- Form: provider + mode + selected account (collapsible) ---- #}
+{# ---- Broker / execution selection form (account configuration only) ---- #}
 <section class="card section">
-  <details class="collapsible">
+  <details class="collapsible" open>
     <summary class="section-head collapsible-toggle">
       <h3>Broker / execution selection</h3>
-      <span class="hint">click to expand · saved to SQLite</span>
+      <span class="hint">click to expand · broker provider + credentials · saved to SQLite</span>
     </summary>
     <div class="collapsible-body">
+      <p class="muted" style="margin: 0 0 10px;">
+        Execution mode (paper / demo / live) lives on the
+        <a href="/">Dashboard Execution card</a>. This form is for the
+        broker connection and the selected account only.
+      </p>
       <form method="post" action="/settings/broker" class="form">
         <div class="grid grid-2">
           <div class="form-row">
@@ -290,34 +171,26 @@
             <p class="muted" style="margin: 4px 0 0;">paper executes; topstep is read-only/dry-run; tradovate not implemented.</p>
           </div>
           <div class="form-row">
-            <label for="execution_mode">Execution mode</label>
-            <select id="execution_mode" name="execution_mode">
-              {% for m in execution_mode_options %}
-                <option value="{{ m }}" {% if m == configured_execution_mode %}selected{% endif %}>{{ m }}</option>
-              {% endfor %}
+            <label for="selected_account_id">Selected account ID</label>
+            <select id="selected_account_id" name="selected_account_id" data-account-dropdown>
+              <option value="">— per-provider default —</option>
+              {% if selected_account_id_raw %}
+                <option value="{{ selected_account_id_raw }}" selected>
+                  {{ selected_account_id_raw }} (current)
+                </option>
+              {% endif %}
             </select>
-            <p class="muted" style="margin: 4px 0 0;"><code>live</code> mode is intentionally disabled.</p>
+            <p class="muted" style="margin: 4px 0 0;">
+              Empty → use the per-provider default. Use <em>Fetch accounts</em> below to populate live Topstep accounts.
+              Saving updates <code>SELECTED_ACCOUNT_ID</code> and (for topstep) <code>TOPSTEP_ACCOUNT_ID</code>.
+            </p>
           </div>
         </div>
 
-        <div class="form-row" style="margin-top: 10px;">
-          <label for="selected_account_id">Selected account ID</label>
-          {# Dropdown of fetched Topstep accounts. Falls back to the raw
-             current value when no accounts have been fetched yet — the
-             operator can hit "Fetch accounts" below to populate it. #}
-          <select id="selected_account_id" name="selected_account_id" data-account-dropdown>
-            <option value="">— per-provider default —</option>
-            {% if selected_account_id_raw %}
-              <option value="{{ selected_account_id_raw }}" selected>
-                {{ selected_account_id_raw }} (current)
-              </option>
-            {% endif %}
-          </select>
-          <p class="muted" style="margin: 4px 0 0;">
-            Empty → use the per-provider default. Use <em>Fetch accounts</em> below to populate live Topstep accounts.
-            Saving updates <code>SELECTED_ACCOUNT_ID</code> and (for topstep) <code>TOPSTEP_ACCOUNT_ID</code>.
-          </p>
-        </div>
+        {# Execution mode is intentionally hidden here — the dashboard
+           owns the mode toggle. Submitting this form preserves the
+           current mode by sending it back unchanged. #}
+        <input type="hidden" name="execution_mode" value="{{ configured_execution_mode }}" />
 
         <h3 style="margin-top: 18px;">Topstep / TopstepX (ProjectX) credentials</h3>
         <p class="muted" style="margin: 0 0 10px;">
@@ -387,6 +260,51 @@
       </form>
     </div>
   </details>
+</section>
+
+{# ---- Account snapshot — positions/orders poller. Intentionally NOT
+       a realtime price feed; that placeholder lives on the Dashboard
+       under "Ticker Watch". ---- #}
+<section class="card section" id="account-snapshot-panel">
+  <div class="section-head">
+    <h3>Account snapshot</h3>
+    <span class="hint" id="realtime-status">loading…</span>
+  </div>
+  <p class="muted" style="margin: 0 0 8px;">
+    Polls broker positions/orders every {{ realtime.poll_seconds }}s.
+    This is account state, <strong>not</strong> realtime market price —
+    ticker price movement is a separate feature on the Dashboard.
+    <strong>WebSocket SignalR:</strong> not enabled yet.
+  </p>
+  <div class="btn-row">
+    <button id="btn-realtime-refresh" class="btn" type="button">Refresh</button>
+    <label style="margin-left: 10px;">
+      <input id="chk-realtime-autopoll" type="checkbox"
+             data-default="{{ 'true' if realtime.enabled else 'false' }}"
+             data-poll-seconds="{{ realtime.poll_seconds }}" />
+      auto-refresh every {{ realtime.poll_seconds }}s
+    </label>
+  </div>
+  <div class="grid grid-2" style="margin-top: 10px;">
+    <div>
+      <h4 style="margin: 0 0 6px;">Positions</h4>
+      <div id="realtime-positions">
+        <div class="empty"><strong>…</strong>fetching…</div>
+      </div>
+    </div>
+    <div>
+      <h4 style="margin: 0 0 6px;">Open orders</h4>
+      <div id="realtime-orders">
+        <div class="empty"><strong>…</strong>fetching…</div>
+      </div>
+    </div>
+  </div>
+  <script id="realtime-config" type="application/json">
+    {
+      "poll_seconds": {{ realtime.poll_seconds }},
+      "enabled": {{ 'true' if realtime.enabled else 'false' }}
+    }
+  </script>
 </section>
 
 {# ---- Test connection ---- #}
@@ -475,7 +393,6 @@ async function _call(path, method) {
 function _populateAccountDropdown(accounts) {
   if (!_acctSelect) return;
   const current = _acctSelect.value;
-  // Wipe options except the "default" sentinel.
   const sentinel = _acctSelect.querySelector('option[value=""]');
   _acctSelect.innerHTML = '';
   if (sentinel) _acctSelect.appendChild(sentinel);
@@ -496,7 +413,6 @@ function _populateAccountDropdown(accounts) {
     _acctSelect.appendChild(opt);
   });
   if (!_acctSelect.value && current) {
-    // Re-insert the previous custom value so the operator doesn't lose it.
     const opt = document.createElement('option');
     opt.value = current;
     opt.textContent = current + ' (current)';
@@ -568,54 +484,100 @@ if (_btnAccts) _btnAccts.addEventListener('click', async () => {
   if (body) _renderAccountsList(body);
 });
 
-// -- Topstep demo-execution arm/disarm controls --
-const _demoOut = document.getElementById('demo-execution-out');
-function _writeDemoOut(body) {
-  if (_demoOut) _demoOut.textContent = JSON.stringify(body, null, 2);
-}
+// -- Account snapshot panel (polling) --
+(function () {
+  const cfgEl = document.getElementById('realtime-config');
+  if (!cfgEl) return;
+  const cfg = JSON.parse(cfgEl.textContent);
+  const pollMs = Math.max(1, parseInt(cfg.poll_seconds, 10) || 5) * 1000;
+  const status = document.getElementById('realtime-status');
+  const posBody = document.getElementById('realtime-positions');
+  const ordBody = document.getElementById('realtime-orders');
+  const btn = document.getElementById('btn-realtime-refresh');
+  const auto = document.getElementById('chk-realtime-autopoll');
+  if (auto) auto.checked = !!cfg.enabled;
+  let timer = null;
 
-const _formEnable = document.getElementById('form-demo-execution-enable');
-if (_formEnable) {
-  _formEnable.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const confirmEl = document.getElementById('demo_confirm');
-    const token = (confirmEl && confirmEl.value) || '';
-    if (_demoOut) _demoOut.textContent = 'arming demo execution…';
-    try {
-      const r = await fetch('/api/topstep/demo-execution/enable', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: token }),
-      });
-      const body = await r.json();
-      _writeDemoOut(body);
-      if (body && body.ok) {
-        window.setTimeout(() => window.location.reload(), 600);
-      }
-    } catch (err) {
-      if (_demoOut) _demoOut.textContent = 'enable failed: ' + err;
+  function _rowsTable(rows, columns) {
+    if (!rows || !rows.length) {
+      return '<div class="empty"><strong>none</strong>nothing to show.</div>';
     }
-  });
-}
+    const head = '<div class="table-wrap"><table class="mini"><thead><tr>'
+      + columns.map((c) => '<th>' + c.label + '</th>').join('')
+      + '</tr></thead><tbody>';
+    const body = rows.map((r) => '<tr>'
+      + columns.map((c) => {
+          const value = r[c.key];
+          return '<td>' + (value == null ? '—' : String(value)) + '</td>';
+        }).join('')
+      + '</tr>').join('');
+    return head + body + '</tbody></table></div>';
+  }
 
-const _formDisable = document.getElementById('form-demo-execution-disable');
-if (_formDisable) {
-  _formDisable.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (_demoOut) _demoOut.textContent = 'disabling demo execution…';
-    try {
-      const r = await fetch('/api/topstep/demo-execution/disable', {
-        method: 'POST',
-      });
-      const body = await r.json();
-      _writeDemoOut(body);
-      if (body && body.ok) {
-        window.setTimeout(() => window.location.reload(), 600);
-      }
-    } catch (err) {
-      if (_demoOut) _demoOut.textContent = 'disable failed: ' + err;
+  function _render(state) {
+    if (state.positions.not_implemented) {
+      posBody.innerHTML = '<div class="empty"><strong>n/a</strong>'
+        + (state.positions.message || 'positions not implemented for this broker.')
+        + '</div>';
+    } else if (!state.positions.ok) {
+      posBody.innerHTML = '<div class="empty"><strong>error</strong>'
+        + (state.positions.message || 'positions fetch failed.')
+        + '</div>';
+    } else {
+      posBody.innerHTML = _rowsTable(state.positions.rows, [
+        { key: 'id', label: 'ID' },
+        { key: 'contractId', label: 'Contract' },
+        { key: 'size', label: 'Size' },
+        { key: 'averagePrice', label: 'Avg price' },
+      ]);
     }
-  });
-}
+    if (state.orders.not_implemented) {
+      ordBody.innerHTML = '<div class="empty"><strong>n/a</strong>'
+        + (state.orders.message || 'orders not implemented for this broker.')
+        + '</div>';
+    } else if (!state.orders.ok) {
+      ordBody.innerHTML = '<div class="empty"><strong>error</strong>'
+        + (state.orders.message || 'orders fetch failed.')
+        + '</div>';
+    } else {
+      ordBody.innerHTML = _rowsTable(state.orders.rows, [
+        { key: 'id', label: 'ID' },
+        { key: 'contractId', label: 'Contract' },
+        { key: 'side', label: 'Side' },
+        { key: 'size', label: 'Size' },
+        { key: 'status', label: 'Status' },
+      ]);
+    }
+    if (status) {
+      const stamp = state.refreshed_at
+        ? new Date(state.refreshed_at).toLocaleTimeString()
+        : '—';
+      status.textContent = 'Last refreshed at ' + stamp
+        + ' · mode: ' + state.realtime_mode;
+    }
+  }
+
+  async function _refresh() {
+    try {
+      const r = await fetch('/api/realtime/state');
+      const body = await r.json();
+      _render(body);
+    } catch (err) {
+      if (status) status.textContent = 'refresh failed: ' + err;
+    }
+  }
+
+  function _restartTimer() {
+    if (timer) { window.clearInterval(timer); timer = null; }
+    if (auto && auto.checked) {
+      timer = window.setInterval(_refresh, pollMs);
+    }
+  }
+
+  if (btn) btn.addEventListener('click', _refresh);
+  if (auto) auto.addEventListener('change', _restartTimer);
+  _refresh();
+  _restartTimer();
+})();
 </script>
 {% endblock %}

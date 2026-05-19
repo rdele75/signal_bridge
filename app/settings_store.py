@@ -51,11 +51,25 @@ MANAGED_KEYS: tuple[str, ...] = (
     "TOPSTEP_TOKEN",
     "TOPSTEP_TOKEN_EXPIRES_AT",
     # Order routing safety switches. False by default. Live/funded
-    # execution stays blocked across all combinations.
+    # execution requires every live gate below to be flipped via the
+    # /api/topstep/live-execution/enable endpoint — the broker form
+    # cannot arm it.
     "ENABLE_TOPSTEP_ORDER_DRY_RUN",
     "ENABLE_TOPSTEP_ORDER_EXECUTION",
     "TOPSTEP_EXECUTION_CONFIRM",
     "ENABLE_LIVE_TRADING",
+    "LIVE_TRADING_CONFIRM",
+    "LIVE_TRADING_ACCOUNT_ACK",
+    "LIVE_MAX_CONTRACTS_PER_TRADE",
+    "LIVE_ALLOWED_SYMBOLS",
+    "LIVE_REQUIRE_KILL_SWITCH_OFF",
+    # Order history defaults.
+    "ORDER_HISTORY_LOOKBACK_DAYS",
+    "ORDER_HISTORY_LIMIT",
+    # Realtime account/position/order data.
+    "ENABLE_TOPSTEP_REALTIME",
+    "TOPSTEP_REALTIME_MODE",
+    "TOPSTEP_REALTIME_POLL_SECONDS",
     # Dashboard admin credentials. ADMIN_PASSWORD_HASH is written by the
     # Profile page; the plaintext ADMIN_PASSWORD env var stays a fallback
     # for first-run installs that haven't visited the Profile page yet.
@@ -99,6 +113,16 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "ENABLE_TOPSTEP_ORDER_EXECUTION",
         "TOPSTEP_EXECUTION_CONFIRM",
         "ENABLE_LIVE_TRADING",
+        "LIVE_TRADING_CONFIRM",
+        "LIVE_TRADING_ACCOUNT_ACK",
+        "LIVE_MAX_CONTRACTS_PER_TRADE",
+        "LIVE_ALLOWED_SYMBOLS",
+        "LIVE_REQUIRE_KILL_SWITCH_OFF",
+        "ORDER_HISTORY_LOOKBACK_DAYS",
+        "ORDER_HISTORY_LIMIT",
+        "ENABLE_TOPSTEP_REALTIME",
+        "TOPSTEP_REALTIME_MODE",
+        "TOPSTEP_REALTIME_POLL_SECONDS",
         # Auth settings take effect on the next login attempt — no
         # restart needed because check_credentials reads them per-call.
         "ADMIN_USERNAME",
@@ -240,10 +264,6 @@ def coerce(key: str, raw: Any) -> Any:
             raise SettingsValidationError(
                 f"EXECUTION_MODE must be one of {ALLOWED_EXECUTION_MODES}"
             )
-        if text == "live":
-            raise SettingsValidationError(
-                "live execution is not allowed yet — pick paper or demo"
-            )
         return text
 
     if key == "BROKER_PROVIDER":
@@ -319,9 +339,13 @@ def coerce(key: str, raw: Any) -> Any:
             raise SettingsValidationError(
                 f"TOPSTEP_ENV must be one of {ALLOWED_TOPSTEP_ENVS}"
             )
+        # ``TOPSTEP_ENV=live`` would imply a separate live API URL flow,
+        # which we don't ship. Live execution is driven by EXECUTION_MODE
+        # against the regular ProjectX endpoints — this knob stays demo.
         if text == "live":
             raise SettingsValidationError(
-                "TOPSTEP_ENV=live is not allowed yet — pick demo"
+                "TOPSTEP_ENV=live is not allowed — use EXECUTION_MODE=live "
+                "after arming via /api/topstep/live-execution/enable"
             )
         return text
 
@@ -353,25 +377,65 @@ def coerce(key: str, raw: Any) -> Any:
         return parse_bool(raw)
 
     if key == "ENABLE_LIVE_TRADING":
-        # Live/funded execution is intentionally locked in this build. The
-        # only honored value is False. A True submission is refused so the
-        # dashboard cannot quietly flip the kill into "on" — a future
-        # phase will rework this once funded execution is green-lit.
-        val = parse_bool(raw)
-        if val:
+        # The master live-trading switch. Accepting True at the settings
+        # layer is necessary but not sufficient — the runtime live-gate
+        # check (LIVE_TRADING_CONFIRM, LIVE_TRADING_ACCOUNT_ACK, account
+        # validation, symbol/contract caps, kill switch off) still has
+        # to pass. The arm endpoint flips everything together; the
+        # broker settings form refuses to set this true on its own.
+        return parse_bool(raw)
+
+    if key == "LIVE_TRADING_CONFIRM":
+        text = (str(raw) if raw is not None else "").strip()
+        if not text:
+            return "disabled"
+        if text not in {"disabled", "I_UNDERSTAND_LIVE_ORDERS"}:
             raise SettingsValidationError(
-                "ENABLE_LIVE_TRADING=true is not allowed yet — live/funded "
-                "execution is intentionally blocked in this build"
+                "LIVE_TRADING_CONFIRM must be 'disabled' or "
+                "'I_UNDERSTAND_LIVE_ORDERS'"
             )
-        return False
+        return text
+
+    if key == "LIVE_TRADING_ACCOUNT_ACK":
+        return parse_bool(raw)
+
+    if key == "LIVE_MAX_CONTRACTS_PER_TRADE":
+        return parse_int(raw, min_value=1)
+
+    if key == "LIVE_ALLOWED_SYMBOLS":
+        return parse_symbols(raw)
+
+    if key == "LIVE_REQUIRE_KILL_SWITCH_OFF":
+        return parse_bool(raw)
+
+    if key == "ORDER_HISTORY_LOOKBACK_DAYS":
+        return parse_int(raw, min_value=1)
+
+    if key == "ORDER_HISTORY_LIMIT":
+        return parse_int(raw, min_value=1)
+
+    if key == "ENABLE_TOPSTEP_REALTIME":
+        return parse_bool(raw)
+
+    if key == "TOPSTEP_REALTIME_MODE":
+        text = (str(raw) if raw is not None else "").strip().lower() or "polling"
+        if text not in {"polling", "signalr"}:
+            raise SettingsValidationError(
+                "TOPSTEP_REALTIME_MODE must be 'polling' or 'signalr'"
+            )
+        return text
+
+    if key == "TOPSTEP_REALTIME_POLL_SECONDS":
+        return parse_int(raw, min_value=1)
 
     if key == "TOPSTEP_EXECUTION_CONFIRM":
         text = (str(raw) if raw is not None else "").strip()
         if not text:
             return "disabled"
-        if text not in {"disabled", "DEMO_ONLY"}:
+        if text not in {"disabled", "DEMO_ONLY", "LIVE_CONFIRMED"}:
             raise SettingsValidationError(
-                "TOPSTEP_EXECUTION_CONFIRM must be 'disabled' or 'DEMO_ONLY'"
+                "TOPSTEP_EXECUTION_CONFIRM must be 'disabled', 'DEMO_ONLY', "
+                "or 'LIVE_CONFIRMED'"
             )
         return text
 
@@ -437,6 +501,16 @@ _KEY_TO_ATTR: dict[str, str] = {
     "ENABLE_TOPSTEP_ORDER_EXECUTION": "enable_topstep_order_execution",
     "TOPSTEP_EXECUTION_CONFIRM": "topstep_execution_confirm",
     "ENABLE_LIVE_TRADING": "enable_live_trading",
+    "LIVE_TRADING_CONFIRM": "live_trading_confirm",
+    "LIVE_TRADING_ACCOUNT_ACK": "live_trading_account_ack",
+    "LIVE_MAX_CONTRACTS_PER_TRADE": "live_max_contracts_per_trade",
+    "LIVE_ALLOWED_SYMBOLS": "live_allowed_symbols",
+    "LIVE_REQUIRE_KILL_SWITCH_OFF": "live_require_kill_switch_off",
+    "ORDER_HISTORY_LOOKBACK_DAYS": "order_history_lookback_days",
+    "ORDER_HISTORY_LIMIT": "order_history_limit",
+    "ENABLE_TOPSTEP_REALTIME": "enable_topstep_realtime",
+    "TOPSTEP_REALTIME_MODE": "topstep_realtime_mode",
+    "TOPSTEP_REALTIME_POLL_SECONDS": "topstep_realtime_poll_seconds",
     "ADMIN_USERNAME": "admin_username",
     "ADMIN_PASSWORD_HASH": "admin_password_hash",
 }

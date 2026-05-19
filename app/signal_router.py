@@ -71,6 +71,12 @@ def build_broker(
             execution_confirm=settings.topstep_execution_confirm,
             enable_live_trading=settings.enable_live_trading,
             execution_mode=settings.execution_mode,
+            live_trading_confirm=settings.live_trading_confirm,
+            live_trading_account_ack=settings.live_trading_account_ack,
+            live_max_contracts_per_trade=settings.live_max_contracts_per_trade,
+            live_allowed_symbols=settings.live_allowed_symbols,
+            live_require_kill_switch_off=settings.live_require_kill_switch_off,
+            max_contracts_per_trade=settings.max_contracts_per_trade,
         )
 
     if provider == "tradovate":

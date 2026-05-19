@@ -800,3 +800,287 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 }
 .profit-graph-meta strong { color: var(--fg); font-weight: 600; }
 .profit-graph-empty { color: var(--fg-mute); }
+
+/* ----- Sidebar text bump (readability) ----- */
+.sidebar-nav a { font-size: 14.5px; }
+.sidebar-nav .section-label { font-size: 12.5px; }
+.sidebar-nav .nav-group-body a { font-size: 13.5px; }
+
+/* ----- Execution card (compact, redesigned) ----- */
+.execution-card {
+  position: relative;
+  border-width: 1.5px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+.execution-card-inner {
+  position: relative;
+  z-index: 1;
+}
+.execution-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.execution-card-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.execution-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  background: var(--bg-3);
+  color: var(--fg-dim);
+}
+.execution-pill-dry-run {
+  color: var(--good);
+  border-color: rgba(52, 211, 153, 0.45);
+  background: rgba(52, 211, 153, 0.07);
+}
+.execution-pill-demo {
+  color: var(--warn);
+  border-color: rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.08);
+}
+.execution-pill-live-locked,
+.execution-pill-live-engaging,
+.execution-pill-live-armed,
+.execution-pill-kill-switch-active {
+  color: var(--bad);
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(248, 113, 113, 0.08);
+}
+.execution-pill-disabled {
+  color: var(--fg-mute);
+  border-color: var(--border-2);
+}
+
+.execution-mode-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 0;
+  flex-wrap: wrap;
+}
+.execution-mode-form select {
+  min-width: 120px;
+  width: auto;
+}
+.execution-mode-label {
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+
+.execution-account {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.execution-account-label {
+  font-size: 11px;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 4px;
+}
+.execution-account-name {
+  color: var(--fg);
+  margin-left: 4px;
+}
+
+.execution-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.execution-kill-switch-indicator {
+  margin-left: auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-mute);
+}
+.execution-kill-switch-indicator.active {
+  color: var(--bad);
+}
+.execution-out { margin-top: 12px; }
+
+/* ----- Border styling per state ----- */
+.execution-dry-run {
+  border-color: rgba(52, 211, 153, 0.45);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.10);
+}
+.execution-disabled {
+  border-color: var(--border-2);
+}
+.execution-demo {
+  border-color: rgba(251, 191, 36, 0.55);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.18);
+}
+.execution-live-locked {
+  border-color: rgba(248, 113, 113, 0.5);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.12);
+}
+.execution-kill-switch-active {
+  border-color: var(--bad);
+  background: rgba(248, 113, 113, 0.04);
+}
+
+/* ----- Live armed: full red, subtle pulse ----- */
+.execution-live-armed {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.35),
+    0 0 22px rgba(248, 113, 113, 0.20);
+  animation: execution-live-armed-pulse 1.6s ease-in-out infinite;
+}
+@keyframes execution-live-armed-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.35),
+      0 0 18px rgba(248, 113, 113, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.55),
+      0 0 28px rgba(248, 113, 113, 0.35);
+  }
+}
+
+/* ----- Live engaging: red border lines travel from top + bottom
+   edges around the card and meet at the midpoints. Driven by two
+   pseudo-element overlays running mirrored width animations. ----- */
+.execution-live-engaging {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+.execution-live-engaging::before,
+.execution-live-engaging::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  height: 2px;
+  width: 0;
+  background: var(--bad);
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.55);
+  z-index: 2;
+  animation: execution-live-engage-travel 3.6s ease-in-out forwards;
+}
+.execution-live-engaging::before { top: 0; }
+.execution-live-engaging::after  { bottom: 0; }
+@keyframes execution-live-engage-travel {
+  0%   { width: 0;    left: 50%; opacity: 1; }
+  100% { width: 100%; left: 0;   opacity: 1; }
+}
+
+/* Honour prefers-reduced-motion — keep the colours but drop the
+   keyframe animations. */
+@media (prefers-reduced-motion: reduce) {
+  .execution-card,
+  .execution-card::before,
+  .execution-card::after {
+    animation: none !important;
+  }
+}
+
+/* ----- Live execution engagement modal ----- */
+.execution-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.execution-modal[hidden] { display: none; }
+.execution-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 10, 16, 0.78);
+  backdrop-filter: blur(2px);
+}
+.execution-modal-panel {
+  position: relative;
+  z-index: 1;
+  background: var(--bg-1);
+  border: 1.5px solid var(--bad);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  max-width: 560px;
+  width: calc(100% - 32px);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(248, 113, 113, 0.25);
+}
+.execution-modal-title {
+  margin: 0 0 8px;
+  color: var(--bad);
+  font-size: 17px;
+  letter-spacing: 0.01em;
+}
+.execution-modal-copy {
+  margin: 0 0 10px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+.execution-modal-account {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.execution-modal-form label {
+  display: block;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+.execution-modal-form input[type="text"] {
+  width: 100%;
+}
+.execution-modal-ack {
+  display: flex !important;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 12px !important;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+.execution-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* ----- Dark-themed secret/credential input ----- */
+.dark-input {
+  width: 100%;
+  background: #0a0c11;
+  color: var(--fg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.dark-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 140, 255, 0.12);
+}
+.dark-input[readonly] {
+  color: #d6dbea;
+  background: #07090d;
+}

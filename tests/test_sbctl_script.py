@@ -58,7 +58,9 @@ def test_sbctl_help_lists_all_commands():
     )
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    for command in ("start", "stop", "restart", "status", "logs", "health"):
+    for command in (
+        "start", "stop", "restart", "status", "logs", "health", "audit",
+    ):
         assert command in out, f"sbctl --help missing {command!r}"
 
 

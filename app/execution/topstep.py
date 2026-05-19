@@ -18,15 +18,27 @@ This adapter implements:
 
 Order routing safety is layered (defense in depth):
 
+Demo execution gates (``EXECUTION_MODE=demo``):
   1. ``ENABLE_TOPSTEP_ORDER_EXECUTION`` must be true.
-  2. ``EXECUTION_MODE`` must be ``demo`` (never ``live``).
-  3. ``TOPSTEP_EXECUTION_CONFIRM`` must be ``DEMO_ONLY``.
-  4. ``ENABLE_LIVE_TRADING`` must be false (the hard kill).
-  5. The selected account must be numeric and (if known) ``canTrade``.
+  2. ``TOPSTEP_EXECUTION_CONFIRM`` must be ``DEMO_ONLY``.
+  3. ``ENABLE_LIVE_TRADING`` must be false.
+  4. The selected account must be numeric and (if known) ``canTrade``.
 
-If any of those gates is open, ``submit_market_order`` refuses with a
-structured envelope and never touches the wire. Dry-run mode (the
-default) goes through the same builder but stops short of POSTing.
+Live execution gates (``EXECUTION_MODE=live``):
+  1. ``ENABLE_TOPSTEP_ORDER_EXECUTION`` must be true.
+  2. ``TOPSTEP_EXECUTION_CONFIRM`` must be ``LIVE_CONFIRMED``.
+  3. ``ENABLE_LIVE_TRADING`` must be true.
+  4. ``LIVE_TRADING_CONFIRM`` must be ``I_UNDERSTAND_LIVE_ORDERS``.
+  5. ``LIVE_TRADING_ACCOUNT_ACK`` must be true.
+  6. Selected account numeric + (if known) ``canTrade``.
+  7. Symbol is in ``LIVE_ALLOWED_SYMBOLS``.
+  8. ``contracts`` is <= ``LIVE_MAX_CONTRACTS_PER_TRADE`` and
+     ``MAX_CONTRACTS_PER_TRADE``.
+  9. Kill switch off (if ``LIVE_REQUIRE_KILL_SWITCH_OFF`` is true).
+
+If any gate is open, ``submit_market_order`` refuses with a structured
+envelope and never touches the wire. Dry-run mode (the default) goes
+through the same builder but stops short of POSTing.
 """
 from __future__ import annotations
 
@@ -109,6 +121,13 @@ class TopstepBroker(BrokerBase):
         execution_confirm: str = "disabled",
         enable_live_trading: bool = False,
         execution_mode: str = "demo",
+        live_trading_confirm: str = "disabled",
+        live_trading_account_ack: bool = False,
+        live_max_contracts_per_trade: int = 1,
+        live_allowed_symbols: Optional[list[str]] = None,
+        live_require_kill_switch_off: bool = True,
+        max_contracts_per_trade: int = 1,
+        kill_switch_active: bool = False,
     ) -> None:
         # Strip credentials on load: stray whitespace in the dashboard /
         # .env was the cause of phantom errorCode=3 responses that worked
@@ -135,6 +154,18 @@ class TopstepBroker(BrokerBase):
         # used for ExecutionResult.broker / .execution_mode labelling
         # and as a final safety check below.
         self.execution_mode = (execution_mode or "demo").lower()
+        # Live-trading gates. Defaults match the safe-by-default config:
+        # confirmation off, no account ack, 1-contract cap, micros only.
+        self.live_trading_confirm = (live_trading_confirm or "disabled").strip()
+        self.live_trading_account_ack = bool(live_trading_account_ack)
+        self.live_max_contracts_per_trade = int(live_max_contracts_per_trade or 1)
+        self.live_allowed_symbols = list(
+            live_allowed_symbols if live_allowed_symbols is not None
+            else ["MES1!", "MNQ1!"]
+        )
+        self.live_require_kill_switch_off = bool(live_require_kill_switch_off)
+        self.max_contracts_per_trade = int(max_contracts_per_trade or 1)
+        self.kill_switch_active = bool(kill_switch_active)
 
     # ------------------------------------------------------------------
     # Credential helpers
@@ -813,6 +844,109 @@ class TopstepBroker(BrokerBase):
             op_label="orders",
         )
 
+    @staticmethod
+    def _normalize_order_row(raw: dict[str, Any]) -> dict[str, Any]:
+        """Project a ProjectX order row into the dashboard-friendly shape.
+
+        Unknown fields come back as ``None`` rather than fabricated. The
+        side mapping mirrors the order builder: 0=buy/long, 1=sell/short.
+        """
+        side_value = raw.get("side")
+        side_label = None
+        if side_value == 0:
+            side_label = "BUY"
+        elif side_value == 1:
+            side_label = "SELL"
+        elif side_value is not None:
+            side_label = str(side_value)
+
+        size = raw.get("size")
+        if size is None:
+            size = raw.get("filledSize")
+
+        return {
+            "orderId": str(raw["id"]) if raw.get("id") is not None else None,
+            "accountId": raw.get("accountId"),
+            "contractId": raw.get("contractId"),
+            "creationTimestamp": (
+                raw.get("creationTimestamp") or raw.get("createTimestamp")
+            ),
+            "updateTimestamp": raw.get("updateTimestamp"),
+            "status": raw.get("status"),
+            "type": raw.get("type"),
+            "side": side_value,
+            "side_label": side_label,
+            "size": size,
+            "limitPrice": raw.get("limitPrice"),
+            "stopPrice": raw.get("stopPrice"),
+            "filledPrice": (
+                raw.get("filledPrice") or raw.get("averageFilledPrice")
+            ),
+            "customTag": raw.get("customTag"),
+        }
+
+    def get_order_history(
+        self,
+        *,
+        lookback_days: Optional[int] = None,
+        limit: Optional[int] = None,
+        start_timestamp: Optional[str] = None,
+        end_timestamp: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Return recent Topstep orders, normalized for the dashboard.
+
+        Defaults: ``lookback_days=7``, ``limit=100``. Explicit
+        ``start_timestamp`` / ``end_timestamp`` always win over the
+        derived window. Returns a structured envelope — never raises so
+        the JSON endpoint stays stable on adapter error.
+        """
+        if lookback_days is not None:
+            lookback_days = max(1, int(lookback_days))
+        if limit is not None:
+            limit = max(1, int(limit))
+        if not start_timestamp and lookback_days:
+            start_timestamp = (
+                datetime.now(timezone.utc)
+                - timedelta(days=lookback_days)
+            ).isoformat()
+        if not end_timestamp:
+            end_timestamp = datetime.now(timezone.utc).isoformat()
+
+        result = self.search_orders(
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp,
+        )
+        raw_orders = result.get("orders") or []
+        if not isinstance(raw_orders, list):
+            raw_orders = []
+        normalized = [
+            self._normalize_order_row(row)
+            for row in raw_orders
+            if isinstance(row, dict)
+        ]
+        if limit is not None:
+            normalized = normalized[:limit]
+        envelope = {
+            "ok": bool(result.get("ok")),
+            "provider": self.provider,
+            "status": result.get("status", "unknown"),
+            "http_status": result.get("http_status"),
+            "message": result.get("message", ""),
+            "selected_account_id": self.account_id or None,
+            "lookback_days": lookback_days,
+            "limit": limit,
+            "start_timestamp": start_timestamp,
+            "end_timestamp": end_timestamp,
+            "orders": normalized,
+            "count": len(normalized),
+        }
+        # Surface credential-presence info but never the actual key/token.
+        envelope["credentials"] = result.get("credentials") or {}
+        for forbidden in ("error_code", "error_message"):
+            if forbidden in result:
+                envelope[forbidden] = result[forbidden]
+        return envelope
+
     def search_orders(
         self,
         *,
@@ -875,24 +1009,42 @@ class TopstepBroker(BrokerBase):
             "enable_order_dry_run": self.enable_order_dry_run,
             "execution_confirm": self.execution_confirm,
             "enable_live_trading": self.enable_live_trading,
+            "live_trading_confirm": self.live_trading_confirm,
+            "live_trading_account_ack": self.live_trading_account_ack,
+            "live_max_contracts_per_trade": self.live_max_contracts_per_trade,
+            "live_allowed_symbols": list(self.live_allowed_symbols),
+            "live_require_kill_switch_off": self.live_require_kill_switch_off,
+            "max_contracts_per_trade": self.max_contracts_per_trade,
+            "kill_switch_active": self.kill_switch_active,
             "selected_account_id": self.account_id or None,
         }
 
-    def _execution_safety_check(self) -> Optional[str]:
+    def _execution_safety_check(
+        self,
+        signal: Optional[NormalizedSignal] = None,
+    ) -> Optional[str]:
         """Return ``None`` when every gate is satisfied, else the
         identifier of the first failing gate. The caller turns the
         identifier into a labelled envelope.
 
+        Demo and live modes use disjoint gate sets. Live mode is the
+        stricter path — it requires all demo prerequisites plus the
+        live-only confirmations, account ack, kill switch, and per-symbol
+        + per-contract caps.
+        """
+        if self.execution_mode == "live":
+            return self._live_execution_safety_check(signal)
+        return self._demo_execution_safety_check()
+
+    def _demo_execution_safety_check(self) -> Optional[str]:
+        """Gate evaluation for demo (sim) execution.
+
         Order is deliberate: ``topstep_execution_disabled`` is reported
-        first when execution simply isn't on yet so the operator gets
-        an actionable label instead of a less-informative
-        ``execution_mode_not_demo`` for the mode the build defaults to.
-        ``live_execution_locked`` and ``EXECUTION_MODE=live`` still
-        short-circuit — the kill switch always wins.
+        first when execution simply isn't on yet so the operator gets an
+        actionable label. ``live_execution_locked`` short-circuits
+        anything that smells like an accidental live attempt.
         """
         if self.enable_live_trading:
-            return "live_execution_locked"
-        if self.execution_mode == "live":
             return "live_execution_locked"
         if not self.enable_order_execution:
             return "topstep_execution_disabled"
@@ -904,6 +1056,52 @@ class TopstepBroker(BrokerBase):
             return "missing_credentials"
         if self._numeric_account_id() is None:
             return "non_numeric_account_id"
+        return None
+
+    def _live_execution_safety_check(
+        self,
+        signal: Optional[NormalizedSignal] = None,
+    ) -> Optional[str]:
+        """Gate evaluation for live (funded) execution.
+
+        Returns a stable status label for the first failing gate. The
+        labels match the ones documented in docs/audit.md and the test
+        suite. ``signal`` is optional — when omitted the symbol /
+        contract caps are skipped (used by panel rendering); when set,
+        they are enforced (used by ``submit_market_order``).
+        """
+        if not self.enable_live_trading:
+            return "live_trading_disabled"
+        if not self.enable_order_execution:
+            return "topstep_execution_disabled"
+        if self.execution_confirm != "LIVE_CONFIRMED":
+            return "topstep_execution_confirm_missing"
+        if self.live_trading_confirm != "I_UNDERSTAND_LIVE_ORDERS":
+            return "live_confirmation_missing"
+        if not self.live_trading_account_ack:
+            return "live_account_ack_missing"
+        if self.live_require_kill_switch_off and self.kill_switch_active:
+            return "kill_switch_active"
+        if not self._has_required_credentials():
+            return "missing_credentials"
+        if self._numeric_account_id() is None:
+            return "non_numeric_account_id"
+        if signal is not None:
+            allowed = [s.strip() for s in self.live_allowed_symbols if s and s.strip()]
+            if not allowed:
+                return "live_symbol_not_allowed"
+            if signal.symbol not in allowed:
+                return "live_symbol_not_allowed"
+            cap = max(int(self.live_max_contracts_per_trade or 0), 0)
+            if cap <= 0:
+                return "live_contracts_above_max"
+            if signal.contracts > cap:
+                return "live_contracts_above_max"
+            global_cap = max(int(self.max_contracts_per_trade or 0), 0)
+            if global_cap <= 0:
+                return "contracts_above_max"
+            if signal.contracts > global_cap:
+                return "contracts_above_max"
         return None
 
     def build_order_preview(
@@ -945,12 +1143,17 @@ class TopstepBroker(BrokerBase):
         No paper fallback: a refusal here surfaces clearly back to the
         webhook handler / admin endpoint instead of silently no-op'ing.
         """
-        safety_gate = self._execution_safety_check()
+        safety_gate = self._execution_safety_check(signal)
         if safety_gate is not None:
+            if self.execution_mode == "live":
+                top_status = "live_execution_locked"
+            else:
+                top_status = safety_gate
             envelope = self._execution_disabled_envelope(
                 "submit_market_order",
                 accepted=False,
-                status=safety_gate,
+                status=top_status,
+                gate=safety_gate,
                 symbol=signal.symbol,
                 broker_symbol=signal.broker_symbol,
                 action=signal.action,

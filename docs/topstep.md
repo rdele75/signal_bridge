@@ -8,11 +8,12 @@ wired up — only the first is on by default:
 |----------------------------------------|---------|-------|
 | Read-only account / position / order data | **on** | `Auth/loginKey`, `Account/search`, `Position/searchOpen`, `Order/searchOpen`, `Order/search` |
 | Dry-run market-order *previews* (no submission) | **on** | builds `/api/Order/place` payload, journals it, never POSTs |
-| Demo/sim market-order *execution* (real POST `/api/Order/place`) | **off** | gated by four safety switches; live/funded execution stays locked |
+| Demo/sim market-order *execution* (real POST `/api/Order/place`) | **off** | gated by four safety switches |
+| Live/funded market-order *execution* (real POST `/api/Order/place`) | **off** | gated by every demo switch + four additional live-only gates |
 
-Bracket orders, flatten/cancel via REST, WebSocket streams, and
-live/funded execution are **not implemented** and not planned for this
-build.
+Bracket orders, flatten/cancel via REST, and WebSocket streams are
+**not implemented** in this build. Both demo and live single-leg market
+orders are routable behind their respective gates.
 
 ## Credentials
 
@@ -179,25 +180,113 @@ Response includes the normalized signal, account id, contract id,
 side, size, full order payload, the safety state, and **always**
 `would_submit: false`.
 
-## Metrics → Past Orders
+## Order history & open data
 
-`/metrics` includes a **Past Orders** card that lists recent orders for
-the active broker:
+Three ProjectX endpoints back the dashboard's account visibility:
 
-- **Paper** — pulled from `broker.get_orders()` (recent simulated
-  fills + signal rows).
-- **Topstep** — pulled from `broker.get_orders()` (Phase 1 read-only
-  `/api/Order/searchOpen` adapter). When ProjectX rejects or the
-  adapter has nothing yet, the card surfaces
-  `Topstep order history is not available yet.` and falls back to
-  journal rows that include `order_id` / `broker_order_id` or
-  dry-run payloads.
-- **Empty / failed states** — `No past orders yet.` or
-  `Topstep order history is not available yet.` are rendered instead
-  of fake data. The page never crashes when the broker raises.
+| Purpose            | Endpoint                        | Body                                      |
+|--------------------|---------------------------------|-------------------------------------------|
+| Open orders        | `POST /api/Order/searchOpen`    | `{accountId: <int>}`                      |
+| Order history      | `POST /api/Order/search`        | `{accountId: <int>, startTimestamp?, endTimestamp?}` |
+| Open positions     | `POST /api/Position/searchOpen` | `{accountId: <int>}`                      |
 
-Columns: Time · Broker · Symbol · Side/Action · Size · Status ·
-Order ID · Source/Strategy.
+Order history is exposed at:
+
+```
+GET /api/broker/order-history?lookback_days=<int>&limit=<int>
+```
+
+Defaults come from `ORDER_HISTORY_LOOKBACK_DAYS` (7) and
+`ORDER_HISTORY_LIMIT` (100). The response shape:
+
+```
+{
+  "ok": true,
+  "provider": "topstep",
+  "status": "ok",
+  "lookback_days": 7,
+  "limit": 100,
+  "start_timestamp": "...",
+  "end_timestamp": "...",
+  "count": 12,
+  "orders": [
+    {
+      "orderId": "999111",
+      "accountId": 5001,
+      "contractId": "CON.F.US.MES.M26",
+      "creationTimestamp": "...",
+      "updateTimestamp": "...",
+      "status": "Filled",
+      "type": 2,
+      "side": 0,
+      "side_label": "BUY",
+      "size": 1,
+      "limitPrice": null,
+      "stopPrice": null,
+      "filledPrice": 5000.25,
+      "customTag": "..."
+    }
+  ]
+}
+```
+
+The endpoint never crashes if ProjectX returns an unexpected shape — it
+falls back to an empty `orders` list with the failure surfaced via
+`ok=false` + `message`. No tokens or API keys ever appear in the JSON.
+
+### Metrics → Past Orders UI
+
+`/metrics` shows a **Past Orders** card. For Topstep it pulls the live
+order history via `/api/broker/order-history` and adds:
+
+- a **Refresh** button
+- a **Lookback** dropdown (1 day / 7 days / 30 days)
+- a clean empty state: *No Topstep orders found for this lookback window.*
+- a clean error state when the endpoint returns `ok: false`
+
+When the broker is paper or the journal, the card keeps the original
+server-rendered table.
+
+Columns (Topstep mode): Time · Symbol/Contract · Side · Size · Type ·
+Status · Limit · Stop · Filled · Order ID · Tag.
+
+## Realtime account/order/position data
+
+Two modes are envisioned. Polling is the default; SignalR is documented
+as a future TODO.
+
+| Setting                          | Default     | Notes |
+|----------------------------------|-------------|-------|
+| `ENABLE_TOPSTEP_REALTIME`        | `false`     | Master switch for the auto-refresh polling loop in the dashboard. |
+| `TOPSTEP_REALTIME_MODE`          | `polling`   | `polling` is implemented; `signalr` is reserved for the SignalR client. |
+| `TOPSTEP_REALTIME_POLL_SECONDS`  | `5`         | Interval used by the dashboard auto-refresh. |
+
+### Polling (implemented)
+
+`/api/realtime/state` returns positions + open orders + a refreshed-at
+timestamp in one call. The broker page's Realtime card calls it
+manually (Refresh button) and, when `ENABLE_TOPSTEP_REALTIME=true`,
+auto-refreshes every `TOPSTEP_REALTIME_POLL_SECONDS` seconds via JS.
+
+Polling never places orders. The only ProjectX paths it is allowed to
+hit are `/api/Position/searchOpen`, `/api/Order/searchOpen`, and
+`/api/Order/search`. The `app.execution.topstep_realtime.RealtimePoller`
+helper wraps `broker.get_positions()` + `broker.get_orders()` so future
+server-side polling jobs share the same surface.
+
+### SignalR user hub (TODO)
+
+ProjectX exposes a SignalR user hub at `TOPSTEP_WS_URL` for push
+updates (accounts/orders/positions/balances). Wiring it requires the
+`signalrcore` Python package; once that lands the
+`SignalRClientPlaceholder` in `app/execution/topstep_realtime.py`
+becomes a real client. The dashboard UI already shows the disclaimer:
+
+> **Realtime mode:** Polling every Ns ·
+> **WebSocket SignalR:** not enabled yet
+
+Until SignalR is implemented, switching `TOPSTEP_REALTIME_MODE` to
+`signalr` falls back to the polling implementation.
 
 ## Demo/sim execution (Phase 3)
 
@@ -212,9 +301,11 @@ allow a demo POST to `/api/Order/place`:
 | `TOPSTEP_EXECUTION_CONFIRM`        | `DEMO_ONLY`    | `disabled` |
 | `ENABLE_LIVE_TRADING`              | `false`        | `false` (locked) |
 
-`EXECUTION_MODE=live` is blocked by the settings layer and by the
-adapter itself. `ENABLE_LIVE_TRADING=true` is rejected by the
-settings layer — the live/funded path stays locked in this build.
+`EXECUTION_MODE=live` is accepted by the settings layer but only the
+`/api/topstep/live-execution/enable` flow can flip every live gate
+together (see the **Live execution** section below). The broker form
+on `/settings/broker` rejects `EXECUTION_MODE=live` so accidental
+re-selection through the dropdown can never arm live.
 
 Behavior under each combination:
 
@@ -315,13 +406,128 @@ envelope labeled with the failing gate (e.g.
 
 **Recommended first demo test:** 1 contract of MES (`MES1!`).
 
+## Live/funded execution (Phase 4)
+
+**Live execution is real money.** It is disabled by default and locked
+behind a stricter gate set than demo. Every one of these must be true
+before `/api/Order/place` is called against the funded account:
+
+| Setting                            | Required value               | Default |
+|------------------------------------|------------------------------|---------|
+| `BROKER_PROVIDER`                  | `topstep`                    | `paper` |
+| `EXECUTION_MODE`                   | `live`                       | `paper` |
+| `ENABLE_TOPSTEP_ORDER_EXECUTION`   | `true`                       | `false` |
+| `TOPSTEP_EXECUTION_CONFIRM`        | `LIVE_CONFIRMED`             | `disabled` |
+| `ENABLE_LIVE_TRADING`              | `true`                       | `false` |
+| `LIVE_TRADING_CONFIRM`             | `I_UNDERSTAND_LIVE_ORDERS`   | `disabled` |
+| `LIVE_TRADING_ACCOUNT_ACK`         | `true`                       | `false` |
+| Selected account `canTrade`        | `true` (when reported)       | n/a     |
+| `LIVE_REQUIRE_KILL_SWITCH_OFF`     | kill switch must be off      | `true`  |
+| Signal symbol                      | in `LIVE_ALLOWED_SYMBOLS`    | `MES1!,MNQ1!` |
+| Signal contracts                   | ≤ `LIVE_MAX_CONTRACTS_PER_TRADE` AND ≤ `MAX_CONTRACTS_PER_TRADE` | both `1` |
+
+A failing live gate returns `live_execution_locked` with a `gate`
+label identifying the specific failure.
+
+### Arming live execution from the dashboard
+
+`/settings/broker` has a **Topstep LIVE Execution** card visually
+distinct from the demo card (warning styling, red border). To arm:
+
+1. Confirm the selected Topstep account is the funded account.
+2. Type `I_UNDERSTAND_LIVE_ORDERS` verbatim into the confirmation field.
+3. Tick the account-acknowledgement checkbox.
+4. Click **Arm LIVE execution**.
+
+The arm action flips:
+
+```
+EXECUTION_MODE                 = live
+ENABLE_TOPSTEP_ORDER_EXECUTION = true
+TOPSTEP_EXECUTION_CONFIRM      = LIVE_CONFIRMED
+ENABLE_LIVE_TRADING            = true
+LIVE_TRADING_CONFIRM           = I_UNDERSTAND_LIVE_ORDERS
+LIVE_TRADING_ACCOUNT_ACK       = true
+```
+
+Disable returns every flag to the safe default. Both events are
+journaled and logged at `WARNING` level (no secrets).
+
+### `/api/topstep/live-execution/enable`
+
+Admin-only JSON endpoint. Body:
+
+```
+{ "confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": true }
+```
+
+Rejected (HTTP 400, `ok: false`) when any of these is true:
+
+- `confirm` is not exactly `I_UNDERSTAND_LIVE_ORDERS`
+  (`invalid_confirmation`)
+- `account_ack` is not truthy (`account_ack_missing`)
+- `BROKER_PROVIDER` is not `topstep` (`broker_provider_not_topstep`)
+- no Topstep account is selected (`no_selected_account`)
+- `LIVE_REQUIRE_KILL_SWITCH_OFF=true` and kill switch is on
+  (`kill_switch_active`)
+
+On success: `status: live_execution_armed` with the full set of
+post-flip flags.
+
+### `/api/topstep/live-execution/disable`
+
+Admin-only JSON endpoint. No body. Resets every live-relevant flag:
+
+```
+ENABLE_LIVE_TRADING            = false
+LIVE_TRADING_CONFIRM           = disabled
+LIVE_TRADING_ACCOUNT_ACK       = false
+TOPSTEP_EXECUTION_CONFIRM      = disabled
+ENABLE_TOPSTEP_ORDER_EXECUTION = false
+```
+
+Response: `status: live_execution_disabled`.
+
+### `/api/topstep/submit-live-test-order`
+
+Manual live-order helper. Admin auth + every live gate enforced.
+Submits 1 contract by default. Body:
+
+```
+{ "symbol": "MES1!", "action": "buy", "contracts": 1 }
+```
+
+Rejections use stable status labels:
+
+- `unsupported_action` (must be `buy` / `sell`)
+- `invalid_contracts` (must be ≥ 1)
+- `live_contracts_above_max` (> `LIVE_MAX_CONTRACTS_PER_TRADE`)
+- `contracts_above_max` (> `MAX_CONTRACTS_PER_TRADE`)
+- `live_symbol_not_allowed` (not in `LIVE_ALLOWED_SYMBOLS`)
+- `symbol_mapping_missing` (no Topstep contract id mapped)
+- `live_execution_locked` with a `gate` label for any other failed gate
+
+This endpoint is effectively unavailable unless live is fully armed —
+all gates must already be satisfied.
+
+### Emergency stop
+
+In order, fastest first:
+
+```
+1. POST /api/topstep/live-execution/disable    # or the dashboard button
+2. Activate the kill switch (LIVE_REQUIRE_KILL_SWITCH_OFF=true blocks live)
+3. pdctl stop                                  # or sbctl stop
+4. tailscale funnel off                        # cut public webhook ingress
+```
+
 ## Webhook behavior summary
 
 | `BROKER_PROVIDER` | `ENABLE_TOPSTEP_ORDER_EXECUTION` | `EXECUTION_MODE` | Webhook outcome |
 |-------------------|----------------------------------|------------------|----------------|
 | topstep           | false                            | any non-`live`   | risk checks → dry-run preview → journal `topstep_dry_run_order_built` |
 | topstep           | true                             | `demo`           | risk checks → builder → POST `/api/Order/place` |
-| topstep           | true                             | `live`           | refused (`live_execution_locked`) |
+| topstep           | true                             | `live`           | live gate check → if all pass, POST `/api/Order/place`; else `live_execution_locked` with `gate` label |
 | paper             | n/a                              | any              | paper fills (unchanged) |
 
 In all Topstep paths the journal records:

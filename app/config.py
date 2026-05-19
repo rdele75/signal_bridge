@@ -154,12 +154,69 @@ class Settings(BaseModel):
             "TOPSTEP_EXECUTION_CONFIRM", "disabled"
         )
     )
-    # Hard kill: even if every other flag is on, this MUST be false for any
-    # order to leave the building. Lives here so a future "unlock live"
-    # phase has one obvious place to flip — and tests can assert that a
-    # true value blocks demo execution too (defense in depth).
+    # Live/funded execution master switch. False by default. Flipping
+    # this to True is necessary but not sufficient — every gate below
+    # must also be satisfied (LIVE_TRADING_CONFIRM, LIVE_TRADING_ACCOUNT_ACK,
+    # symbol/contract caps, kill switch off, valid account). The
+    # /api/topstep/live-execution/enable endpoint is the only sanctioned
+    # way to flip every gate together.
     enable_live_trading: bool = Field(
         default_factory=lambda: _bool("ENABLE_LIVE_TRADING", False)
+    )
+    # Exact confirmation token. The arm endpoint requires the operator
+    # to type ``I_UNDERSTAND_LIVE_ORDERS`` literally; storing it as a
+    # setting means the runtime check can refuse to submit even if some
+    # other path flipped ``enable_live_trading`` true.
+    live_trading_confirm: str = Field(
+        default_factory=lambda: os.getenv("LIVE_TRADING_CONFIRM", "disabled")
+    )
+    # Operator-acknowledged ownership of the live account. Cleared on
+    # disarm so a re-arm requires a fresh acknowledgement.
+    live_trading_account_ack: bool = Field(
+        default_factory=lambda: _bool("LIVE_TRADING_ACCOUNT_ACK", False)
+    )
+    # Defense-in-depth: a per-live-trade cap that is independent of
+    # MAX_CONTRACTS_PER_TRADE. Live submissions are rejected if either
+    # cap is exceeded.
+    live_max_contracts_per_trade: int = Field(
+        default_factory=lambda: _int("LIVE_MAX_CONTRACTS_PER_TRADE", 1)
+    )
+    # Symbols allowed for live execution. Defaults to micros only, which
+    # match the documented Topstep contract mappings for MES1!/MNQ1!.
+    live_allowed_symbols: List[str] = Field(
+        default_factory=lambda: _csv(
+            "LIVE_ALLOWED_SYMBOLS", ["MES1!", "MNQ1!"]
+        )
+    )
+    # When true, the kill switch must be off before live execution will
+    # be honored. Defaults true (defense in depth).
+    live_require_kill_switch_off: bool = Field(
+        default_factory=lambda: _bool("LIVE_REQUIRE_KILL_SWITCH_OFF", True)
+    )
+
+    # Order history defaults used by /api/broker/order-history when the
+    # caller does not specify a window. The lookback window is interpreted
+    # as days, the limit caps the number of rows returned to the client.
+    order_history_lookback_days: int = Field(
+        default_factory=lambda: _int("ORDER_HISTORY_LOOKBACK_DAYS", 7)
+    )
+    order_history_limit: int = Field(
+        default_factory=lambda: _int("ORDER_HISTORY_LIMIT", 100)
+    )
+
+    # Realtime account/position/order data.
+    #
+    # ProjectX exposes a SignalR user hub for push updates but the
+    # default in this build is polling. Wiring a SignalR client is
+    # documented as a future TODO so the same UI works in either mode.
+    enable_topstep_realtime: bool = Field(
+        default_factory=lambda: _bool("ENABLE_TOPSTEP_REALTIME", False)
+    )
+    topstep_realtime_mode: str = Field(
+        default_factory=lambda: os.getenv("TOPSTEP_REALTIME_MODE", "polling").lower()
+    )
+    topstep_realtime_poll_seconds: int = Field(
+        default_factory=lambda: _int("TOPSTEP_REALTIME_POLL_SECONDS", 5)
     )
 
     # Tradovate placeholders — not used until the adapter is implemented.

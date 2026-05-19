@@ -198,21 +198,57 @@ def test_disable_clears_demo_flags(tmp_path, monkeypatch):
 # ---------- Settings page surfaces the controls ----------
 
 
-def test_settings_broker_page_renders_demo_execution_section(
+def test_settings_broker_page_no_longer_renders_demo_execution_section(
     tmp_path, monkeypatch
 ):
+    """The demo arm/disarm form has moved to the Dashboard. The broker
+    page should no longer host the giant ``Topstep Demo Execution``
+    section; it points operators to the Dashboard instead."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         r = c.get("/settings/broker")
     assert r.status_code == 200
     html = r.text
-    assert "Topstep Demo Execution" in html
-    assert "Enable Demo Execution" in html
-    assert "Disable Demo Execution" in html
-    assert "DEMO_ONLY" in html
-    # State label must show one of the three controlled states.
-    assert (
-        "Dry Run Active" in html
-        or "Demo Execution Armed" in html
-        or "Live Locked" in html
+    assert "Topstep Demo Execution" not in html
+    # Pointer to dashboard.
+    assert "Execution controls moved to" in html
+
+
+def test_dashboard_does_not_show_demo_arm_section(tmp_path, monkeypatch):
+    """The dashboard no longer renders the ``Arm demo execution`` block
+    or surface the DEMO_ONLY token — selecting demo + clicking
+    Save / Apply now auto-arms via the apply-mode endpoint."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        r = c.get("/")
+    assert r.status_code == 200
+    html = r.text
+    assert "Arm demo execution" not in html
+    assert "DEMO_ONLY" not in html
+    # State label must reflect one of the controlled states.
+    assert any(
+        label in html
+        for label in (
+            "Dry Run",
+            "Demo",
+            "Live Locked",
+            "Live Armed",
+            "Kill Switch Active",
+        )
     )
+
+
+def test_dashboard_demo_mode_no_phrase_required(tmp_path, monkeypatch):
+    """Saving demo from the dashboard must not require a typed phrase —
+    apply-mode flips ``TOPSTEP_EXECUTION_CONFIRM`` automatically."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        # No confirm token in the body — apply-mode does it for us.
+        r = c.post("/api/execution/apply-mode", json={"mode": "demo"})
+    assert r.status_code == 200
+    s = app.state.settings
+    assert s.execution_mode == "demo"
+    assert s.topstep_execution_confirm == "DEMO_ONLY"
+    assert s.enable_topstep_order_execution is True
+    # Live remains locked.
+    assert s.enable_live_trading is False

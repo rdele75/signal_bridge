@@ -45,6 +45,7 @@
     <label for="current_secret">Current webhook secret</label>
     <div style="display: flex; gap: 6px; align-items: stretch;">
       <input type="text" id="current_secret" name="current_secret"
+             class="dark-input"
              readonly autocomplete="off"
              value="{{ secret_value }}"
              placeholder="(no secret set — generate or paste one below)"
@@ -62,6 +63,7 @@
     <div class="form-row">
       <label for="webhook_secret">Set a new secret manually</label>
       <input type="text" id="webhook_secret" name="webhook_secret"
+             class="dark-input"
              autocomplete="off" minlength="8"
              placeholder="paste a long random string" />
       <p class="muted" style="margin: 4px 0 0;">

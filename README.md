@@ -39,8 +39,8 @@ Journal / metrics / logs   ←—   visible in the local dashboard
 
 | Page | What it shows |
 | --- | --- |
-| `/`                | app status, broker, kill switch, allowed symbols, open positions, today's accepted/rejected counts, last signal, last rejection, paper P&L |
-| `/settings/broker` | pick provider + execution mode (form), Topstep / Tradovate placeholder fields, "Test connection" button |
+| `/`                | **Execution card** (mode toggle, demo/live arming, Exit-All), trading session, broker status, account snapshot card, **Ticker Watch** placeholder, today's accepted/rejected counts, last signal, last rejection, P&L |
+| `/settings/broker` | account configuration: broker provider, Topstep / Tradovate credentials, selected-account dropdown, account snapshot polling. Execution controls live on the Dashboard. |
 | `/settings/risk`   | edit allow-list, contracts cap, daily loss, open-positions cap, longs/shorts toggles, dup cooldown · kill-switch toggle |
 | `/tradingview`     | current webhook secret (copyable) + regenerate button, Xiznit Universal ORB alert recipe, generic JSON template, curl test, allowed symbols |
 | `/journal`         | recent signals (accepted/rejected) + recent closed paper trades |

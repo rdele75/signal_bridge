@@ -741,44 +741,105 @@ class WebhookHandler:
     def _execute_topstep(self, signal: NormalizedSignal) -> ExecutionResult:
         """Dispatch a normalized signal through the Topstep adapter.
 
-        Three outcomes:
+        Outcomes:
 
-        * ``EXECUTION_MODE=live`` (or the hard kill is on): refuse with
-          ``message=live_execution_locked``.
         * ``ENABLE_TOPSTEP_ORDER_EXECUTION=false`` (default): build a
           dry-run preview, return ``accepted=True`` with
           ``message=topstep_dry_run_order_built`` and the built payload
           in ``details``. The order is NOT submitted.
-        * Demo execution gated true and every other safety switch lined
-          up: POST ``/api/Order/place``, return the parsed ProjectX
-          response in ``details``. ``accepted`` reflects whether the
-          broker actually accepted the order.
+        * ``EXECUTION_MODE=demo`` with demo gates lined up: POST
+          ``/api/Order/place``, return the parsed ProjectX response.
+        * ``EXECUTION_MODE=live`` with every live gate satisfied:
+          POST ``/api/Order/place``. Any failing gate returns
+          ``message=live_execution_locked`` with the specific
+          ``gate`` label in ``details``.
 
-        Either way, no paper fallback ever happens.
+        No paper fallback ever happens.
         """
         broker = self.broker
         assert isinstance(broker, TopstepBroker)
         provider = broker.provider
         execution_mode = self.settings.execution_mode
 
-        if (
-            execution_mode == "live"
-            or self.settings.enable_live_trading
-        ):
+        # Mirror current settings onto the broker so the gate evaluation
+        # sees the live runtime state (no restart needed for these flips).
+        broker.enable_order_execution = (
+            self.settings.enable_topstep_order_execution
+        )
+        broker.enable_order_dry_run = self.settings.enable_topstep_order_dry_run
+        broker.execution_confirm = self.settings.topstep_execution_confirm
+        broker.enable_live_trading = self.settings.enable_live_trading
+        broker.execution_mode = execution_mode
+        broker.live_trading_confirm = self.settings.live_trading_confirm
+        broker.live_trading_account_ack = self.settings.live_trading_account_ack
+        broker.live_max_contracts_per_trade = (
+            self.settings.live_max_contracts_per_trade
+        )
+        broker.live_allowed_symbols = list(
+            self.settings.live_allowed_symbols
+        )
+        broker.live_require_kill_switch_off = (
+            self.settings.live_require_kill_switch_off
+        )
+        broker.max_contracts_per_trade = self.settings.max_contracts_per_trade
+        broker.kill_switch_active = self.risk.kill_switch.is_active()
+
+        if execution_mode == "live":
+            gate = broker._live_execution_safety_check(signal)
+            if gate is not None:
+                details = {
+                    "reason": "live_execution_locked",
+                    "gate": gate,
+                    "broker_provider": provider,
+                    "execution_mode": execution_mode,
+                    "enable_live_trading": self.settings.enable_live_trading,
+                    "safety": broker._safety_state(),
+                }
+                log.info(
+                    "LIVE_BLOCKED symbol=%s action=%s gate=%s",
+                    signal.symbol,
+                    signal.action,
+                    gate,
+                )
+                return ExecutionResult(
+                    accepted=False,
+                    broker=provider,
+                    execution_mode=execution_mode,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    contracts=signal.contracts,
+                    message="live_execution_locked",
+                    details=details,
+                )
+            # All live gates passed — submit. ``submit_market_order``
+            # re-runs the safety check; defense in depth.
+            result = broker.submit_market_order(
+                signal, symbol_map=self.symbol_map
+            )
+            accepted = bool(result.get("accepted"))
+            order_id = result.get("broker_order_id") or result.get("order_id")
+            message_label = (
+                "topstep_live_order_submitted"
+                if accepted
+                else f"topstep_live_order_failed:{result.get('status')}"
+            )
+            log.info(
+                "LIVE %s symbol=%s action=%s contracts=%s",
+                "ACCEPTED" if accepted else "REJECTED",
+                signal.symbol,
+                signal.action,
+                signal.contracts,
+            )
             return ExecutionResult(
-                accepted=False,
+                accepted=accepted,
                 broker=provider,
                 execution_mode=execution_mode,
                 symbol=signal.symbol,
                 action=signal.action,
                 contracts=signal.contracts,
-                message="live_execution_locked",
-                details={
-                    "reason": "live_execution_locked",
-                    "broker_provider": provider,
-                    "execution_mode": execution_mode,
-                    "enable_live_trading": self.settings.enable_live_trading,
-                },
+                order_id=str(order_id) if order_id is not None else None,
+                message=message_label,
+                details=result,
             )
 
         if not self.settings.enable_topstep_order_execution:
@@ -817,13 +878,6 @@ class WebhookHandler:
                 details=details,
             )
 
-        broker.enable_order_execution = (
-            self.settings.enable_topstep_order_execution
-        )
-        broker.enable_order_dry_run = self.settings.enable_topstep_order_dry_run
-        broker.execution_confirm = self.settings.topstep_execution_confirm
-        broker.enable_live_trading = self.settings.enable_live_trading
-        broker.execution_mode = execution_mode
         result = broker.submit_market_order(
             signal, symbol_map=self.symbol_map
         )

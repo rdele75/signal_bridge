@@ -65,11 +65,15 @@ def test_parse_symbols_helper():
     assert parse_symbols(["A", " B "]) == ["A", "B"]
 
 
-def test_coerce_rejects_live_mode():
-    from app.settings_store import SettingsValidationError, coerce
+def test_coerce_accepts_live_mode():
+    """``EXECUTION_MODE=live`` is accepted by the settings layer — the
+    runtime live-gate check (`LIVE_TRADING_CONFIRM`, account ack,
+    symbol/contract caps) is what actually decides whether an order is
+    submitted. The broker form still rejects ``live`` so the only
+    sanctioned arm path is /api/topstep/live-execution/enable."""
+    from app.settings_store import coerce
 
-    with pytest.raises(SettingsValidationError):
-        coerce("EXECUTION_MODE", "live")
+    assert coerce("EXECUTION_MODE", "live") == "live"
 
 
 # ---------- POST /settings/risk ----------
@@ -259,6 +263,34 @@ def test_post_settings_broker_blank_account_falls_back_to_default(client):
 
 
 NEW_SECRET = "another_long_test_secret_value_xyz"
+
+
+def test_tradingview_secret_input_uses_dark_theme_class(client):
+    """The webhook-secret input on /tradingview must carry the
+    dark-themed class so it doesn't render as a bright white box."""
+    body = client.get("/tradingview").text
+    # The current-secret readonly field.
+    snippet_start = body.index('id="current_secret"')
+    snippet = body[snippet_start: snippet_start + 400]
+    assert 'class="dark-input"' in snippet
+    # Copy button still wired.
+    assert 'id="btn-copy-secret"' in body
+    # The manual-set field is also dark-themed.
+    snippet_start_2 = body.index('id="webhook_secret"')
+    snippet_2 = body[snippet_start_2: snippet_start_2 + 400]
+    assert 'class="dark-input"' in snippet_2
+
+
+def test_tradingview_regenerated_secret_is_immediately_visible(client):
+    """Regenerating the secret must reflect immediately in the readonly
+    current-secret field on the next page render."""
+    r = client.post("/tradingview/secret/regenerate", follow_redirects=False)
+    assert r.status_code == 303
+    new_secret = client.app.state.settings.webhook_secret
+    assert new_secret
+    body = client.get("/tradingview").text
+    # The new secret must populate the readonly current-secret input.
+    assert new_secret in body
 
 
 def test_post_webhook_secret_persists(client):

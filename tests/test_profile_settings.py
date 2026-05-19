@@ -241,6 +241,10 @@ SHORT_PASSWORD = "short1"  # < 10 chars
 
 
 def test_profile_update_rejects_wrong_current_password(logged_in_client):
+    # Login already migrated the env-default plaintext to a hash —
+    # snapshot it so we can prove the failed update did not modify it.
+    settings = logged_in_client.app.state.settings
+    hash_before = settings.admin_password_hash
     r = logged_in_client.post(
         "/settings/profile",
         data={
@@ -254,12 +258,13 @@ def test_profile_update_rejects_wrong_current_password(logged_in_client):
     assert r.status_code == 303
     location = r.headers.get("location", "")
     assert "flash_kind=error" in location
-    # The hash should NOT have been written.
-    settings = logged_in_client.app.state.settings
-    assert not settings.admin_password_hash
+    # The hash must not have changed.
+    assert settings.admin_password_hash == hash_before
 
 
 def test_profile_update_rejects_mismatched_new_passwords(logged_in_client):
+    settings = logged_in_client.app.state.settings
+    hash_before = settings.admin_password_hash
     r = logged_in_client.post(
         "/settings/profile",
         data={
@@ -274,11 +279,12 @@ def test_profile_update_rejects_mismatched_new_passwords(logged_in_client):
     location = r.headers.get("location", "")
     assert "flash_kind=error" in location
     assert "match" in location.lower()
-    settings = logged_in_client.app.state.settings
-    assert not settings.admin_password_hash
+    assert settings.admin_password_hash == hash_before
 
 
 def test_profile_update_rejects_short_new_password(logged_in_client):
+    settings = logged_in_client.app.state.settings
+    hash_before = settings.admin_password_hash
     r = logged_in_client.post(
         "/settings/profile",
         data={
@@ -292,8 +298,7 @@ def test_profile_update_rejects_short_new_password(logged_in_client):
     assert r.status_code == 303
     location = r.headers.get("location", "")
     assert "flash_kind=error" in location
-    settings = logged_in_client.app.state.settings
-    assert not settings.admin_password_hash
+    assert settings.admin_password_hash == hash_before
 
 
 def test_profile_update_rejects_empty_username(logged_in_client):
@@ -404,8 +409,12 @@ def test_profile_update_username_only_does_not_change_password(
     assert "Profile+updated" in r.headers.get("location", "")
     settings = logged_in_client.app.state.settings
     assert settings.admin_username == "operator"
-    # No hash written; password unchanged.
-    assert not settings.admin_password_hash
+    # Login migration writes a hash for the env plaintext, but the
+    # username-only path must not re-hash a different password.
+    hash_after = settings.admin_password_hash
+    from app.auth import verify_password
+    assert verify_password(ADMIN_PASSWORD, hash_after) is True
+    assert verify_password(NEW_PASSWORD, hash_after) is False
 
     # New username still authenticates with the existing password.
     logged_in_client.post("/logout", follow_redirects=False)
@@ -428,6 +437,120 @@ def test_password_hash_helpers_roundtrip():
     assert verify_password("", h) is False
     assert verify_password("x", "") is False
     assert verify_password("x", "garbage$value") is False
+
+
+# ---------------------------------------------------------------------------
+# Login-time plaintext-to-hash migration
+# ---------------------------------------------------------------------------
+
+
+def test_login_migrates_plaintext_to_hash_on_first_success(auth_client):
+    """First successful login against the env-default plaintext must
+    persist a PBKDF2 hash so the plaintext is no longer the source of
+    truth."""
+    settings = auth_client.app.state.settings
+    store = auth_client.app.state.settings_store
+    assert not settings.admin_password_hash
+    assert not store.get_setting("ADMIN_PASSWORD_HASH")
+
+    login_as_admin(auth_client)
+
+    assert settings.admin_password_hash, "hash must be persisted after login"
+    stored = store.get_setting("ADMIN_PASSWORD_HASH")
+    assert stored == settings.admin_password_hash
+    # In-memory plaintext is cleared so check_credentials cannot fall
+    # back to it on the next request.
+    assert settings.admin_password == ""
+
+
+def test_login_works_with_existing_plaintext_fallback(auth_client):
+    """Before any hash exists, the plaintext env value still allows
+    login (the migration path)."""
+    settings = auth_client.app.state.settings
+    assert not settings.admin_password_hash
+    r = auth_client.post(
+        "/login",
+        data={"username": "admin", "password": ADMIN_PASSWORD},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers.get("location") == "/"
+
+
+def test_login_works_with_hash_after_migration(auth_client):
+    """After migration the plaintext is gone in-memory but the hash
+    must continue to accept the original password."""
+    login_as_admin(auth_client)
+    # Drop the session and try again — should still authenticate.
+    auth_client.post("/logout", follow_redirects=False)
+    r = auth_client.post(
+        "/login",
+        data={"username": "admin", "password": ADMIN_PASSWORD},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers.get("location") == "/"
+
+
+def test_wrong_password_fails_with_and_without_hash(auth_client):
+    """Bad password rejected before and after migration."""
+    r1 = auth_client.post(
+        "/login",
+        data={"username": "admin", "password": "wrong-password"},
+        follow_redirects=False,
+    )
+    assert r1.status_code == 303
+    assert "error=invalid" in r1.headers.get("location", "")
+    # Migrate.
+    login_as_admin(auth_client)
+    auth_client.post("/logout", follow_redirects=False)
+    r2 = auth_client.post(
+        "/login",
+        data={"username": "admin", "password": "wrong-password"},
+        follow_redirects=False,
+    )
+    assert r2.status_code == 303
+    assert "error=invalid" in r2.headers.get("location", "")
+
+
+def test_password_hash_not_rendered_in_profile_page(logged_in_client):
+    settings = logged_in_client.app.state.settings
+    body = logged_in_client.get("/settings/profile").text
+    # Login already migrated to a hash; verify we don't echo it back.
+    assert settings.admin_password_hash, "fixture should have migrated"
+    assert settings.admin_password_hash not in body
+
+
+def test_password_change_does_not_leak_hash_or_password_to_logs(
+    logged_in_client,
+):
+    """The profile update path must not write the new password or its
+    hash to the application log."""
+    import logging
+
+    settings = logged_in_client.app.state.settings
+    log_path = settings.log_abs_path
+    new_pw = "another-very-long-password"
+    logged_in_client.post(
+        "/settings/profile",
+        data={
+            "current_password": ADMIN_PASSWORD,
+            "new_username": "admin",
+            "new_password": new_pw,
+            "confirm_password": new_pw,
+        },
+        follow_redirects=False,
+    )
+    for h in logging.getLogger("signalbridge").handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+    if not log_path.exists():
+        return
+    text = log_path.read_text()
+    assert new_pw not in text, "new password leaked into log"
+    assert settings.admin_password_hash not in text, "hash leaked into log"
 
 
 # ---------------------------------------------------------------------------

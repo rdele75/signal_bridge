@@ -69,10 +69,10 @@
   {% endif %}
 </section>
 
-<section class="card section">
+<section class="card section" id="past-orders-section">
   <div class="section-head">
     <h3>Past Orders</h3>
-    <span class="hint">
+    <span class="hint" id="past-orders-source">
       {% if m.past_orders.source == 'broker_paper' %}
         from paper broker
       {% elif m.past_orders.source == 'broker_topstep' %}
@@ -84,7 +84,72 @@
       {% endif %}
     </span>
   </div>
-  {% if m.past_orders.rows %}
+
+  {% if active_broker_provider == 'topstep' %}
+    {# Topstep order history is fetched client-side from
+       /api/broker/order-history so the operator can refresh / change
+       the lookback window without a page reload. The server-rendered
+       block below shows the current snapshot so the page is useful
+       even before the JS runs (and for tests that assert raw HTML). #}
+    <div class="btn-row" style="margin-bottom: 8px;">
+      <label for="past-orders-lookback" style="margin-right: 6px;">Lookback:</label>
+      <select id="past-orders-lookback" data-default="{{ order_history.lookback_days }}">
+        <option value="1">1 day</option>
+        <option value="7">7 days</option>
+        <option value="30">30 days</option>
+      </select>
+      <button id="past-orders-refresh" class="btn" type="button">Refresh</button>
+      <span id="past-orders-status" class="muted" style="margin-left: 10px;">loading…</span>
+    </div>
+    <script id="past-orders-config" type="application/json">
+      {
+        "default_lookback_days": {{ order_history.lookback_days }},
+        "default_limit": {{ order_history.limit }}
+      }
+    </script>
+    <div id="past-orders-body">
+      {% if m.past_orders.rows %}
+        <div class="table-wrap">
+          <table class="mini">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Broker</th>
+                <th>Symbol</th>
+                <th>Side / Action</th>
+                <th class="num">Size</th>
+                <th>Status</th>
+                <th>Order ID</th>
+                <th>Source / Strategy</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for o in m.past_orders.rows %}
+                <tr>
+                  <td><code>{{ o.time or '—' }}</code></td>
+                  <td>{{ o.broker or '—' }}</td>
+                  <td><strong>{{ o.symbol or '—' }}</strong></td>
+                  <td>{{ o.action or '—' }}</td>
+                  <td class="num">{{ o.size if o.size is not none else '—' }}</td>
+                  <td>{% if o.status %}<code>{{ o.status }}</code>{% else %}—{% endif %}</td>
+                  <td>{% if o.order_id %}<code>{{ o.order_id }}</code>{% else %}—{% endif %}</td>
+                  <td>
+                    {% if o.strategy %}{{ o.strategy }}
+                    {% elif o.source %}{{ o.source }}
+                    {% else %}—{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% elif m.past_orders.status == 'topstep_not_available' %}
+        <div class="empty"><strong>n/a</strong>Topstep order history is not available yet.</div>
+      {% else %}
+        <div class="empty"><strong>none</strong>{{ m.past_orders.message or 'No Topstep orders found for this lookback window.' }}</div>
+      {% endif %}
+    </div>
+  {% elif m.past_orders.rows %}
     <div class="table-wrap">
       <table class="mini">
         <thead>
@@ -128,12 +193,90 @@
         Broker order history unavailable — showing local journal rows.
       </p>
     {% endif %}
-  {% elif m.past_orders.status == 'topstep_not_available' %}
-    <div class="empty"><strong>n/a</strong>Topstep order history is not available yet.</div>
   {% else %}
     <div class="empty"><strong>none</strong>{{ m.past_orders.message or 'No past orders yet.' }}</div>
   {% endif %}
 </section>
+
+{% if active_broker_provider == 'topstep' %}
+<script>
+(function () {
+  const cfg = JSON.parse(document.getElementById('past-orders-config').textContent);
+  const body = document.getElementById('past-orders-body');
+  const status = document.getElementById('past-orders-status');
+  const sel = document.getElementById('past-orders-lookback');
+  const btn = document.getElementById('past-orders-refresh');
+  if (sel) sel.value = String(cfg.default_lookback_days || 7);
+
+  function _renderRows(rows) {
+    if (!rows || !rows.length) {
+      body.innerHTML = '<div class="empty"><strong>none</strong>'
+        + 'No Topstep orders found for this lookback window.</div>';
+      return;
+    }
+    const head = '<div class="table-wrap"><table class="mini"><thead><tr>'
+      + '<th>Time</th><th>Symbol/Contract</th><th>Side</th><th class="num">Size</th>'
+      + '<th>Type</th><th>Status</th><th class="num">Limit</th><th class="num">Stop</th>'
+      + '<th class="num">Filled</th><th>Order ID</th><th>Tag</th>'
+      + '</tr></thead><tbody>';
+    const rowsHtml = rows.map((o) => {
+      const time = o.creationTimestamp || o.updateTimestamp || '—';
+      return '<tr>'
+        + '<td><code>' + (time) + '</code></td>'
+        + '<td><strong>' + (o.contractId || '—') + '</strong></td>'
+        + '<td>' + (o.side_label || (o.side != null ? String(o.side) : '—')) + '</td>'
+        + '<td class="num">' + (o.size != null ? o.size : '—') + '</td>'
+        + '<td>' + (o.type != null ? o.type : '—') + '</td>'
+        + '<td>' + (o.status != null ? '<code>' + o.status + '</code>' : '—') + '</td>'
+        + '<td class="num">' + (o.limitPrice != null ? o.limitPrice : '—') + '</td>'
+        + '<td class="num">' + (o.stopPrice != null ? o.stopPrice : '—') + '</td>'
+        + '<td class="num">' + (o.filledPrice != null ? o.filledPrice : '—') + '</td>'
+        + '<td>' + (o.orderId ? '<code>' + o.orderId + '</code>' : '—') + '</td>'
+        + '<td>' + (o.customTag || '—') + '</td>'
+        + '</tr>';
+    }).join('');
+    body.innerHTML = head + rowsHtml + '</tbody></table></div>';
+  }
+
+  async function _fetchOrderHistory() {
+    const days = parseInt((sel && sel.value) || cfg.default_lookback_days || 7, 10);
+    if (status) status.textContent = 'loading…';
+    btn && (btn.disabled = true);
+    try {
+      const r = await fetch('/api/broker/order-history?lookback_days=' + days
+        + '&limit=' + (cfg.default_limit || 100));
+      const json = await r.json();
+      if (!json) throw new Error('empty response');
+      if (json.not_implemented) {
+        body.innerHTML = '<div class="empty"><strong>n/a</strong>'
+          + (json.message || 'Topstep order history is not available yet.')
+          + '</div>';
+      } else if (!json.ok) {
+        body.innerHTML = '<div class="empty"><strong>error</strong>'
+          + (json.message || 'Topstep order history failed.')
+          + '</div>';
+      } else {
+        _renderRows(json.orders);
+      }
+      if (status) {
+        const stamp = new Date().toLocaleTimeString();
+        status.textContent = 'last refreshed ' + stamp + ' · ' + (json.count || 0) + ' order(s)';
+      }
+    } catch (err) {
+      body.innerHTML = '<div class="empty"><strong>error</strong>'
+        + 'request failed: ' + err + '</div>';
+      if (status) status.textContent = 'last refresh failed';
+    } finally {
+      btn && (btn.disabled = false);
+    }
+  }
+
+  if (btn) btn.addEventListener('click', _fetchOrderHistory);
+  if (sel) sel.addEventListener('change', _fetchOrderHistory);
+  _fetchOrderHistory();
+})();
+</script>
+{% endif %}
 
 <section class="grid grid-2 section">
   <div class="card">

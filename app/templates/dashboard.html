@@ -5,9 +5,132 @@
 <h1>Overview</h1>
 <p class="subtitle">Live status of your local trading bridge.</p>
 
-{# Trading session + execution mode + broker status at a glance.
-   The kill-switch toggle now lives in the header (see base.html). #}
-<section class="grid grid-4 section">
+{# ---- Execution card.
+       Compact, intentional layout: title + status pill + mode dropdown
+       + Save/Apply + Disable Execution + Exit All / Flatten + account
+       line. Live arming uses a dedicated modal with a typed phrase
+       and an account acknowledgement. No top-right cluster, no inline
+       arming blocks. #}
+<section class="section">
+  <div class="card execution-card execution-{{ exec_card_state }}"
+       id="exec-card"
+       data-execution-state="{{ exec_card_state }}"
+       data-execution-mode="{{ execution_mode }}"
+       data-broker-provider="{{ broker_provider }}"
+       data-selected-account-id="{{ selected_account_id or '' }}"
+       data-selected-account-name="{{ broker_account_card.selected_account_name or '' }}"
+       data-live-confirm-phrase="{{ live_execution.confirm_phrase }}">
+    <div class="execution-card-inner">
+      <div class="execution-card-head">
+        <h3 class="execution-card-title">Execution</h3>
+        <span class="execution-pill execution-pill-{{ exec_card_state }}"
+              id="execution-status-pill">
+          {{ exec_card_label }}
+        </span>
+      </div>
+
+      <form id="form-execution-apply" class="execution-mode-form">
+        <label for="execution_mode_select" class="execution-mode-label">
+          Execution mode
+        </label>
+        <select id="execution_mode_select" name="execution_mode">
+          <option value="paper" {% if execution_mode == 'paper' %}selected{% endif %}>dry-run</option>
+          <option value="demo"  {% if execution_mode == 'demo'  %}selected{% endif %}>demo</option>
+          <option value="live"  {% if execution_mode == 'live'  %}selected{% endif %}>live</option>
+        </select>
+        <button type="submit" class="btn btn-primary" id="btn-execution-apply">
+          Save / Apply
+        </button>
+      </form>
+
+      <div class="execution-account">
+        <span class="execution-account-label">Account:</span>
+        {% if selected_account_id %}
+          <code>{{ selected_account_id }}</code>
+          {% if broker_account_card.selected_account_name %}
+            <span class="execution-account-name">/ {{ broker_account_card.selected_account_name }}</span>
+          {% endif %}
+        {% else %}
+          <span class="muted">no account selected</span>
+        {% endif %}
+      </div>
+
+      <div class="execution-actions">
+        <button type="button" id="btn-disable-exec" class="btn">
+          Disable Execution
+        </button>
+        <button type="button" id="btn-flatten-all" class="btn">
+          Exit All / Flatten
+        </button>
+        {% if kill_switch_enabled %}
+          <span class="execution-kill-switch-indicator
+                       {% if kill_switch_active %}active{% endif %}">
+            kill switch {{ 'active' if kill_switch_active else 'off' }}
+          </span>
+        {% endif %}
+      </div>
+
+      <pre id="execution-out" class="output execution-out" hidden></pre>
+    </div>
+  </div>
+</section>
+
+{# ---- Live execution engagement modal.
+       Hidden by default. Opens when the operator picks "live" in the
+       mode dropdown and clicks Save / Apply. Requires the exact
+       confirmation phrase + an account acknowledgement check. After
+       submit, the card runs an engagement animation while the verify
+       endpoint and the enable endpoint settle. #}
+<div id="live-execution-modal" class="execution-modal" hidden
+     aria-hidden="true" role="dialog"
+     aria-labelledby="live-execution-modal-title">
+  <div class="execution-modal-backdrop" data-close-modal></div>
+  <div class="execution-modal-panel" role="document">
+    <h3 id="live-execution-modal-title" class="execution-modal-title">
+      Live Execution Warning
+    </h3>
+    <p class="execution-modal-copy">
+      You are about to enable live/funded order routing for the
+      selected Topstep account. Orders may route to a real funded
+      account. Confirm only if you understand the risk.
+    </p>
+    <p class="execution-modal-account">
+      Account:
+      <code id="live-modal-account-id">{{ selected_account_id or '—' }}</code>
+      {% if broker_account_card.selected_account_name %}
+        <span class="muted">/</span>
+        <span id="live-modal-account-name">{{ broker_account_card.selected_account_name }}</span>
+      {% endif %}
+    </p>
+    <form id="form-live-engage" class="execution-modal-form">
+      <label for="live_confirm_phrase">
+        Type <code>{{ live_execution.confirm_phrase }}</code> exactly to confirm
+      </label>
+      <input id="live_confirm_phrase" name="confirm" type="text"
+             autocomplete="off"
+             placeholder="{{ live_execution.confirm_phrase }}" />
+      <label class="execution-modal-ack">
+        <input id="live_account_ack" type="checkbox" name="account_ack" />
+        I acknowledge orders will hit account
+        <code>{{ selected_account_id or '—' }}</code>
+        <span class="muted">/</span>
+        {{ broker_account_card.selected_account_name or 'unnamed' }}
+        — this is a funded/live Topstep account.
+      </label>
+      <div class="execution-modal-actions">
+        <button type="button" class="btn" data-close-modal>Cancel</button>
+        <button type="submit" id="btn-engage-live" class="btn btn-danger">
+          Engage Live Execution
+        </button>
+      </div>
+      <pre id="live-engage-out" class="output" hidden></pre>
+    </form>
+  </div>
+</div>
+
+{# Trading session + broker status at a glance. Mode/broker also live
+   in the Execution card above — these stay for the at-a-glance row. #}
+<section class="grid grid-3 section">
   <div class="card">
     <div class="card-label">Trading session</div>
     <div class="card-value">
@@ -30,20 +153,6 @@
       {% endif %}
     </div>
     <div class="card-sub">kill switch {{ 'enabled' if kill_switch_enabled else 'disabled' }}</div>
-  </div>
-
-  <div class="card">
-    <div class="card-label">Execution mode</div>
-    <div class="card-value">
-      {% if execution_mode == 'paper' %}
-        <span class="badge badge-paper plain">{{ execution_mode }}</span>
-      {% elif execution_mode == 'live' %}
-        <span class="badge badge-good plain">{{ execution_mode }}</span>
-      {% else %}
-        <span class="badge badge-info plain">{{ execution_mode }}</span>
-      {% endif %}
-    </div>
-    <div class="card-sub">simulated fills only</div>
   </div>
 
   <div class="card">
@@ -155,6 +264,49 @@
       {% endif %}
       · <a href="/settings/broker">broker settings</a>
     </div>
+  </div>
+</section>
+
+{# Ticker Watch — placeholder for the future ProjectX market-data hub.
+   For now: dropdown of mapped tickers + the resolved contract id, no
+   price feed wired. The text intentionally calls this out so the
+   operator isn't surprised by a static value. #}
+<section class="section">
+  <div class="card" id="ticker-watch-card">
+    <div class="card-row">
+      <div class="card-label">Ticker Watch</div>
+      <span class="badge badge-warn plain">placeholder</span>
+    </div>
+    <div class="grid grid-3" style="margin-top: 8px;">
+      <div>
+        <div class="card-label">Selected ticker</div>
+        {% if ticker_watch.tickers %}
+          <select id="ticker-watch-select">
+            {% for row in ticker_watch.tickers %}
+              <option value="{{ row.ticker }}"
+                      data-contract="{{ row.contract_id }}"
+                      {% if row.ticker == ticker_watch.default_ticker %}selected{% endif %}>
+                {{ row.ticker }}
+              </option>
+            {% endfor %}
+          </select>
+        {% else %}
+          <div class="card-value sm muted">no mappings configured</div>
+        {% endif %}
+      </div>
+      <div>
+        <div class="card-label">Mapped contract ID</div>
+        <div class="card-value sm mono" id="ticker-watch-contract">
+          {{ ticker_watch.default_contract_id or '—' }}
+        </div>
+      </div>
+      <div>
+        <div class="card-label">Current price</div>
+        <div class="card-value sm muted">Not connected yet</div>
+        <div class="card-sub">mode: {{ ticker_watch.mode_label }}</div>
+      </div>
+    </div>
+    <p class="muted" style="margin: 8px 0 0;">{{ ticker_watch.feed_note }}</p>
   </div>
 </section>
 
@@ -301,4 +453,233 @@
     {% endif %}
   </div>
 </section>
+
+<script>
+// ---- Dashboard Execution card ----
+(function () {
+  var card = document.getElementById('exec-card');
+  if (!card) return;
+
+  var modeForm = document.getElementById('form-execution-apply');
+  var modeSelect = document.getElementById('execution_mode_select');
+  var statusPill = document.getElementById('execution-status-pill');
+  var execOut = document.getElementById('execution-out');
+  var disableBtn = document.getElementById('btn-disable-exec');
+  var flattenBtn = document.getElementById('btn-flatten-all');
+  var initialMode = card.dataset.executionMode || 'paper';
+  var initialState = card.dataset.executionState || '';
+  var brokerProvider = card.dataset.brokerProvider || '';
+  var selectedAccountId = card.dataset.selectedAccountId || '';
+  var liveModal = document.getElementById('live-execution-modal');
+  var liveForm = document.getElementById('form-live-engage');
+  var liveOut = document.getElementById('live-engage-out');
+  var liveConfirmInput = document.getElementById('live_confirm_phrase');
+  var liveAckInput = document.getElementById('live_account_ack');
+  var livePhrase = card.dataset.liveConfirmPhrase || 'I_UNDERSTAND_LIVE_ORDERS';
+
+  var STATE_CLASSES = [
+    'execution-dry-run',
+    'execution-demo',
+    'execution-live-locked',
+    'execution-live-engaging',
+    'execution-live-armed',
+    'execution-kill-switch-active',
+    'execution-disabled',
+  ];
+
+  function showOut(msg) {
+    if (!execOut) return;
+    execOut.hidden = false;
+    execOut.textContent = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
+  }
+
+  function setState(state, label) {
+    STATE_CLASSES.forEach(function (cls) { card.classList.remove(cls); });
+    card.classList.add('execution-' + state);
+    card.dataset.executionState = state;
+    if (statusPill && label) {
+      statusPill.textContent = label;
+      statusPill.className = 'execution-pill execution-pill-' + state;
+    }
+  }
+
+  function openLiveModal() {
+    if (!liveModal) return;
+    liveModal.hidden = false;
+    liveModal.setAttribute('aria-hidden', 'false');
+    if (liveConfirmInput) {
+      liveConfirmInput.value = '';
+      window.setTimeout(function () { liveConfirmInput.focus(); }, 0);
+    }
+    if (liveAckInput) liveAckInput.checked = false;
+    if (liveOut) {
+      liveOut.hidden = true;
+      liveOut.textContent = '';
+    }
+  }
+
+  function closeLiveModal() {
+    if (!liveModal) return;
+    liveModal.hidden = true;
+    liveModal.setAttribute('aria-hidden', 'true');
+    if (modeSelect) modeSelect.value = initialMode;
+  }
+
+  if (liveModal) {
+    liveModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
+      el.addEventListener('click', function () { closeLiveModal(); });
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !liveModal.hidden) closeLiveModal();
+    });
+  }
+
+  function applyPaperOrDemo(mode) {
+    showOut('applying mode: ' + mode + '…');
+    return fetch('/api/execution/apply-mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: mode }),
+    })
+      .then(function (r) { return r.json().then(function (b) { return { status: r.status, body: b }; }); })
+      .then(function (resp) {
+        showOut(resp.body);
+        if (resp.body && resp.body.ok) {
+          window.setTimeout(function () { window.location.reload(); }, 300);
+        }
+      })
+      .catch(function (err) { showOut('apply-mode failed: ' + err); });
+  }
+
+  if (modeForm && modeSelect) {
+    modeForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var picked = modeSelect.value;
+      if (picked === 'live') {
+        openLiveModal();
+        return;
+      }
+      applyPaperOrDemo(picked);
+    });
+  }
+
+  if (disableBtn) {
+    disableBtn.addEventListener('click', function () {
+      if (!window.confirm('Disable execution? This returns the app to a safe dry-run state.')) return;
+      showOut('disabling execution…');
+      fetch('/api/execution/disable', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          showOut(body);
+          if (body && body.ok) {
+            window.setTimeout(function () { window.location.reload(); }, 300);
+          }
+        })
+        .catch(function (err) { showOut('disable failed: ' + err); });
+    });
+  }
+
+  if (flattenBtn) {
+    flattenBtn.addEventListener('click', function () {
+      if (!window.confirm('Flatten/Exit all positions on the active broker?')) return;
+      showOut('flattening…');
+      fetch('/api/broker/flatten-all', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (body) { showOut(body); })
+        .catch(function (err) { showOut('flatten failed: ' + err); });
+    });
+  }
+
+  // ---- Live engagement: verify → animate → enable ----
+  function writeLive(msg) {
+    if (!liveOut) return;
+    liveOut.hidden = false;
+    liveOut.textContent = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
+  }
+
+  function runLiveEngagement() {
+    var phrase = (liveConfirmInput && liveConfirmInput.value) || '';
+    var ack = !!(liveAckInput && liveAckInput.checked);
+    if (phrase !== livePhrase) {
+      writeLive('Confirmation phrase must equal ' + livePhrase + ' exactly.');
+      return;
+    }
+    if (!ack) {
+      writeLive('You must check the account acknowledgement box.');
+      return;
+    }
+    writeLive('Authorizing account…');
+    setState('live-engaging', 'Live Engaging');
+    var animationStart = Date.now();
+    var minDurationMs = 3000;
+
+    function finishEngagement(success, body) {
+      var elapsed = Date.now() - animationStart;
+      var wait = Math.max(0, minDurationMs - elapsed);
+      window.setTimeout(function () {
+        if (success) {
+          setState('live-armed', 'Live Armed');
+          writeLive(body || 'Live execution armed.');
+          window.setTimeout(function () { window.location.reload(); }, 600);
+        } else {
+          // Failed gates or enable error → revert to Live Locked.
+          setState('live-locked', 'Live Locked');
+          writeLive(body || 'Live execution refused.');
+        }
+      }, wait);
+    }
+
+    // Step 1: verify gates without enabling.
+    fetch('/api/topstep/live-execution/verify', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (verifyBody) {
+        if (!verifyBody || !verifyBody.ok) {
+          finishEngagement(false, verifyBody || { ok: false, message: 'verify failed' });
+          return;
+        }
+        writeLive('Checking live gates… ok\nConfirming selected account…');
+        // Step 2: enable.
+        return fetch('/api/topstep/live-execution/enable', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: phrase, account_ack: ack }),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (enableBody) {
+            if (enableBody && enableBody.ok) {
+              finishEngagement(true, enableBody);
+            } else {
+              finishEngagement(false, enableBody);
+            }
+          });
+      })
+      .catch(function (err) {
+        finishEngagement(false, { ok: false, message: 'engagement failed: ' + err });
+      });
+  }
+
+  if (liveForm) {
+    liveForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      // Hide modal but keep status pulse running on the card.
+      if (liveModal) {
+        liveModal.hidden = true;
+        liveModal.setAttribute('aria-hidden', 'true');
+      }
+      runLiveEngagement();
+    });
+  }
+})();
+
+// ---- Ticker watch select → update contract id ----
+(function () {
+  var sel = document.getElementById('ticker-watch-select');
+  var out = document.getElementById('ticker-watch-contract');
+  if (!sel || !out) return;
+  sel.addEventListener('change', function () {
+    var opt = sel.options[sel.selectedIndex];
+    out.textContent = (opt && opt.dataset.contract) || '—';
+  });
+})();
+</script>
 {% endblock %}
