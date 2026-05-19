@@ -90,23 +90,79 @@ POST /api/Order/place
 
 ### Symbol mapping (required)
 
+SignalBridge maps TradingView tickers to broker-specific symbols.
 ProjectX expects real contract ids (e.g. `CON.F.US.MES.M26`), not
-TradingView tickers. The builder refuses to guess: if there's no
-explicit Topstep entry for the ticker, it returns
-`symbol_mapping_missing` and the dry-run is journaled as a build
-failure.
+TradingView tickers. The builder refuses to guess: if the Topstep
+contract id for a ticker is missing **or blank**, it returns
+`symbol_mapping_missing` with the message
+`Topstep contract id missing for <ticker>. Add it in Configuration > Symbols.`,
+and the dry-run is journaled as a build failure.
 
-Add mappings in `config/symbols.json` (copy from
-`config/symbols.example.json`):
+**Default mappings** shipped in `config/symbols.example.json`:
 
-```json
+| TradingView ticker | Topstep contract id        | Tradovate symbol |
+|--------------------|----------------------------|------------------|
+| `MNQ1!`            | `CON.F.US.MNQ.M26`         | `MNQ`            |
+| `MES1!`            | `CON.F.US.MES.M26`         | `MES`            |
+| `NQ1!`             | *(blank — fill via search)* | `NQ`             |
+| `ES1!`             | *(blank — fill via search)* | `ES`             |
+
+`NQ1!` / `ES1!` ship blank because the full-size E-mini contract ids
+must be picked from the live ProjectX catalog (and they change every
+quarter).
+
+**Edit mappings** at **Configuration → Symbols** (`/settings/symbols`).
+The page edits `config/symbols.json` directly. You can add, edit, and
+remove rows, then **Save mappings**. The same page hosts a **Topstep
+contract search** tool: type a search term (e.g. `NQ` or `ES`), click
+**Search Topstep Contracts**, and use the **Copy** button to paste the
+active contract id into the Topstep column above.
+
+The symbol allowlist (`ALLOWED_SYMBOLS`) is **separate** from the
+mapping table — symbols may be allowlisted without a Topstep mapping
+(they will simply be rejected at the order builder if Topstep is the
+active provider).
+
+**Contract ids roll with futures expiration**, so review and update
+them each contract quarter.
+
+### `/api/topstep/contracts/search`
+
+Proxy to ProjectX `POST /api/Contract/search` for the Symbols page.
+Requires admin auth and Topstep credentials.
+
+```
+POST /api/topstep/contracts/search
+Content-Type: application/json
+
+{ "searchText": "NQ", "live": false }
+```
+
+Response (envelope):
+
+```
 {
-  "MES1!": { "paper": "MES1!", "topstep": "CON.F.US.MES.M26" },
-  "MNQ1!": { "paper": "MNQ1!", "topstep": "CON.F.US.MNQ.M26" }
+  "ok": true,
+  "status": "ok",
+  "searchText": "NQ",
+  "live": false,
+  "contracts": [
+    {
+      "id": "CON.F.US.ENQ.M26",
+      "name": "ENQM26",
+      "description": "E-mini Nasdaq-100",
+      "tickSize": 0.25,
+      "tickValue": 5,
+      "activeContract": true,
+      "symbolId": "F.US.ENQ"
+    }
+  ]
 }
 ```
 
-Contract ids roll over by quarter. Update the file when you roll.
+Missing credentials, auth failure, or a ProjectX rejection all surface
+as an `ok: false` envelope rather than a 5xx — the UI renders the
+`message` field directly.
 
 ### `/api/topstep/build-order-preview`
 

@@ -11,11 +11,20 @@ Protection model:
 Why a single password and not user accounts: SignalBridge is a private,
 single-operator local app. We add a password so that exposing the dashboard
 over Tailscale Funnel is safe — not to become multi-tenant.
+
+Password storage:
+  * ``ADMIN_PASSWORD_HASH`` (PBKDF2-SHA256, persisted in SQLite) is the
+    preferred check.
+  * ``ADMIN_PASSWORD`` plaintext fallback stays for the first-run case
+    where the operator has only configured ``.env``. Once the operator
+    saves a new password via the Profile page, the hash takes over.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
@@ -26,6 +35,12 @@ if TYPE_CHECKING:
 
 DEFAULT_SESSION_SECRET = "generate_or_require_secret"
 DEFAULT_ADMIN_PASSWORD = "change_me_admin_password"
+
+# PBKDF2 parameters — stdlib only so we avoid pulling in passlib/bcrypt.
+_PBKDF2_ITERATIONS = 200_000
+_PBKDF2_SALT_BYTES = 16
+_PBKDF2_HASH_NAME = "sha256"
+_PBKDF2_SCHEME = "pbkdf2_sha256"
 
 
 class LoginRequired(Exception):
@@ -57,23 +72,76 @@ def is_admin(request: Request) -> bool:
     return bool(request.session.get("admin"))
 
 
+def hash_password(password: str) -> str:
+    """Hash a password using PBKDF2-SHA256. Returns a string of the form
+    ``pbkdf2_sha256$<iters>$<salt-hex>$<hash-hex>`` safe to persist."""
+    if not isinstance(password, str) or not password:
+        raise ValueError("password must be a non-empty string")
+    salt = os.urandom(_PBKDF2_SALT_BYTES)
+    dk = hashlib.pbkdf2_hmac(
+        _PBKDF2_HASH_NAME,
+        password.encode("utf-8"),
+        salt,
+        _PBKDF2_ITERATIONS,
+    )
+    return f"{_PBKDF2_SCHEME}${_PBKDF2_ITERATIONS}${salt.hex()}${dk.hex()}"
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    """Constant-time check of ``password`` against a stored hash. Returns
+    False on any parse error so a corrupted setting can't bypass auth."""
+    if not password or not hashed:
+        return False
+    try:
+        scheme, iters_s, salt_hex, hash_hex = hashed.split("$", 3)
+    except ValueError:
+        return False
+    if scheme != _PBKDF2_SCHEME:
+        return False
+    try:
+        iters = int(iters_s)
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(hash_hex)
+    except (TypeError, ValueError):
+        return False
+    if iters <= 0:
+        return False
+    dk = hashlib.pbkdf2_hmac(
+        _PBKDF2_HASH_NAME, password.encode("utf-8"), salt, iters
+    )
+    return hmac.compare_digest(dk, expected)
+
+
 def check_credentials(
     settings: "Settings", username: str, password: str
 ) -> bool:
-    """Constant-time username + password compare against configured admin."""
+    """Constant-time username + password compare against configured admin.
+
+    Prefers ``ADMIN_PASSWORD_HASH`` when present; falls back to the
+    plaintext ``ADMIN_PASSWORD`` so first-run / env-only installs keep
+    working until the operator saves a new password via the Profile page.
+    """
     if not username or not password:
         return False
     expected_user = settings.admin_username or ""
-    expected_pw = settings.admin_password or ""
-    if not expected_user or not expected_pw:
+    if not expected_user:
         return False
     u_ok = hmac.compare_digest(
         username.encode("utf-8"), expected_user.encode("utf-8")
     )
-    p_ok = hmac.compare_digest(
+    if not u_ok:
+        return False
+
+    stored_hash = getattr(settings, "admin_password_hash", "") or ""
+    if stored_hash:
+        return verify_password(password, stored_hash)
+
+    expected_pw = settings.admin_password or ""
+    if not expected_pw:
+        return False
+    return hmac.compare_digest(
         password.encode("utf-8"), expected_pw.encode("utf-8")
     )
-    return u_ok and p_ok
 
 
 def login(request: Request) -> None:
@@ -118,7 +186,11 @@ def warn_if_default_secrets(
             "SESSION_SECRET is missing or set to the default — set a long "
             "random value before exposing the dashboard publicly"
         )
-    if (
+    # Only warn about the env-default password when no hash is configured —
+    # once the Profile page has been used to save a new password, the
+    # plaintext default is irrelevant.
+    stored_hash = getattr(settings, "admin_password_hash", "") or ""
+    if not stored_hash and (
         not settings.admin_password
         or settings.admin_password == DEFAULT_ADMIN_PASSWORD
     ):

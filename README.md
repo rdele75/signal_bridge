@@ -42,11 +42,12 @@ Journal / metrics / logs   ←—   visible in the local dashboard
 | `/`                | app status, broker, kill switch, allowed symbols, open positions, today's accepted/rejected counts, last signal, last rejection, paper P&L |
 | `/settings/broker` | pick provider + execution mode (form), Topstep / Tradovate placeholder fields, "Test connection" button |
 | `/settings/risk`   | edit allow-list, contracts cap, daily loss, open-positions cap, longs/shorts toggles, dup cooldown · kill-switch toggle |
-| `/tradingview`     | webhook URL, alert JSON template, edit / regenerate the webhook secret, allowed symbols |
+| `/tradingview`     | current webhook secret (copyable) + regenerate button, Xiznit Universal ORB alert recipe, generic JSON template, curl test, allowed symbols |
 | `/journal`         | recent signals (accepted/rejected) + recent closed paper trades |
 | `/metrics`         | accepted/rejected counts, rejection reasons, trades by symbol, basic paper P&L, win rate |
 | `/logs`            | tail of `logs/signalbridge.log` |
 | `/system`          | app name/version, host/port, db & log paths, cwd, broker, mode, `.env` loaded?, runtime status, useful local URLs |
+| `/settings/profile`| change dashboard admin username + password (PBKDF2-SHA256 hash stored in SQLite) |
 
 All pages share a top bar showing **execution mode**, **broker provider**, and a **live / halted** pill driven by the kill switch.
 
@@ -309,19 +310,21 @@ over your trading bridge.
 | Setting                | Default                              | What it does |
 | ---------------------- | ------------------------------------ | --- |
 | `ADMIN_AUTH_ENABLED`   | `true`                               | turn auth on/off (set `false` only for purely local dev) |
-| `ADMIN_USERNAME`       | `admin`                              | username posted to `/login` |
-| `ADMIN_PASSWORD`       | `change_me_admin_password`           | password posted to `/login` — **change before exposing the UI** |
+| `ADMIN_USERNAME`       | `admin`                              | username posted to `/login` (also editable from `/settings/profile`) |
+| `ADMIN_PASSWORD`       | `change_me_admin_password`           | plaintext fallback used until you save a new password from `/settings/profile` — **change before exposing the UI** |
+| `ADMIN_PASSWORD_HASH`  | _(empty)_                            | PBKDF2-SHA256 hash written by `/settings/profile`; takes precedence over `ADMIN_PASSWORD` once set |
 | `SESSION_SECRET`       | `generate_or_require_secret`         | signs the session cookie — **set a long random value before exposing the UI** |
 
 **What's protected:**
 - All HTML pages (`/`, `/settings/broker`, `/settings/risk`,
-  `/tradingview`, `/journal`, `/metrics`, `/logs`, `/system`) — anonymous
-  visitors get a 303 redirect to `/login`.
+  `/tradingview`, `/settings/profile`, `/journal`, `/metrics`, `/logs`,
+  `/system`) — anonymous visitors get a 303 redirect to `/login`.
 - All admin JSON endpoints (`/api/status`, `/api/system`, `/api/metrics`,
   `/api/journal/recent`, `/api/positions`, `/api/kill-switch/*`,
   `/api/broker/*`) — anonymous callers get `401`.
 - All settings POST endpoints (`/settings/broker`, `/settings/risk`,
-  `/tradingview/secret`, `/tradingview/secret/regenerate`).
+  `/settings/profile`, `/tradingview/secret`,
+  `/tradingview/secret/regenerate`).
 
 **What's intentionally public:**
 - `GET /health` — needed for tunnel liveness checks.
@@ -335,15 +338,21 @@ over your trading bridge.
 **Before turning on Tailscale Funnel:**
 
 1. `ADMIN_PASSWORD` — change from the default to a strong password.
+   After first login, visit **System → Profile** (`/settings/profile`)
+   to rotate the username/password — the page stores a PBKDF2-SHA256
+   hash in SQLite so the plaintext value no longer matters.
 2. `SESSION_SECRET` — change from the default to a long random string
    (e.g. `python -c 'import secrets; print(secrets.token_urlsafe(48))'`).
    Rotating this signs out everyone.
 3. `TRADINGVIEW_WEBHOOK_SECRET` — change from the default. Either edit
    `.env` or use the **TradingView** page in the dashboard (it can
-   regenerate a fresh secret for you).
+   regenerate a fresh secret for you). After regenerating, update
+   **both** TradingView alert webhook URLs (Xiznit setup uses
+   `?secret=…&symbol={{ticker}}` rather than the JSON body).
 
 If `SESSION_SECRET` or `ADMIN_PASSWORD` are still on the default at
-startup, the app logs a `WARNING` so you notice.
+startup (and no `ADMIN_PASSWORD_HASH` has been saved), the app logs a
+`WARNING` so you notice.
 
 ---
 

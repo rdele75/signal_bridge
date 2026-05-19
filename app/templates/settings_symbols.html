@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Symbols · SignalBridge{% endblock %}
+{% block page_title %}Symbols{% endblock %}
+{% block content %}
+<h1>Symbol Settings</h1>
+<p class="subtitle">TradingView ticker → broker-specific symbol mappings. Saved to <code>config/symbols.json</code>.</p>
+
+{% if flash %}
+  <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
+    <span class="t">{{ 'Error' if flash_kind == 'error' else 'Saved' }}:</span> {{ flash }}
+  </div>
+{% endif %}
+
+<div class="banner">
+  <span class="t">Heads up:</span>
+  Topstep requires ProjectX contract ids (e.g. <code>CON.F.US.MNQ.M26</code>) — not plain root symbols.
+  Use the contract search below to find the active id, then paste it into the table.
+  Contract ids roll with futures expiration, so review these each contract quarter.
+  The allowed-symbols allowlist lives separately under broker/risk settings.
+</div>
+
+<section class="card section">
+  <div class="section-head">
+    <h3>Mappings</h3>
+    <span class="hint">edit, add, or remove. Save to write <code>{{ symbols_path }}</code>.</span>
+  </div>
+  <form method="post" action="/settings/symbols" class="form" id="symbols-form">
+    <div class="table-wrap">
+      <table class="data" id="symbols-table">
+        <thead>
+          <tr>
+            <th>TradingView Symbol</th>
+            <th>Paper Symbol</th>
+            <th>Topstep Contract ID</th>
+            <th>Tradovate Symbol</th>
+            <th style="width: 80px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="symbols-rows">
+          {% for ticker, row in mappings.items() %}
+          <tr>
+            <td><input type="text" name="ticker" value="{{ ticker }}" placeholder="e.g. MNQ1!" /></td>
+            <td><input type="text" name="paper" value="{{ row.paper }}" placeholder="paper symbol" /></td>
+            <td><input type="text" name="topstep" value="{{ row.topstep }}" placeholder="CON.F.US.MNQ.M26" /></td>
+            <td><input type="text" name="tradovate" value="{{ row.tradovate }}" placeholder="MNQ" /></td>
+            <td><button type="button" class="btn btn-remove">Remove</button></td>
+          </tr>
+          {% endfor %}
+          {% if not mappings %}
+          <tr>
+            <td><input type="text" name="ticker" value="" placeholder="e.g. MNQ1!" /></td>
+            <td><input type="text" name="paper" value="" placeholder="paper symbol" /></td>
+            <td><input type="text" name="topstep" value="" placeholder="CON.F.US.MNQ.M26" /></td>
+            <td><input type="text" name="tradovate" value="" placeholder="MNQ" /></td>
+            <td><button type="button" class="btn btn-remove">Remove</button></td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="btn-row" style="margin-top: 12px;">
+      <button type="button" class="btn" id="btn-add-row">Add mapping</button>
+      <button type="submit" class="btn btn-primary">Save mappings</button>
+    </div>
+    <p class="muted" style="margin: 8px 0 0;">
+      TradingView symbol is required. Paper symbol defaults to the TradingView ticker when blank.
+      Topstep and Tradovate symbols may be blank — order builders will reject signals for symbols whose
+      target broker mapping is missing.
+    </p>
+  </form>
+</section>
+
+<section class="card section">
+  <div class="section-head">
+    <h3>Topstep contract search</h3>
+    <span class="hint">probes <code>/api/Contract/search</code></span>
+  </div>
+  <p class="muted" style="margin: 0 0 10px;">
+    Search ProjectX for the active contract id (e.g. <code>NQ</code> or <code>ES</code>) and paste it into the
+    Topstep column above. Requires Topstep credentials configured under Broker settings.
+  </p>
+  <div class="form-row" style="display: flex; gap: 8px; align-items: end; flex-wrap: wrap;">
+    <div style="flex: 1; min-width: 200px;">
+      <label for="contract-search">Search text</label>
+      <input id="contract-search" type="text" placeholder="MNQ, MES, NQ, ES..." />
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; padding-bottom: 10px;">
+      <input id="contract-live" type="checkbox" />
+      <label for="contract-live" style="margin: 0;">live=true</label>
+    </div>
+    <div style="padding-bottom: 6px;">
+      <button type="button" class="btn btn-primary" id="btn-contract-search">Search Topstep Contracts</button>
+    </div>
+  </div>
+  <div id="contract-results" style="margin-top: 12px;"></div>
+</section>
+
+<script>
+(function () {
+  var rowsTbody = document.getElementById('symbols-rows');
+  var addBtn = document.getElementById('btn-add-row');
+
+  function _wireRemove(row) {
+    var btn = row.querySelector('.btn-remove');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      // Always keep at least one row in the DOM so the form arrays stay aligned.
+      if (rowsTbody.querySelectorAll('tr').length <= 1) {
+        row.querySelectorAll('input').forEach(function (el) { el.value = ''; });
+        return;
+      }
+      row.remove();
+    });
+  }
+
+  rowsTbody.querySelectorAll('tr').forEach(_wireRemove);
+
+  addBtn.addEventListener('click', function () {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><input type="text" name="ticker" value="" placeholder="e.g. MNQ1!" /></td>' +
+      '<td><input type="text" name="paper" value="" placeholder="paper symbol" /></td>' +
+      '<td><input type="text" name="topstep" value="" placeholder="CON.F.US.MNQ.M26" /></td>' +
+      '<td><input type="text" name="tradovate" value="" placeholder="MNQ" /></td>' +
+      '<td><button type="button" class="btn btn-remove">Remove</button></td>';
+    rowsTbody.appendChild(tr);
+    _wireRemove(tr);
+  });
+
+  // ---- Topstep contract search ----
+  var searchBtn = document.getElementById('btn-contract-search');
+  var searchInput = document.getElementById('contract-search');
+  var liveCheck = document.getElementById('contract-live');
+  var resultsDiv = document.getElementById('contract-results');
+
+  function _renderResults(body) {
+    resultsDiv.innerHTML = '';
+    if (!body) {
+      resultsDiv.innerHTML = '<p class="muted">No response.</p>';
+      return;
+    }
+    if (!body.ok) {
+      var msg = body.message || body.status || 'contract search failed';
+      resultsDiv.innerHTML = '<div class="banner warn"><span class="t">Error:</span> ' + msg + '</div>';
+      return;
+    }
+    var contracts = body.contracts || [];
+    if (!contracts.length) {
+      resultsDiv.innerHTML = '<p class="muted">No contracts returned.</p>';
+      return;
+    }
+    var wrap = document.createElement('div');
+    wrap.className = 'table-wrap';
+    var html = '<table class="data"><thead><tr>'
+      + '<th>Contract ID</th><th>Name</th><th>Description</th>'
+      + '<th>Tick Size</th><th>Tick Value</th><th>Active</th><th>Symbol ID</th>'
+      + '<th>Action</th></tr></thead><tbody>';
+    contracts.forEach(function (c) {
+      var cid = c.id || '';
+      html += '<tr>'
+        + '<td><code>' + (cid || '—') + '</code></td>'
+        + '<td>' + (c.name || '—') + '</td>'
+        + '<td>' + (c.description || '—') + '</td>'
+        + '<td>' + (c.tickSize == null ? '—' : c.tickSize) + '</td>'
+        + '<td>' + (c.tickValue == null ? '—' : c.tickValue) + '</td>'
+        + '<td>' + (c.activeContract === true ? 'yes' : (c.activeContract === false ? 'no' : '—')) + '</td>'
+        + '<td><code>' + (c.symbolId == null ? '—' : c.symbolId) + '</code></td>'
+        + '<td><button type="button" class="btn" data-copy="' + cid + '">Copy</button></td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+    resultsDiv.appendChild(wrap);
+    wrap.querySelectorAll('button[data-copy]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var v = btn.getAttribute('data-copy') || '';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(v).then(function () {
+            btn.textContent = 'Copied';
+            window.setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+          });
+        } else {
+          window.prompt('Copy contract id:', v);
+        }
+      });
+    });
+  }
+
+  searchBtn.addEventListener('click', async function () {
+    var text = (searchInput.value || '').trim();
+    if (!text) {
+      resultsDiv.innerHTML = '<p class="muted">Enter a search term first.</p>';
+      return;
+    }
+    resultsDiv.innerHTML = '<p class="muted">searching…</p>';
+    try {
+      var r = await fetch('/api/topstep/contracts/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ searchText: text, live: !!liveCheck.checked })
+      });
+      var body = await r.json();
+      _renderResults(body);
+    } catch (e) {
+      resultsDiv.innerHTML = '<div class="banner warn"><span class="t">Error:</span> ' + e + '</div>';
+    }
+  });
+})();
+</script>
+{% endblock %}

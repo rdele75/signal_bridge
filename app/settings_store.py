@@ -56,6 +56,11 @@ MANAGED_KEYS: tuple[str, ...] = (
     "ENABLE_TOPSTEP_ORDER_EXECUTION",
     "TOPSTEP_EXECUTION_CONFIRM",
     "ENABLE_LIVE_TRADING",
+    # Dashboard admin credentials. ADMIN_PASSWORD_HASH is written by the
+    # Profile page; the plaintext ADMIN_PASSWORD env var stays a fallback
+    # for first-run installs that haven't visited the Profile page yet.
+    "ADMIN_USERNAME",
+    "ADMIN_PASSWORD_HASH",
 )
 
 # Keys whose change can be applied to the in-memory Settings instance
@@ -94,6 +99,10 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "ENABLE_TOPSTEP_ORDER_EXECUTION",
         "TOPSTEP_EXECUTION_CONFIRM",
         "ENABLE_LIVE_TRADING",
+        # Auth settings take effect on the next login attempt — no
+        # restart needed because check_credentials reads them per-call.
+        "ADMIN_USERNAME",
+        "ADMIN_PASSWORD_HASH",
     }
 )
 
@@ -366,6 +375,26 @@ def coerce(key: str, raw: Any) -> Any:
             )
         return text
 
+    if key == "ADMIN_USERNAME":
+        text = (str(raw) if raw is not None else "").strip()
+        if not text:
+            raise SettingsValidationError("ADMIN_USERNAME cannot be empty")
+        if len(text) > 128:
+            raise SettingsValidationError(
+                "ADMIN_USERNAME must be 128 characters or fewer"
+            )
+        return text
+
+    if key == "ADMIN_PASSWORD_HASH":
+        # The hash is opaque — produced by app.auth.hash_password. We
+        # accept any string up to a generous ceiling and let the verifier
+        # parse it. Empty clears the hash so the env-default plaintext
+        # falls back in.
+        text = str(raw) if raw is not None else ""
+        if len(text) > 2048:
+            raise SettingsValidationError("ADMIN_PASSWORD_HASH is too long")
+        return text
+
     raise SettingsValidationError(f"unknown setting: {key}")
 
 
@@ -408,6 +437,8 @@ _KEY_TO_ATTR: dict[str, str] = {
     "ENABLE_TOPSTEP_ORDER_EXECUTION": "enable_topstep_order_execution",
     "TOPSTEP_EXECUTION_CONFIRM": "topstep_execution_confirm",
     "ENABLE_LIVE_TRADING": "enable_live_trading",
+    "ADMIN_USERNAME": "admin_username",
+    "ADMIN_PASSWORD_HASH": "admin_password_hash",
 }
 
 

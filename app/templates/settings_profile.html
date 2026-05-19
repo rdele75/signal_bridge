@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Profile · SignalBridge{% endblock %}
+{% block page_title %}Profile{% endblock %}
+{% block content %}
+<h1>Profile settings</h1>
+<p class="subtitle">Change the dashboard username and password. Stored in SQLite.</p>
+
+{% if flash %}
+  <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
+    <span class="t">{{ 'Error' if flash_kind == 'error' else 'Saved' }}:</span> {{ flash }}
+  </div>
+{% endif %}
+
+<section class="grid grid-2 section">
+  <div class="card">
+    <div class="card-label">Current username</div>
+    <div class="card-value sm mono">{{ profile.username or '—' }}</div>
+    <div class="card-sub">used at <code>/login</code></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Password storage</div>
+    <div class="card-value sm">
+      {% if profile.password_uses_hash %}
+        <span class="badge badge-good plain">hashed</span>
+      {% else %}
+        <span class="badge badge-warn plain">env plaintext</span>
+      {% endif %}
+    </div>
+    <div class="card-sub">
+      {% if profile.password_uses_hash %}
+        PBKDF2-SHA256 hash persisted in SQLite
+      {% else %}
+        save a new password to migrate from the <code>ADMIN_PASSWORD</code> env value
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card section">
+  <div class="section-head">
+    <h3>Update admin credentials</h3>
+    <span class="hint">requires your current password</span>
+  </div>
+  <form method="post" action="/settings/profile" class="form" autocomplete="off">
+    <div class="form-row">
+      <label for="current_password">Current password</label>
+      <input id="current_password" name="current_password" type="password"
+             autocomplete="current-password" required />
+      <p class="muted" style="margin: 4px 0 0;">
+        Required to confirm changes. The current value is never displayed back.
+      </p>
+    </div>
+
+    <div class="form-row">
+      <label for="new_username">New username</label>
+      <input id="new_username" name="new_username" type="text"
+             maxlength="128" autocomplete="off"
+             value="{{ profile.username }}" required />
+    </div>
+
+    <div class="grid grid-2">
+      <div class="form-row">
+        <label for="new_password">New password</label>
+        <input id="new_password" name="new_password" type="password"
+               autocomplete="new-password"
+               minlength="{{ profile.password_min_length }}"
+               placeholder="leave blank to keep current password" />
+        <p class="muted" style="margin: 4px 0 0;">
+          Minimum {{ profile.password_min_length }} characters. Leave blank to keep the existing password.
+        </p>
+      </div>
+      <div class="form-row">
+        <label for="confirm_password">Confirm new password</label>
+        <input id="confirm_password" name="confirm_password" type="password"
+               autocomplete="new-password"
+               minlength="{{ profile.password_min_length }}"
+               placeholder="re-type new password" />
+        <p class="muted" style="margin: 4px 0 0;">
+          Must match the new password exactly.
+        </p>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button type="submit" class="btn btn-primary">Save profile</button>
+    </div>
+  </form>
+</section>
+
+<div class="banner">
+  <span class="t">Tip:</span> after a successful update, your existing session stays
+  valid. New credentials take effect on the next sign-in at <a href="/login">/login</a>.
+</div>
+{% endblock %}

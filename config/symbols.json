@@ -8,5 +8,15 @@
     "paper": "MES1!",
     "topstep": "CON.F.US.MES.M26",
     "tradovate": "MES"
+  },
+  "NQ1!": {
+    "paper": "NQ1!",
+    "topstep": "",
+    "tradovate": "NQ"
+  },
+  "ES1!": {
+    "paper": "ES1!",
+    "topstep": "",
+    "tradovate": "ES"
   }
 }

@@ -12,7 +12,7 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -24,6 +24,7 @@ from . import __version__
 from .auth import (
     LoginRequired,
     check_credentials,
+    hash_password,
     login as auth_login,
     logout as auth_logout,
     require_admin_api,
@@ -52,7 +53,7 @@ from .settings_store import (
 )
 from .execution.topstep import TopstepBroker
 from .signal_router import _topstep_token_sink, build_broker
-from .symbol_map import SymbolMap
+from .symbol_map import SymbolMap, parse_form_mappings
 from .webhook import WebhookHandler
 
 
@@ -901,6 +902,112 @@ def create_app() -> FastAPI:
         return _flash_redirect("/settings/broker", msg, kind="ok")
 
     @app.get(
+        "/settings/profile",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
+    def page_settings_profile(request: Request) -> HTMLResponse:
+        ctx = _page_ctx(request)
+        stored_hash = settings.admin_password_hash or ""
+        ctx.update(
+            {
+                "profile": {
+                    "username": settings.admin_username or "",
+                    "password_uses_hash": bool(stored_hash),
+                    "password_min_length": 10,
+                }
+            }
+        )
+        return templates.TemplateResponse(
+            request, "settings_profile.html", ctx
+        )
+
+    @app.post(
+        "/settings/profile",
+        dependencies=[Depends(require_admin_page)],
+    )
+    def post_settings_profile(
+        current_password: str = Form(""),
+        new_username: str = Form(""),
+        new_password: str = Form(""),
+        confirm_password: str = Form(""),
+    ):
+        new_username = (new_username or "").strip()
+        new_password = new_password or ""
+        confirm_password = confirm_password or ""
+        # Always require the current password before changing anything —
+        # session-only is not enough since a hijacked tab could otherwise
+        # rotate credentials without proving knowledge of the current one.
+        if not check_credentials(
+            settings, settings.admin_username, current_password
+        ):
+            return _flash_redirect(
+                "/settings/profile",
+                "Current password is incorrect.",
+                kind="error",
+            )
+
+        if not new_username:
+            return _flash_redirect(
+                "/settings/profile",
+                "Username cannot be empty.",
+                kind="error",
+            )
+
+        changing_password = bool(new_password or confirm_password)
+        if changing_password:
+            if new_password != confirm_password:
+                return _flash_redirect(
+                    "/settings/profile",
+                    "New password and confirmation do not match.",
+                    kind="error",
+                )
+            if len(new_password) < 10:
+                return _flash_redirect(
+                    "/settings/profile",
+                    "New password must be at least 10 characters.",
+                    kind="error",
+                )
+
+        try:
+            username_value = settings_store.update_typed(
+                "ADMIN_USERNAME", new_username
+            )
+        except SettingsValidationError as exc:
+            return _flash_redirect(
+                "/settings/profile", str(exc), kind="error"
+            )
+        settings_store.apply_to_settings(
+            settings, "ADMIN_USERNAME", username_value
+        )
+
+        if changing_password:
+            try:
+                hashed = hash_password(new_password)
+                stored_hash = settings_store.update_typed(
+                    "ADMIN_PASSWORD_HASH", hashed
+                )
+            except (SettingsValidationError, ValueError) as exc:
+                return _flash_redirect(
+                    "/settings/profile", str(exc), kind="error"
+                )
+            settings_store.apply_to_settings(
+                settings, "ADMIN_PASSWORD_HASH", stored_hash
+            )
+            # The plaintext fallback is now stale — clear the in-memory
+            # value so a future check_credentials never accepts it again.
+            settings.admin_password = ""
+            log.info("admin profile updated (password changed)")
+        else:
+            log.info("admin profile updated (username only)")
+
+        return _flash_redirect(
+            "/settings/profile",
+            "Profile updated.",
+            kind="ok",
+        )
+
+    @app.get(
         "/settings/risk",
         response_class=HTMLResponse,
         dependencies=[Depends(require_admin_page)],
@@ -992,6 +1099,190 @@ def create_app() -> FastAPI:
         )
 
     @app.get(
+        "/settings/symbols",
+        response_class=HTMLResponse,
+        dependencies=[Depends(require_admin_page)],
+    )
+    def page_settings_symbols(request: Request) -> HTMLResponse:
+        ctx = _page_ctx(request)
+        ctx.update(
+            {
+                "mappings": symbol_map.all_mappings(),
+                "symbols_path": str(settings.symbols_map_abs_path),
+            }
+        )
+        return templates.TemplateResponse(
+            request, "settings_symbols.html", ctx
+        )
+
+    @app.post(
+        "/settings/symbols",
+        dependencies=[Depends(require_admin_page)],
+    )
+    async def post_settings_symbols(request: Request):
+        form = await request.form()
+        tickers = form.getlist("ticker")
+        papers = form.getlist("paper")
+        topsteps = form.getlist("topstep")
+        tradovates = form.getlist("tradovate")
+        try:
+            mappings = parse_form_mappings(
+                tickers, papers, topsteps, tradovates
+            )
+        except ValueError as exc:
+            return _flash_redirect("/settings/symbols", str(exc), kind="error")
+        try:
+            symbol_map.replace_all(mappings)
+        except OSError as exc:
+            return _flash_redirect(
+                "/settings/symbols",
+                f"could not write {settings.symbols_map_abs_path}: {exc}",
+                kind="error",
+            )
+        msg = f"{len(mappings)} symbol mapping(s) saved."
+        return _flash_redirect("/settings/symbols", msg, kind="ok")
+
+    @app.post(
+        "/api/topstep/contracts/search",
+        dependencies=[Depends(require_admin_api)],
+    )
+    async def api_topstep_contracts_search(
+        request: Request,
+    ) -> JSONResponse:
+        """Proxy to Topstep ProjectX ``POST /api/Contract/search``.
+
+        Body: ``{"searchText": str, "live": bool}``. Returns the
+        normalized list of contracts (id / name / description / tickSize /
+        tickValue / activeContract / symbolId) so the Symbols page can
+        render a results table.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            body = {}
+        search_text = str(body.get("searchText") or "").strip()
+        live_flag = bool(body.get("live", False))
+        if not search_text:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "status": "missing_search_text",
+                    "message": "searchText is required",
+                    "contracts": [],
+                },
+            )
+        topstep = _topstep_adapter_for_admin()
+        if not topstep._has_required_credentials():
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "status": "missing_credentials",
+                    "message": "Topstep username/API key not configured",
+                    "contracts": [],
+                },
+            )
+        if not topstep._is_token_valid():
+            auth_result = topstep.authenticate()
+            if not auth_result.get("ok"):
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "ok": False,
+                        "status": auth_result.get("status", "auth_failed"),
+                        "http_status": auth_result.get("http_status"),
+                        "error_code": auth_result.get("error_code"),
+                        "error_message": auth_result.get("error_message"),
+                        "message": auth_result.get(
+                            "message", "topstep auth failed"
+                        ),
+                        "contracts": [],
+                    },
+                )
+        http_status, response = topstep._post_json(
+            "/api/Contract/search",
+            {"searchText": search_text, "live": live_flag},
+            auth=True,
+        )
+        if http_status == 0:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "status": "network_error",
+                    "message": (
+                        response
+                        if isinstance(response, str)
+                        else "topstep contract search network error"
+                    ),
+                    "contracts": [],
+                },
+            )
+        if not isinstance(response, dict):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "status": "contracts_failed",
+                    "http_status": http_status,
+                    "message": (
+                        f"topstep contract search returned non-JSON ({http_status})"
+                    ),
+                    "contracts": [],
+                },
+            )
+        if http_status >= 400 or response.get("success") is False:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "status": "contracts_failed",
+                    "http_status": http_status,
+                    "error_code": response.get("errorCode"),
+                    "error_message": response.get("errorMessage"),
+                    "message": (
+                        str(response.get("errorMessage"))
+                        if response.get("errorMessage")
+                        else f"topstep contract search failed ({http_status})"
+                    ),
+                    "contracts": [],
+                },
+            )
+        raw_contracts = response.get("contracts")
+        if not isinstance(raw_contracts, list):
+            raw_contracts = []
+        contracts: list[dict[str, Any]] = []
+        for entry in raw_contracts:
+            if not isinstance(entry, dict):
+                continue
+            contracts.append(
+                {
+                    "id": entry.get("id"),
+                    "name": entry.get("name"),
+                    "description": entry.get("description"),
+                    "tickSize": entry.get("tickSize"),
+                    "tickValue": entry.get("tickValue"),
+                    "activeContract": entry.get("activeContract"),
+                    "symbolId": entry.get("symbolId"),
+                }
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "status": "ok",
+                "http_status": http_status,
+                "message": f"{len(contracts)} contract(s)",
+                "searchText": search_text,
+                "live": live_flag,
+                "contracts": contracts,
+            },
+        )
+
+    @app.get(
         "/tradingview",
         response_class=HTMLResponse,
         dependencies=[Depends(require_admin_page)],
@@ -1024,15 +1315,41 @@ def create_app() -> FastAPI:
             },
             indent=2,
         )
+        # Build the public Xiznit-style webhook URLs the operator needs
+        # to paste into TradingView. The dashboard already requires an
+        # admin session, so embedding the full secret here is OK — the
+        # whole point of the page is to let the operator copy it.
+        if secret_set:
+            xiznit_url_local = (
+                f"http://{settings.app_host}:{settings.app_port}"
+                f"/webhooks/tradingview?secret={secret}&symbol={{{{ticker}}}}"
+            )
+            xiznit_url_tunnel = (
+                "https://YOUR-TUNNEL-URL/webhooks/tradingview"
+                f"?secret={secret}&symbol={{{{ticker}}}}"
+            )
+        else:
+            xiznit_url_local = (
+                f"http://{settings.app_host}:{settings.app_port}"
+                "/webhooks/tradingview?secret=<set a secret above>"
+                "&symbol={{ticker}}"
+            )
+            xiznit_url_tunnel = (
+                "https://YOUR-TUNNEL-URL/webhooks/tradingview"
+                "?secret=<set a secret above>&symbol={{ticker}}"
+            )
         ctx.update(
             {
                 "webhook_url": webhook_url,
                 "host": settings.app_host,
                 "port": settings.app_port,
                 "secret_set": secret_set,
+                "secret_value": secret if secret_set else "",
                 "secret_preview": secret_preview,
                 "alert_template": alert_template,
                 "allowed_symbols": list(settings.allowed_symbols),
+                "xiznit_url_local": xiznit_url_local,
+                "xiznit_url_tunnel": xiznit_url_tunnel,
             }
         )
         return templates.TemplateResponse(request, "tradingview.html", ctx)
@@ -1065,9 +1382,12 @@ def create_app() -> FastAPI:
         settings_store.apply_to_settings(
             settings, "TRADINGVIEW_WEBHOOK_SECRET", new_secret
         )
+        # Never write the actual secret to the logs. We log only that a
+        # regeneration happened so the audit trail is intact.
+        log.info("tradingview webhook secret regenerated")
         return _flash_redirect(
             "/tradingview",
-            "Generated a new webhook secret. Update your TradingView alerts.",
+            "Webhook secret regenerated. Update both TradingView alert webhook URLs.",
             kind="ok",
         )
 

@@ -69,8 +69,11 @@ Rejection rules:
 - If a secret is present but doesn't match `TRADINGVIEW_WEBHOOK_SECRET` →
   `invalid_secret`
 
-The secret is never logged or echoed back. Use a long random value
-(`/tradingview` page → "Generate" button).
+The secret is never logged or echoed back. Use a long random value —
+the **`/tradingview`** page in the dashboard lets you regenerate one and
+copy it from a read-only field. After regenerating, update **both**
+TradingView alert webhook URLs (Alert 1 and Alert 2) so the
+`?secret=…` query parameter matches the new value.
 
 ### Why `&symbol={{ticker}}` is helpful
 

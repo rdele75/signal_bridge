@@ -195,10 +195,8 @@ def build_market_order_payload(
             action=action,
             provider=provider,
             message=(
-                f"no explicit Topstep contract id configured for "
-                f"{signal.symbol!r} — add an entry under "
-                f"config/symbols.json: \"{signal.symbol}\": "
-                f"{{\"topstep\": \"<ProjectX contract id>\"}}"
+                f"Topstep contract id missing for {signal.symbol}. "
+                f"Add it in Configuration > Symbols."
             ),
         )
 

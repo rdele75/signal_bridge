@@ -104,10 +104,11 @@ code {
 }
 .sidebar-nav .section-label {
   color: var(--fg-mute);
-  font-size: 10.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   padding: 14px 10px 6px;
+  font-weight: 600;
 }
 .sidebar-nav a {
   display: flex;
@@ -116,8 +117,11 @@ code {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   color: var(--fg-dim);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
+}
+.sidebar-nav .nav-group-body a {
+  font-size: 13.5px;
 }
 .sidebar-nav a:hover { background: var(--bg-2); color: var(--fg); }
 .sidebar-nav a.active {
@@ -747,18 +751,32 @@ details.collapsible > summary {
 details.collapsible > summary::-webkit-details-marker { display: none; }
 details.collapsible > summary {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
+  padding: 6px 4px 6px 4px;
+  border-radius: var(--radius-sm);
 }
+details.collapsible > summary:hover {
+  background: rgba(124,140,255,0.06);
+}
+/* Visible chevron indicator. Right-pointing when collapsed, down-
+   pointing when expanded — matches the sidebar nav-group affordance. */
 details.collapsible > summary::after {
-  content: "›";
-  color: var(--fg-mute);
-  font-size: 16px;
+  content: "▸";
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  margin-left: 8px;
+  flex-shrink: 0;
   transition: transform 0.15s ease;
   transform: rotate(0deg);
+  display: inline-block;
 }
-details.collapsible[open] > summary::after { transform: rotate(90deg); }
+details.collapsible[open] > summary::after {
+  content: "▾";
+  transform: rotate(0deg);
+}
 details.collapsible > summary:hover h3 { color: var(--accent); }
 .collapsible-body { padding-top: 10px; }
 

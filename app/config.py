@@ -73,7 +73,9 @@ class Settings(BaseModel):
     )
 
     allowed_symbols: List[str] = Field(
-        default_factory=lambda: _csv("ALLOWED_SYMBOLS", ["MES1!", "MNQ1!"])
+        default_factory=lambda: _csv(
+            "ALLOWED_SYMBOLS", ["MNQ1!", "MES1!", "NQ1!", "ES1!"]
+        )
     )
 
     max_contracts_per_trade: int = Field(
@@ -218,6 +220,11 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv(
             "ADMIN_PASSWORD", "change_me_admin_password"
         )
+    )
+    # PBKDF2-SHA256 hash written by /settings/profile. When set, the
+    # plaintext ``admin_password`` value is ignored.
+    admin_password_hash: str = Field(
+        default_factory=lambda: os.getenv("ADMIN_PASSWORD_HASH", "")
     )
     session_secret: str = Field(
         default_factory=lambda: os.getenv(

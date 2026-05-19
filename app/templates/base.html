@@ -28,9 +28,9 @@
        collapsible <details> groups, collapsed by default. A group auto-
        expands when the current path lives inside it so the active item
        is always visible after navigation. #}
-    {% set cfg_paths   = ['/settings/broker', '/settings/risk', '/tradingview'] %}
+    {% set cfg_paths   = ['/settings/broker', '/settings/risk', '/tradingview', '/settings/symbols'] %}
     {% set act_paths   = ['/journal', '/metrics'] %}
-    {% set sys_paths   = ['/logs', '/system'] %}
+    {% set sys_paths   = ['/logs', '/system', '/settings/profile'] %}
     <nav class="sidebar-nav">
       <div class="section-label">Overview</div>
       <a href="/"                class="{{ 'active' if path == '/' else '' }}">Dashboard</a>
@@ -38,9 +38,10 @@
       <details class="nav-group" {% if path in cfg_paths %}open{% endif %}>
         <summary class="section-label nav-group-toggle">Configuration</summary>
         <div class="nav-group-body">
-          <a href="/settings/broker" class="{{ 'active' if path == '/settings/broker' else '' }}">Broker</a>
-          <a href="/settings/risk"   class="{{ 'active' if path == '/settings/risk' else '' }}">Risk</a>
-          <a href="/tradingview"     class="{{ 'active' if path == '/tradingview' else '' }}">TradingView</a>
+          <a href="/settings/broker"  class="{{ 'active' if path == '/settings/broker' else '' }}">Broker</a>
+          <a href="/settings/risk"    class="{{ 'active' if path == '/settings/risk' else '' }}">Risk</a>
+          <a href="/tradingview"      class="{{ 'active' if path == '/tradingview' else '' }}">TradingView</a>
+          <a href="/settings/symbols" class="{{ 'active' if path == '/settings/symbols' else '' }}">Symbols</a>
         </div>
       </details>
 
@@ -55,8 +56,9 @@
       <details class="nav-group" {% if path in sys_paths %}open{% endif %}>
         <summary class="section-label nav-group-toggle">System</summary>
         <div class="nav-group-body">
-          <a href="/logs"            class="{{ 'active' if path == '/logs' else '' }}">Logs</a>
-          <a href="/system"          class="{{ 'active' if path == '/system' else '' }}">System</a>
+          <a href="/logs"             class="{{ 'active' if path == '/logs' else '' }}">Logs</a>
+          <a href="/system"           class="{{ 'active' if path == '/system' else '' }}">System</a>
+          <a href="/settings/profile" class="{{ 'active' if path == '/settings/profile' else '' }}">Profile</a>
         </div>
       </details>
     </nav>

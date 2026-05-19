@@ -20,9 +20,13 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Iterable, Optional
 
 log = logging.getLogger("signalbridge.symbol_map")
+
+
+# Provider columns the UI knows how to edit.
+KNOWN_PROVIDERS: tuple[str, ...] = ("paper", "topstep", "tradovate")
 
 
 class SymbolMap:
@@ -41,6 +45,11 @@ class SymbolMap:
             return
         if isinstance(data, dict):
             self._map = data
+
+    def reload(self) -> None:
+        """Re-read the underlying file. Safe to call after a save from the UI."""
+        self._map = {}
+        self._load()
 
     def resolve(self, ticker: Optional[str], provider: str) -> Optional[str]:
         """Return the broker-specific symbol for `(ticker, provider)`.
@@ -76,3 +85,92 @@ class SymbolMap:
             if isinstance(mapped, str) and mapped:
                 return mapped
         return None
+
+    # ------------------------------------------------------------------
+    # UI helpers — used by /settings/symbols
+    # ------------------------------------------------------------------
+
+    def all_mappings(self) -> Dict[str, Dict[str, str]]:
+        """Snapshot of the current mappings (excluding metadata keys).
+
+        The on-disk file may carry sentinel keys like ``_comment`` /
+        ``_warning`` so operators can leave themselves notes. Those are
+        preserved by ``replace_all`` but filtered out here so the UI
+        doesn't display them as rows.
+        """
+        out: Dict[str, Dict[str, str]] = {}
+        for ticker, entry in self._map.items():
+            if ticker.startswith("_"):
+                continue
+            if not isinstance(entry, dict):
+                continue
+            row: Dict[str, str] = {}
+            for provider in KNOWN_PROVIDERS:
+                value = entry.get(provider, "")
+                row[provider] = str(value) if isinstance(value, str) else ""
+            out[ticker] = row
+        return out
+
+    def replace_all(self, mappings: Dict[str, Dict[str, str]]) -> None:
+        """Replace the on-disk mapping with ``mappings``. Preserves any
+        underscore-prefixed metadata keys already in the file."""
+        normalized: Dict[str, Any] = {}
+        # Carry forward metadata keys (``_comment`` / ``_warning``).
+        for key, value in self._map.items():
+            if key.startswith("_"):
+                normalized[key] = value
+        for ticker, row in mappings.items():
+            if not ticker:
+                continue
+            cleaned: Dict[str, str] = {}
+            for provider in KNOWN_PROVIDERS:
+                value = (row or {}).get(provider, "")
+                cleaned[provider] = str(value or "").strip()
+            normalized[ticker] = cleaned
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(normalized, indent=2) + "\n")
+        self._map = normalized
+
+
+def parse_form_mappings(
+    tickers: Iterable[str],
+    paper_values: Iterable[str],
+    topstep_values: Iterable[str],
+    tradovate_values: Iterable[str],
+) -> Dict[str, Dict[str, str]]:
+    """Turn parallel form arrays into a normalized mapping dict.
+
+    Validation rules:
+      * TradingView ticker is required (rows with a blank ticker are dropped).
+      * Paper symbol defaults to the ticker when blank.
+      * Topstep / Tradovate symbols may be blank.
+
+    Raises ``ValueError`` when a row is malformed beyond a blank ticker.
+    """
+    tickers = list(tickers)
+    paper_values = list(paper_values)
+    topstep_values = list(topstep_values)
+    tradovate_values = list(tradovate_values)
+
+    length = len(tickers)
+    if not (
+        len(paper_values) == length
+        and len(topstep_values) == length
+        and len(tradovate_values) == length
+    ):
+        raise ValueError("symbol form arrays are mis-aligned")
+
+    out: Dict[str, Dict[str, str]] = {}
+    for idx in range(length):
+        ticker = (tickers[idx] or "").strip()
+        if not ticker:
+            continue
+        paper = (paper_values[idx] or "").strip() or ticker
+        topstep = (topstep_values[idx] or "").strip()
+        tradovate = (tradovate_values[idx] or "").strip()
+        out[ticker] = {
+            "paper": paper,
+            "topstep": topstep,
+            "tradovate": tradovate,
+        }
+    return out

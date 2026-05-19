@@ -27,23 +27,46 @@
         <span class="badge badge-bad">unset / default</span>
       {% endif %}
     </div>
-    <div class="card-sub">persisted in SQLite · edit below</div>
+    <div class="card-sub">persisted in SQLite · copy below</div>
   </div>
 </section>
 
 <section class="card section">
   <div class="section-head">
-    <h3>Update webhook secret</h3>
-    <span class="hint">takes effect on the next signal</span>
+    <h3>Webhook secret</h3>
+    <span class="hint">copy this into your TradingView alert URL</span>
   </div>
-  <form method="post" action="/tradingview/secret" class="form">
+
+  {# Current secret as a copyable input. The dashboard already requires
+     admin auth, so showing the actual value is intentional — the
+     operator has to paste it into TradingView. The value is never
+     written to logs. #}
+  <div class="form-row">
+    <label for="current_secret">Current webhook secret</label>
+    <div style="display: flex; gap: 6px; align-items: stretch;">
+      <input type="text" id="current_secret" name="current_secret"
+             readonly autocomplete="off"
+             value="{{ secret_value }}"
+             placeholder="(no secret set — generate or paste one below)"
+             style="flex: 1;" />
+      <button type="button" class="btn" id="btn-copy-secret"
+              data-copy-target="current_secret">Copy</button>
+    </div>
+    <p class="muted" style="margin: 4px 0 0;">
+      Use this value in the TradingView alert <em>Webhook URL</em>
+      (as <code>?secret=…</code>) or in the JSON body's <code>secret</code> field.
+    </p>
+  </div>
+
+  <form method="post" action="/tradingview/secret" class="form" style="margin-top: 12px;">
     <div class="form-row">
-      <label for="webhook_secret">Webhook secret</label>
+      <label for="webhook_secret">Set a new secret manually</label>
       <input type="text" id="webhook_secret" name="webhook_secret"
              autocomplete="off" minlength="8"
-             placeholder="paste a long random string">
+             placeholder="paste a long random string" />
       <p class="muted" style="margin: 4px 0 0;">
-        Minimum 8 characters. Update the matching <code>secret</code> field in your TradingView alert body.
+        Minimum 8 characters. Updates the matching <code>secret</code> immediately —
+        no restart required.
       </p>
     </div>
     <div class="btn-row">
@@ -54,11 +77,72 @@
   <form method="post" action="/tradingview/secret/regenerate" class="form" style="margin-top: 12px;">
     <p class="muted" style="margin: 0 0 6px;">
       Or have SignalBridge generate one for you (URL-safe, cryptographically strong).
+      The new value appears in the field above immediately.
     </p>
     <div class="btn-row">
       <button type="submit" class="btn">Regenerate strong secret</button>
     </div>
   </form>
+</section>
+
+<section class="card section">
+  <div class="section-head">
+    <h3>Xiznit Universal ORB — native strategy alerts</h3>
+    <span class="hint">secret goes in the Webhook URL, not the message body</span>
+  </div>
+  <p class="muted" style="margin: 0 0 10px;">
+    The Xiznit Universal ORB strategy emits TradingView's own
+    <code>{{ '{{strategy.order.alert_message}}' }}</code> and
+    <code>{{ '{{strategy.alert_message}}' }}</code> placeholders. Those bodies don't
+    carry our shared secret, so SignalBridge accepts the secret as a
+    <code>?secret=…</code> query parameter on the Webhook URL instead.
+  </p>
+
+  <h4 style="margin: 14px 0 6px;">Alert 1 — Entries &amp; TPs</h4>
+  <dl class="kv">
+    <dt>Condition</dt>
+    <dd>Xiznit Universal ORB → <em>Order fills</em></dd>
+    <dt>Webhook URL</dt>
+    <dd>
+      <div class="code-frame">
+        <span class="copy-hint">url</span>
+        <pre class="code">{{ xiznit_url_tunnel }}</pre>
+      </div>
+    </dd>
+    <dt>Message</dt>
+    <dd>
+      <div class="code-frame">
+        <span class="copy-hint">message</span>
+        <pre class="code">{{ '{{strategy.order.alert_message}}' }}</pre>
+      </div>
+    </dd>
+  </dl>
+
+  <h4 style="margin: 18px 0 6px;">Alert 2 — SL &amp; Exits</h4>
+  <dl class="kv">
+    <dt>Condition</dt>
+    <dd>Xiznit Universal ORB → <em>alert() function calls</em></dd>
+    <dt>Webhook URL</dt>
+    <dd>
+      <div class="code-frame">
+        <span class="copy-hint">url</span>
+        <pre class="code">{{ xiznit_url_tunnel }}</pre>
+      </div>
+    </dd>
+    <dt>Message</dt>
+    <dd>
+      <div class="code-frame">
+        <span class="copy-hint">message</span>
+        <pre class="code">{{ '{{strategy.alert_message}}' }}</pre>
+      </div>
+    </dd>
+  </dl>
+
+  <p class="muted" style="margin: 12px 0 0;">
+    For LAN / Tailscale testing, swap <code>YOUR-TUNNEL-URL</code> for your
+    machine's host:
+    <code class="mono">http://{{ host }}:{{ port }}/webhooks/tradingview?secret=&lt;current secret&gt;&amp;symbol={{ '{{ticker}}' }}</code>.
+  </p>
 </section>
 
 <section class="card section">
@@ -96,12 +180,13 @@
 <section class="card section">
   <details class="collapsible">
     <summary class="section-head collapsible-toggle">
-      <h3>Alert JSON template</h3>
+      <h3>Generic / manual alert JSON template</h3>
       <span class="hint">click to expand</span>
     </summary>
     <div class="collapsible-body">
       <p class="muted" style="margin: 0 0 6px;">
-        Paste this into the TradingView alert's <em>Message</em> field. Replace
+        <strong>Not the Xiznit strategy template.</strong> Paste this into the
+        TradingView alert's <em>Message</em> field for hand-written alerts. Replace
         <code>&lt;your TRADINGVIEW_WEBHOOK_SECRET&gt;</code> with the actual secret saved above.
       </p>
       <div class="code-frame">
@@ -161,7 +246,7 @@
       <table class="mini">
         <thead><tr><th>Field</th><th>Required</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>secret</code></td><td>yes</td><td>must match <code>TRADINGVIEW_WEBHOOK_SECRET</code></td></tr>
+          <tr><td><code>secret</code></td><td>yes</td><td>JSON body, <code>?secret=…</code>, or <code>X-SignalBridge-Secret</code> header</td></tr>
           <tr><td><code>symbol</code></td><td>yes</td><td>must be on allow-list (e.g. <code>MES1!</code>)</td></tr>
           <tr><td><code>action</code></td><td>yes</td><td>buy / long / sell / short / cover / exit / close</td></tr>
           <tr><td><code>contracts</code></td><td>no</td><td>defaults to 1</td></tr>
@@ -180,4 +265,30 @@
   public URL as your alert webhook URL instead of the local one above. See
   <code>app/tunnel/</code> for notes.
 </div>
+
+<script>
+(function () {
+  var btn = document.getElementById('btn-copy-secret');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    var targetId = btn.getAttribute('data-copy-target');
+    var input = document.getElementById(targetId);
+    if (!input || !input.value) return;
+    var done = function () {
+      var prev = btn.textContent;
+      btn.textContent = 'Copied';
+      window.setTimeout(function () { btn.textContent = prev; }, 1200);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(input.value).then(done).catch(function () {
+        input.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+      });
+    } else {
+      input.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+    }
+  });
+})();
+</script>
 {% endblock %}
