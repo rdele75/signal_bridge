@@ -64,7 +64,14 @@ STATIC_DIR = _HERE / "static"
 
 _DEMO_CONFIRM_TOKEN = "DEMO_ONLY"
 _LIVE_CONFIRM_TOKEN = "LIVE_CONFIRMED"
-_LIVE_CONFIRMATION_PHRASE = "I_UNDERSTAND_LIVE_ORDERS"
+# Short, deliberate phrase the operator types in the UI to engage live
+# trading. The endpoint validates this typed value, then writes the
+# longer ``_LIVE_STORED_TOKEN`` into ``LIVE_TRADING_CONFIRM`` — so the
+# in-memory broker safety check (which expects the long token) and the
+# audit log keep their grep-stable string while the UX uses a short
+# phrase.
+_LIVE_CONFIRMATION_PHRASE = "engage"
+_LIVE_STORED_TOKEN = "I_UNDERSTAND_LIVE_ORDERS"
 
 
 def _live_execution_view(
@@ -89,7 +96,7 @@ def _live_execution_view(
         and bool(settings.enable_topstep_order_execution)
         and (settings.topstep_execution_confirm or "") == _LIVE_CONFIRM_TOKEN
         and bool(settings.enable_live_trading)
-        and (settings.live_trading_confirm or "") == _LIVE_CONFIRMATION_PHRASE
+        and (settings.live_trading_confirm or "") == _LIVE_STORED_TOKEN
         and bool(settings.live_trading_account_ack)
         and bool(selected_account_id)
         and not (
@@ -1121,9 +1128,12 @@ def create_app() -> FastAPI:
         """Arm Topstep LIVE/funded execution.
 
         Requires the operator to type the exact confirmation phrase
-        ``I_UNDERSTAND_LIVE_ORDERS`` and explicitly acknowledge the
-        selected account. Flips every gate together so a future request
-        sees a consistent state. Never touches credentials/tokens.
+        ``engage`` and explicitly acknowledge the selected account.
+        Flips every gate together so a future request sees a consistent
+        state. Never touches credentials/tokens. The persisted
+        ``LIVE_TRADING_CONFIRM`` value is the long-form internal token
+        the broker safety check expects — the typed phrase is the
+        UX-facing surface, not the storage layer.
         """
         try:
             body = await request.json()
@@ -1218,7 +1228,7 @@ def create_app() -> FastAPI:
                 "ENABLE_LIVE_TRADING", "true"
             )
             live_confirm = settings_store.update_typed(
-                "LIVE_TRADING_CONFIRM", _LIVE_CONFIRMATION_PHRASE
+                "LIVE_TRADING_CONFIRM", _LIVE_STORED_TOKEN
             )
             live_ack = settings_store.update_typed(
                 "LIVE_TRADING_ACCOUNT_ACK", "true"
@@ -1787,6 +1797,486 @@ def create_app() -> FastAPI:
                 ),
                 "message": (
                     "Execution disabled. App is back in safe dry-run mode."
+                ),
+            },
+        )
+
+    @app.post(
+        "/api/topstep/smoke-test",
+        dependencies=[Depends(require_admin_api)],
+    )
+    async def api_topstep_smoke_test(request: Request) -> JSONResponse:
+        """Dual-mode smoke test of the Topstep order-routing pipeline.
+
+        Body (all optional):
+          * ``symbol`` — defaults to ``MES1!``.
+          * ``contracts`` — defaults to 1.
+          * ``execute`` — when ``true``, actually submit a small enter +
+            exit pair via ``submit_market_order``. Requires every
+            execution gate to be armed first, and ``confirmation`` to
+            equal exactly ``smoke``. Default ``false`` (preview only).
+          * ``confirmation`` — required when ``execute`` is true.
+
+        Behaviour:
+          * ``execute=false`` → builds BUY entry + SELL exit previews
+            via ``build_order_preview``. Never calls
+            ``/api/Order/place``. Returns ``would_submit=false``.
+          * ``execute=true`` → calls ``submit_market_order`` twice
+            (BUY entry, then SELL exit). Relies on the broker safety
+            check for the demo/live gate stack; refuses cleanly if any
+            gate is open. Returns ``would_submit=true`` plus both
+            broker responses, and journals each action.
+        """
+        from .schemas import NormalizedSignal
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        body = body if isinstance(body, dict) else {}
+
+        symbol = str(body.get("symbol") or "").strip() or "MES1!"
+        try:
+            contracts = int(body.get("contracts") or 1)
+        except (TypeError, ValueError):
+            contracts = 1
+        if contracts < 1:
+            contracts = 1
+        execute = bool(body.get("execute"))
+        confirmation = str(body.get("confirmation") or "").strip()
+
+        checks: list[dict[str, Any]] = []
+
+        provider_ok = settings.resolved_provider == "topstep"
+        checks.append(
+            {
+                "name": "broker_provider",
+                "ok": provider_ok,
+                "detail": settings.resolved_provider,
+            }
+        )
+        account_id = settings.resolved_account_id or ""
+        account_ok = bool(account_id)
+        checks.append(
+            {
+                "name": "selected_account",
+                "ok": account_ok,
+                "detail": account_id or None,
+            }
+        )
+        broker_symbol = None
+        if symbol_map is not None:
+            try:
+                broker_symbol = symbol_map.resolve_explicit(
+                    symbol, "topstep"
+                )
+            except Exception:  # pragma: no cover - defensive
+                broker_symbol = None
+        mapping_ok = bool(broker_symbol)
+        checks.append(
+            {
+                "name": "symbol_mapping",
+                "ok": mapping_ok,
+                "detail": broker_symbol or None,
+            }
+        )
+
+        # ---- execute=false: preview-only path ----
+        if not execute:
+            entry_preview: Optional[dict[str, Any]] = None
+            exit_preview: Optional[dict[str, Any]] = None
+            if (
+                provider_ok and account_ok and mapping_ok
+                and isinstance(broker, TopstepBroker)
+            ):
+                entry_signal = NormalizedSignal(
+                    source="smoke_test",
+                    strategy="dashboard_smoke_test",
+                    symbol=symbol,
+                    broker_symbol=broker_symbol,
+                    exchange=None,
+                    action="BUY",
+                    contracts=contracts,
+                    price=None,
+                    order_id=None,
+                    comment="smoke_test_entry",
+                    timeframe=None,
+                    raw={},
+                )
+                try:
+                    entry_preview = broker.build_order_preview(
+                        entry_signal, symbol_map=symbol_map
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    entry_preview = {"ok": False, "error": str(exc)}
+                checks.append(
+                    {
+                        "name": "entry_preview_built",
+                        "ok": bool(entry_preview)
+                        and entry_preview.get("ok") is not False,
+                        "detail": (
+                            entry_preview.get("status")
+                            if entry_preview
+                            else None
+                        ),
+                    }
+                )
+
+                exit_signal = NormalizedSignal(
+                    source="smoke_test",
+                    strategy="dashboard_smoke_test",
+                    symbol=symbol,
+                    broker_symbol=broker_symbol,
+                    exchange=None,
+                    action="SELL",
+                    contracts=contracts,
+                    price=None,
+                    order_id=None,
+                    comment="smoke_test_exit",
+                    timeframe=None,
+                    raw={},
+                )
+                try:
+                    exit_preview = broker.build_order_preview(
+                        exit_signal, symbol_map=symbol_map
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    exit_preview = {"ok": False, "error": str(exc)}
+                checks.append(
+                    {
+                        "name": "exit_preview_built",
+                        "ok": bool(exit_preview)
+                        and exit_preview.get("ok") is not False,
+                        "detail": (
+                            exit_preview.get("status")
+                            if exit_preview
+                            else None
+                        ),
+                    }
+                )
+
+            ok = all(c["ok"] for c in checks)
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": ok,
+                    "status": "smoke_test_ok" if ok else "smoke_test_failed",
+                    "execute": False,
+                    "symbol": symbol,
+                    "broker_symbol": broker_symbol,
+                    "account_id": account_id or None,
+                    "contracts": contracts,
+                    "execution_mode": settings.execution_mode,
+                    "entry_preview": entry_preview,
+                    "exit_preview": exit_preview,
+                    "checks": checks,
+                    "would_submit": False,
+                    "message": (
+                        "Dry-run smoke test passed — entry + exit "
+                        "payloads built. No broker order was sent."
+                        if ok
+                        else "Dry-run smoke test failed — review checks "
+                             "for the first blocking gate. No broker "
+                             "order was sent."
+                    ),
+                },
+            )
+
+        # ---- execute=true: real submission path ----
+        if confirmation != "smoke":
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "invalid_confirmation",
+                    "execute": True,
+                    "would_submit": False,
+                    "message": (
+                        "confirmation must equal 'smoke' to run the "
+                        "live smoke test"
+                    ),
+                },
+            )
+
+        if not provider_ok:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "broker_provider_not_topstep",
+                    "execute": True,
+                    "would_submit": False,
+                    "checks": checks,
+                    "message": (
+                        f"BROKER_PROVIDER is {settings.resolved_provider!r}"
+                        " — set it to 'topstep' before running the live"
+                        " smoke test"
+                    ),
+                },
+            )
+        if not account_ok:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "no_selected_account",
+                    "execute": True,
+                    "would_submit": False,
+                    "checks": checks,
+                    "message": (
+                        "no Topstep account selected — set "
+                        "SELECTED_ACCOUNT_ID / TOPSTEP_ACCOUNT_ID first"
+                    ),
+                },
+            )
+        if not mapping_ok:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "symbol_mapping_missing",
+                    "execute": True,
+                    "would_submit": False,
+                    "checks": checks,
+                    "message": (
+                        f"no Topstep contract id for {symbol!r} — add it "
+                        "in Configuration > Symbols"
+                    ),
+                },
+            )
+        if kill_switch.is_active():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "kill_switch_active",
+                    "execute": True,
+                    "would_submit": False,
+                    "checks": checks,
+                    "message": (
+                        "kill switch is active — deactivate it before "
+                        "running the live smoke test"
+                    ),
+                },
+            )
+        if contracts > max(1, settings.max_contracts_per_trade):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "contracts_above_max",
+                    "execute": True,
+                    "would_submit": False,
+                    "checks": checks,
+                    "message": (
+                        f"contracts={contracts} exceeds "
+                        f"MAX_CONTRACTS_PER_TRADE="
+                        f"{settings.max_contracts_per_trade}"
+                    ),
+                },
+            )
+        # Require execution to already be armed (demo or live). The
+        # broker safety check below will catch this too, but failing
+        # here gives a cleaner gate label.
+        if not settings.enable_topstep_order_execution:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "execution_not_armed",
+                    "execute": True,
+                    "would_submit": False,
+                    "checks": checks,
+                    "message": (
+                        "execution is not armed — apply demo/live first"
+                        " before running the live smoke test"
+                    ),
+                },
+            )
+        if not isinstance(broker, TopstepBroker):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "broker_provider_not_topstep",
+                    "execute": True,
+                    "would_submit": False,
+                    "checks": checks,
+                    "message": (
+                        f"active broker is {broker.provider!r} — restart"
+                        " with BROKER_PROVIDER=topstep to run the live"
+                        " smoke test"
+                    ),
+                },
+            )
+
+        # Build signals + submit. Rely on submit_market_order for the
+        # demo/live gate stack — it returns a structured refusal envelope
+        # if any gate is open.
+        entry_signal = NormalizedSignal(
+            source="smoke_test",
+            strategy="dashboard_smoke_test_entry",
+            symbol=symbol,
+            broker_symbol=broker_symbol,
+            exchange=None,
+            action="BUY",
+            contracts=contracts,
+            price=None,
+            order_id="smoke_test_entry",
+            comment="smoke_test entry",
+            timeframe=None,
+            raw={"smoke_test": True},
+        )
+        exit_signal = NormalizedSignal(
+            source="smoke_test",
+            strategy="dashboard_smoke_test_exit",
+            symbol=symbol,
+            broker_symbol=broker_symbol,
+            exchange=None,
+            action="SELL",
+            contracts=contracts,
+            price=None,
+            order_id="smoke_test_exit",
+            comment="smoke_test exit",
+            timeframe=None,
+            raw={"smoke_test": True},
+        )
+
+        entry_response = broker.submit_market_order(
+            entry_signal, symbol_map=symbol_map
+        )
+        # If the entry failed, do not submit the exit — leave whatever
+        # state the broker is in. The response makes the refusal clear.
+        entry_ok = bool(entry_response.get("accepted")) and bool(
+            entry_response.get("ok")
+        )
+
+        # Journal the entry attempt either way for audit.
+        try:
+            journal.record_signal(
+                source="admin",
+                strategy="smoke_test_entry",
+                symbol=symbol,
+                action="BUY",
+                contracts=contracts,
+                price=None,
+                order_id=entry_response.get("broker_order_id")
+                or entry_response.get("order_id"),
+                raw_payload={
+                    "event": "smoke_test_entry",
+                    "symbol": symbol,
+                    "broker_symbol": broker_symbol,
+                    "contracts": contracts,
+                    "execution_mode": settings.execution_mode,
+                },
+                decision="accepted" if entry_ok else "rejected",
+                rejection_reason=(
+                    None if entry_ok
+                    else str(entry_response.get("status") or "submit_failed")
+                ),
+                execution_mode=settings.execution_mode,
+                execution_result=entry_response,
+                broker_provider=settings.resolved_provider,
+                broker_symbol=broker_symbol,
+                timeframe=None,
+            )
+        except Exception:  # pragma: no cover - audit only
+            pass
+
+        exit_response: dict[str, Any]
+        if not entry_ok:
+            exit_response = {
+                "ok": False,
+                "accepted": False,
+                "status": "entry_failed_skipping_exit",
+                "would_submit": False,
+                "message": (
+                    "entry submission failed — exit not attempted"
+                ),
+            }
+        else:
+            exit_response = broker.submit_market_order(
+                exit_signal, symbol_map=symbol_map
+            )
+            try:
+                journal.record_signal(
+                    source="admin",
+                    strategy="smoke_test_exit",
+                    symbol=symbol,
+                    action="SELL",
+                    contracts=contracts,
+                    price=None,
+                    order_id=exit_response.get("broker_order_id")
+                    or exit_response.get("order_id"),
+                    raw_payload={
+                        "event": "smoke_test_exit",
+                        "symbol": symbol,
+                        "broker_symbol": broker_symbol,
+                        "contracts": contracts,
+                        "execution_mode": settings.execution_mode,
+                    },
+                    decision=(
+                        "accepted"
+                        if exit_response.get("accepted") and exit_response.get("ok")
+                        else "rejected"
+                    ),
+                    rejection_reason=(
+                        None
+                        if exit_response.get("accepted") and exit_response.get("ok")
+                        else str(
+                            exit_response.get("status") or "submit_failed"
+                        )
+                    ),
+                    execution_mode=settings.execution_mode,
+                    execution_result=exit_response,
+                    broker_provider=settings.resolved_provider,
+                    broker_symbol=broker_symbol,
+                    timeframe=None,
+                )
+            except Exception:  # pragma: no cover - audit only
+                pass
+
+        exit_ok = bool(exit_response.get("accepted")) and bool(
+            exit_response.get("ok")
+        )
+
+        log.warning(
+            "TOPSTEP SMOKE TEST EXECUTED: provider=%s mode=%s account=%s "
+            "symbol=%s contracts=%s entry_ok=%s exit_ok=%s",
+            settings.resolved_provider,
+            settings.execution_mode,
+            settings.resolved_account_id,
+            symbol,
+            contracts,
+            entry_ok,
+            exit_ok,
+        )
+
+        overall_ok = entry_ok and exit_ok
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": overall_ok,
+                "status": (
+                    "smoke_test_executed"
+                    if overall_ok
+                    else "smoke_test_partial"
+                ),
+                "execute": True,
+                "would_submit": True,
+                "symbol": symbol,
+                "broker_symbol": broker_symbol,
+                "account_id": account_id or None,
+                "contracts": contracts,
+                "execution_mode": settings.execution_mode,
+                "entry_response": entry_response,
+                "exit_response": exit_response,
+                "checks": checks,
+                "message": (
+                    "Smoke test executed — entry + exit submitted."
+                    if overall_ok
+                    else "Smoke test partial — see entry_response / "
+                         "exit_response for the failing leg."
                 ),
             },
         )
@@ -2368,7 +2858,12 @@ def create_app() -> FastAPI:
                 "live_execution": live_exec,
                 "exec_card_state": exec_card_state,
                 "exec_card_label": exec_card_label,
-                "execution_mode_options": ["paper", "demo", "live"],
+                # Dashboard dropdown intentionally omits "demo" — Topstep
+                # does not expose a freely-controllable paper/demo
+                # surface, and dry-run + live cover every real flow.
+                # The backend still accepts demo for sbctl / scripting
+                # paths.
+                "execution_mode_options": ["paper", "live"],
                 "ticker_watch": ticker_watch,
             }
         )

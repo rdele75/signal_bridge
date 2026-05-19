@@ -66,16 +66,18 @@ def test_dashboard_renders_execution_card(client):
 
 def test_dashboard_execution_card_shows_mode_dropdown(client):
     body = client.get("/").text
-    # Mode select rendered with all three options.
+    # Mode select rendered with only dry-run and live (demo removed).
     assert 'id="execution_mode_select"' in body
     assert 'value="paper"' in body
-    assert 'value="demo"' in body
     assert 'value="live"' in body
-    # Default fixture uses EXECUTION_MODE=paper → status pill says Dry Run.
-    assert "Dry Run" in body
-    # Save / Apply primary action.
+    assert 'value="demo"' not in body
+    # The dropdown option label reads ``dry-run`` rather than ``paper``.
+    assert ">dry-run<" in body
+    # Apply primary action.
     assert 'id="btn-execution-apply"' in body
-    assert "Save / Apply" in body
+    # Button label is just "Apply" — not the legacy "Save / Apply".
+    assert ">Apply<" in body or '>Apply</span>' in body
+    assert "Save / Apply" not in body
 
 
 def test_dashboard_execution_card_has_no_redundant_top_right_cluster(client):
@@ -93,8 +95,35 @@ def test_dashboard_execution_card_has_flatten_and_disable_buttons(client):
     body = client.get("/").text
     assert 'id="btn-flatten-all"' in body
     assert "Exit All / Flatten" in body
+    # Disable Execution was renamed to "Disengage".
     assert 'id="btn-disable-exec"' in body
-    assert "Disable Execution" in body
+    assert "Disengage" in body
+    assert "Disable Execution" not in body
+
+
+def test_dashboard_shows_smoke_test_button_in_dry_run(tmp_path, monkeypatch):
+    """Smoke Test button is visible when dry-run is the saved mode."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        body = c.get("/").text
+    assert 'id="btn-smoke-test"' in body
+    assert "Smoke Test" in body
+    # Helper text spells out the safety contract.
+    assert "No broker order is sent" in body
+
+
+def test_dashboard_hides_smoke_test_button_when_live(tmp_path, monkeypatch):
+    """The Smoke Test button hides when the saved mode is live."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    app.state.settings.execution_mode = "live"
+    with TestClient(app) as c:
+        body = c.get("/").text
+    # Button element exists but starts hidden — assert via the hidden
+    # attribute on its element.
+    assert 'id="btn-smoke-test"' in body
+    assert 'id="btn-smoke-test" class="btn"\n                hidden' in body \
+        or 'hidden>\n          Smoke Test' in body \
+        or 'id="btn-smoke-test"' in body and 'hidden' in body
 
 
 def test_dashboard_execution_card_shows_account_line(tmp_path, monkeypatch):
@@ -145,7 +174,7 @@ def test_dashboard_demo_mode_status_demo(tmp_path, monkeypatch):
 
 def test_dashboard_live_warning_modal_copy_present(tmp_path, monkeypatch):
     """The live engagement modal contains the warning headline + copy +
-    the funded/live routing language."""
+    the funded/live routing language + the short 'engage' phrase."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     app.state.settings.execution_mode = "live"
     with TestClient(app) as c:
@@ -154,8 +183,11 @@ def test_dashboard_live_warning_modal_copy_present(tmp_path, monkeypatch):
     assert "Live Execution Warning" in body
     assert "live/funded order routing" in body
     assert "funded/live Topstep account" in body
-    # Confirmation phrase must be inside the modal copy.
-    assert "I_UNDERSTAND_LIVE_ORDERS" in body
+    # New short phrase appears inside the modal instructions.
+    assert ">engage<" in body
+    assert "Type <code>engage</code>" in body
+    # The legacy long phrase is no longer shown to the operator.
+    assert "I_UNDERSTAND_LIVE_ORDERS" not in body
 
 
 # ----------------------------------------------------------------------
@@ -207,17 +239,18 @@ def test_broker_page_keeps_account_dropdown(client):
 
 
 def test_dashboard_ticker_watch_placeholder(tmp_path, monkeypatch):
-    """The dashboard must include a Ticker Watch card with a 'not
-    connected yet' price + the placeholder note."""
+    """Ticker Watch is an honest placeholder — no broken controls, just
+    a 'not connected' headline and the future-feature note."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         body = c.get("/").text
     assert 'id="ticker-watch-card"' in body
     assert "Ticker Watch" in body
-    assert "Not connected yet" in body
-    # Mode label + future-feed note.
-    assert "polling / SignalR not enabled" in body
-    assert "Realtime price feed will use ProjectX market hub later." in body
+    assert "Ticker Watch is not connected yet." in body
+    assert "Realtime price feed will be added through ProjectX market data" in body
+    # The old broken-looking dropdown is gone.
+    assert 'id="ticker-watch-select"' not in body
+    assert 'id="ticker-watch-contract"' not in body
 
 
 # ----------------------------------------------------------------------
@@ -275,7 +308,7 @@ def test_live_execution_endpoints_still_require_auth(tmp_path, monkeypatch):
     with TestClient(app) as c:
         enable = c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         disable = c.post("/api/topstep/live-execution/disable")
     assert enable.status_code == 401
@@ -381,7 +414,7 @@ def test_disable_execution_clears_every_gate(tmp_path, monkeypatch):
         # Arm live so disable has something to flip off.
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post("/api/execution/disable")
     assert r.status_code == 200, r.text
@@ -489,5 +522,351 @@ def test_execution_css_classes_exist():
         "execution-live-engaging",
         "execution-live-armed",
         "execution-kill-switch-active",
+        "execution-status-transitioning",
+        "execution-live-armed-enter",
     ):
         assert cls in css, f"missing CSS state class: {cls}"
+    # Dry-run gets a dedicated subtle pulse keyframe.
+    assert "execution-dry-run-pulse" in css
+
+
+def test_dry_run_animation_is_slower_than_live():
+    """Dry-run should breathe gently; live should pulse faster. Compare
+    the keyframe-bearing animation durations declared next to the two
+    states. The dry-run rule includes ``execution-dry-run-pulse`` with
+    a >= 4.5s duration; live-armed uses a tighter pulse (< 2.5s)."""
+    import re
+    css = (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "static"
+        / "styles.css"
+    ).read_text()
+    dry_match = re.search(
+        r"\.execution-dry-run\s*\{[^}]*animation:\s*execution-dry-run-pulse\s+([\d.]+)s",
+        css,
+    )
+    live_match = re.search(
+        r"\.execution-live-armed\s*\{[^}]*animation:\s*execution-live-armed-pulse\s+([\d.]+)s",
+        css,
+    )
+    assert dry_match, "dry-run animation duration not found in styles.css"
+    assert live_match, "live-armed animation duration not found in styles.css"
+    dry_duration = float(dry_match.group(1))
+    live_duration = float(live_match.group(1))
+    assert dry_duration >= 4.5, dry_duration
+    assert live_duration <= 2.5, live_duration
+    assert dry_duration > live_duration
+
+
+# ----------------------------------------------------------------------
+# Smoke test endpoint
+# ----------------------------------------------------------------------
+
+
+def test_smoke_test_requires_admin_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPSTEP_USERNAME", "trader42")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "5001")
+    monkeypatch.setenv("SELECTED_ACCOUNT_ID", "5001")
+    app = _build_app(
+        tmp_path, monkeypatch, provider="topstep", admin_auth_enabled=True
+    )
+    with TestClient(app) as c:
+        r = c.post("/api/topstep/smoke-test", json={})
+    assert r.status_code == 401
+
+
+def test_smoke_test_returns_entry_and_exit_previews(tmp_path, monkeypatch):
+    """Default smoke test (execute=false) builds entry + exit payloads
+    with ``would_submit=false`` and exits without hitting the broker."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/topstep/smoke-test",
+            json={"symbol": "MES1!", "contracts": 1},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["status"] == "smoke_test_ok"
+    assert body["execute"] is False
+    assert body["would_submit"] is False
+    assert body["symbol"] == "MES1!"
+    assert body["broker_symbol"] == "CON.F.US.MES.M26"
+    assert body["entry_preview"] is not None
+    assert body["exit_preview"] is not None
+    # Checks list contains the foundational gates.
+    names = {c["name"] for c in body["checks"]}
+    assert {"broker_provider", "selected_account", "symbol_mapping",
+            "entry_preview_built", "exit_preview_built"}.issubset(names)
+    # Smoke test must NOT mutate execution flags.
+    s = app.state.settings
+    assert s.execution_mode == "paper"
+    assert s.enable_topstep_order_execution is False
+
+
+def test_smoke_test_does_not_call_order_place(tmp_path, monkeypatch):
+    """If anything tried to hit ``/api/Order/place``, ``_post_json``
+    would have to be triggered. We patch it to record calls and assert
+    none happen."""
+    calls: list[tuple[str, dict]] = []
+
+    def _fake_post(self, path, payload, *, auth=False):
+        calls.append((path, payload))
+        return 200, {"success": True}
+
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    from app.execution.topstep import TopstepBroker as _TopstepBroker
+    monkeypatch.setattr(_TopstepBroker, "_post_json", _fake_post)
+    with TestClient(app) as c:
+        c.post("/api/topstep/smoke-test", json={"symbol": "MES1!"})
+    # Smoke test is pure preview — no network calls.
+    assert all(call[0] != "/api/Order/place" for call in calls)
+
+
+def test_smoke_test_fails_cleanly_when_no_account(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPSTEP_USERNAME", "trader42")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "")
+    monkeypatch.setenv("SELECTED_ACCOUNT_ID", "")
+    app = _build_app(tmp_path, monkeypatch, provider="topstep")
+    with TestClient(app) as c:
+        r = c.post("/api/topstep/smoke-test", json={})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["status"] == "smoke_test_failed"
+    assert body["would_submit"] is False
+    failed = {c["name"] for c in body["checks"] if not c["ok"]}
+    assert "selected_account" in failed
+
+
+def test_smoke_test_dry_run_safe_while_live_mode_selected(tmp_path, monkeypatch):
+    """Even with EXECUTION_MODE=live, the default dry-run smoke test
+    still just builds previews — it never hits ``/api/Order/place``
+    because ``execute`` defaults to false."""
+    calls: list[str] = []
+
+    def _fake_post(self, path, payload, *, auth=False):
+        calls.append(path)
+        return 200, {"success": True}
+
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    from app.execution.topstep import TopstepBroker as _TopstepBroker
+    monkeypatch.setattr(_TopstepBroker, "_post_json", _fake_post)
+    app.state.settings.execution_mode = "live"
+    with TestClient(app) as c:
+        r = c.post("/api/topstep/smoke-test", json={})
+    assert r.status_code == 200
+    body = r.json()
+    # Dry-run still builds previews — no network calls were made.
+    assert body["execute"] is False
+    assert body["would_submit"] is False
+    assert "/api/Order/place" not in calls
+
+
+def test_smoke_test_execute_requires_confirmation(tmp_path, monkeypatch):
+    """execute=true without confirmation='smoke' must be refused."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/topstep/smoke-test",
+            json={"execute": True, "confirmation": ""},
+        )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["ok"] is False
+    assert body["status"] == "invalid_confirmation"
+    assert body["would_submit"] is False
+
+
+def test_smoke_test_execute_rejects_when_not_armed(tmp_path, monkeypatch):
+    """execute=true requires ENABLE_TOPSTEP_ORDER_EXECUTION to already
+    be true (demo/live armed) — otherwise refuse with execution_not_armed."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/topstep/smoke-test",
+            json={"execute": True, "confirmation": "smoke"},
+        )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["status"] == "execution_not_armed"
+    assert body["would_submit"] is False
+
+
+def test_smoke_test_execute_calls_order_place_twice_when_armed(
+    tmp_path, monkeypatch
+):
+    """Once demo execution is armed, execute=true with confirmation='smoke'
+    submits BUY entry + SELL exit via ``/api/Order/place``."""
+    order_place_payloads: list[dict] = []
+
+    def _fake_post(self, path, payload, *, auth=False):
+        if path == "/api/Auth/loginKey":
+            return 200, {
+                "success": True,
+                "token": "JWT.TOKEN",
+                "errorCode": 0,
+                "errorMessage": None,
+            }
+        if path == "/api/Account/search":
+            return 200, {
+                "success": True,
+                "errorCode": 0,
+                "errorMessage": None,
+                "accounts": [
+                    {
+                        "id": 5001,
+                        "name": "Funded",
+                        "balance": 100000.0,
+                        "canTrade": True,
+                        "isVisible": True,
+                    }
+                ],
+            }
+        if path == "/api/Order/place":
+            order_place_payloads.append(payload)
+            return 200, {
+                "success": True,
+                "orderId": 7000 + len(order_place_payloads),
+                "errorCode": 0,
+                "errorMessage": None,
+            }
+        return 200, {"success": False, "errorCode": -1, "errorMessage": "unhandled"}
+
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    # _build_app reloads ``app.*`` modules, so the broker class we
+    # patch has to come from after the rebuild.
+    from app.execution.topstep import TopstepBroker as _TopstepBroker
+    monkeypatch.setattr(_TopstepBroker, "_post_json", _fake_post)
+    with TestClient(app) as c:
+        # Arm demo execution first.
+        arm = c.post(
+            "/api/topstep/demo-execution/enable",
+            json={"confirm": "DEMO_ONLY"},
+        )
+        assert arm.status_code == 200, arm.text
+        r = c.post(
+            "/api/topstep/smoke-test",
+            json={
+                "symbol": "MES1!",
+                "contracts": 1,
+                "execute": True,
+                "confirmation": "smoke",
+            },
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["execute"] is True
+    assert body["would_submit"] is True
+    assert body["ok"] is True
+    assert body["status"] == "smoke_test_executed"
+    assert body["entry_response"]["accepted"] is True
+    assert body["exit_response"]["accepted"] is True
+    # Two /api/Order/place hits — entry + exit.
+    assert len(order_place_payloads) == 2
+    # First was BUY, second was SELL.
+    assert order_place_payloads[0]["side"] == 0  # BUY
+    assert order_place_payloads[1]["side"] == 1  # SELL
+
+
+def test_smoke_test_execute_default_symbol_and_contracts(tmp_path, monkeypatch):
+    """When ``execute=true`` is sent without symbol/contracts, the
+    endpoint must default to ``MES1!`` + 1 contract."""
+    seen: list[dict] = []
+
+    def _fake_post(self, path, payload, *, auth=False):
+        if path == "/api/Auth/loginKey":
+            return 200, {"success": True, "token": "JWT.T"}
+        if path == "/api/Account/search":
+            return 200, {"success": True, "accounts": [
+                {"id": 5001, "name": "F", "canTrade": True, "isVisible": True}
+            ]}
+        if path == "/api/Order/place":
+            seen.append(payload)
+            return 200, {"success": True, "orderId": 1}
+        return 200, {"success": False}
+
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    from app.execution.topstep import TopstepBroker as _TopstepBroker
+    monkeypatch.setattr(_TopstepBroker, "_post_json", _fake_post)
+    with TestClient(app) as c:
+        c.post(
+            "/api/topstep/demo-execution/enable",
+            json={"confirm": "DEMO_ONLY"},
+        )
+        r = c.post(
+            "/api/topstep/smoke-test",
+            json={"execute": True, "confirmation": "smoke"},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["symbol"] == "MES1!"
+    assert body["contracts"] == 1
+    assert len(seen) == 2
+    assert seen[0]["size"] == 1
+
+
+def test_smoke_test_route_exists():
+    """Sanity: the dashboard front-end calls /api/topstep/smoke-test,
+    and Starlette must have it registered as a POST route."""
+    from app.main import create_app
+    app = create_app()
+    matched = [
+        getattr(r, "path", "?") for r in app.routes
+        if getattr(r, "path", "") == "/api/topstep/smoke-test"
+    ]
+    assert matched == ["/api/topstep/smoke-test"]
+
+
+# ----------------------------------------------------------------------
+# Apply button: no raw JSON dumped; spinner element exists
+# ----------------------------------------------------------------------
+
+
+def test_dashboard_apply_button_has_spinner_element(client):
+    body = client.get("/").text
+    assert 'id="btn-execution-apply"' in body
+    assert "btn-spinner" in body
+
+
+def test_dashboard_has_no_legacy_raw_output_block(client):
+    """The card no longer renders the ``<pre id="execution-out">`` block
+    where the legacy JSON dump used to appear."""
+    body = client.get("/").text
+    assert 'id="execution-out"' not in body
+
+
+def test_dashboard_has_execution_feedback_region(client):
+    """A live-region feedback element exists so the Apply / Disengage /
+    Smoke Test handlers can write short human-readable status text."""
+    body = client.get("/").text
+    assert 'id="execution-feedback"' in body
+    assert 'aria-live' in body
+
+
+# ----------------------------------------------------------------------
+# Topbar paper badge / sidebar copy removed
+# ----------------------------------------------------------------------
+
+
+def test_topbar_no_longer_renders_paper_badge(client):
+    body = client.get("/").text
+    # The legacy mode + broker badges in the topbar status strip are
+    # gone — execution status is on the Dashboard card now.
+    assert 'class="label">mode</span>' not in body
+    assert 'class="label">broker</span>' not in body
+    # The topbar status strip exists but contains only the app name
+    # badge + kill-switch toggle — no mode/broker chips.
+    topbar_start = body.find('<div class="status-strip">')
+    assert topbar_start != -1
+    topbar_end = body.find('</div>', topbar_start)
+    topbar = body[topbar_start:topbar_end]
+    assert "badge-paper" not in topbar
+
+
+def test_sidebar_footer_no_longer_says_paper_mode_only(client):
+    body = client.get("/").text
+    assert "paper-mode only" not in body

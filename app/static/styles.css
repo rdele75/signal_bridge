@@ -664,6 +664,49 @@ pre.code {
   border-color: var(--border);
 }
 
+/* ----- Global dark fallback for bare select/input/textarea.
+   Without this, browsers render unwrapped controls white-on-white in
+   a dark UI. The ``.form ...`` rules above still take precedence
+   when controls are wrapped in a ``.form`` container. ----- */
+select,
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="email"],
+input[type="search"],
+textarea {
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  font-family: inherit;
+  font-size: 13px;
+}
+select:focus,
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus,
+input[type="search"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 140, 255, 0.12);
+}
+/* Dark-themed <option> entries for the (small) set of browsers that
+   actually paint dropdown options instead of relying on the OS. */
+option {
+  background: var(--bg-2);
+  color: var(--fg);
+}
+/* Explicit dark-select alias so author intent is visible in markup. */
+.dark-select {
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border-2);
+}
+
 /* ----- Sidebar collapsible groups ----- */
 .sidebar-nav .nav-group { margin: 0; padding: 0; }
 .sidebar-nav .nav-group > summary {
@@ -828,41 +871,47 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   font-weight: 600;
   letter-spacing: 0.01em;
 }
-.execution-pill {
+.execution-status-text {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  border: 1px solid transparent;
-  background: var(--bg-3);
-  color: var(--fg-dim);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.25s ease, transform 0.25s ease, color 0.25s ease;
 }
-.execution-pill-dry-run {
+/* While the JS swaps the label text, fade it out + slide a hair, then
+   the JS removes the class to fade the new value back in. */
+.execution-status-text.execution-status-transitioning {
+  opacity: 0;
+  transform: translateY(-3px);
+}
+/* Live-armed status text gets a brief checkmark + colour swing on
+   enter; tone settles into the steady armed look afterwards. */
+.execution-status-text.execution-live-armed-enter {
   color: var(--good);
-  border-color: rgba(52, 211, 153, 0.45);
-  background: rgba(52, 211, 153, 0.07);
+  animation: execution-status-armed-flash 1.4s ease-out 1 both;
 }
-.execution-pill-demo {
-  color: var(--warn);
-  border-color: rgba(251, 191, 36, 0.5);
-  background: rgba(251, 191, 36, 0.08);
+.execution-status-text.execution-live-armed-enter::before {
+  content: "✓";
+  font-size: 13px;
+  color: var(--good);
+  margin-right: 2px;
+  animation: execution-status-check-in 0.5s ease-out 1 both;
 }
-.execution-pill-live-locked,
-.execution-pill-live-engaging,
-.execution-pill-live-armed,
-.execution-pill-kill-switch-active {
-  color: var(--bad);
-  border-color: rgba(248, 113, 113, 0.55);
-  background: rgba(248, 113, 113, 0.08);
+@keyframes execution-status-armed-flash {
+  0%   { color: var(--good); }
+  60%  { color: var(--good); }
+  100% { color: var(--bad); }
 }
-.execution-pill-disabled {
-  color: var(--fg-mute);
-  border-color: var(--border-2);
+@keyframes execution-status-check-in {
+  0%   { opacity: 0; transform: scale(0.4); }
+  60%  { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 1; transform: scale(1.0); }
 }
 
 .execution-mode-form {
@@ -918,13 +967,94 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 .execution-kill-switch-indicator.active {
   color: var(--bad);
 }
-.execution-out { margin-top: 12px; }
+.execution-smoke-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+.execution-feedback {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border-2);
+}
+.execution-feedback-ok {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: var(--good);
+}
+.execution-feedback-info {
+  border-color: rgba(96, 165, 250, 0.45);
+  color: var(--info);
+}
+.execution-feedback-warn {
+  border-color: rgba(251, 191, 36, 0.45);
+  color: var(--warn);
+}
+.execution-feedback-bad {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: var(--bad);
+}
+.execution-feedback-detail {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.execution-feedback-detail summary {
+  cursor: pointer;
+  user-select: none;
+}
+.execution-feedback-raw { margin-top: 6px; }
+
+/* Apply-button spinner. Visible only when ``.btn-spinner`` is not
+   ``hidden``. */
+.btn-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 6px;
+  border: 2px solid rgba(231, 233, 239, 0.35);
+  border-top-color: var(--fg);
+  border-radius: 50%;
+  vertical-align: middle;
+  animation: btn-spinner-rotate 0.7s linear infinite;
+}
+.btn-spinner[hidden] { display: none; }
+@keyframes btn-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
 
 /* ----- Border styling per state ----- */
-.execution-dry-run {
-  border-color: rgba(52, 211, 153, 0.45);
-  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.10);
+/* Smooth transitions between any two states. The transition runs
+   automatically on class swap; the temporary ``.execution-transitioning``
+   class extends the duration for a clean fade away from live. */
+.execution-card.execution-transitioning {
+  transition: border-color 0.35s ease, box-shadow 0.35s ease,
+    background 0.35s ease;
 }
+
+/* Dry-run: slow safe-state breathing. Deliberately gentle — the card
+   should look alive without ever feeling urgent. */
+.execution-dry-run {
+  border-color: rgba(52, 211, 153, 0.40);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.08);
+  animation: execution-dry-run-pulse 5.6s ease-in-out infinite;
+}
+@keyframes execution-dry-run-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.06),
+      0 0 8px rgba(52, 211, 153, 0.03);
+    border-color: rgba(52, 211, 153, 0.32);
+  }
+  50% {
+    box-shadow: 0 0 0 1.5px rgba(96, 165, 250, 0.14),
+      0 0 16px rgba(52, 211, 153, 0.10);
+    border-color: rgba(96, 165, 250, 0.40);
+  }
+}
+
 .execution-disabled {
   border-color: var(--border-2);
 }
@@ -989,9 +1119,23 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .execution-card,
   .execution-card::before,
-  .execution-card::after {
+  .execution-card::after,
+  .btn-spinner {
     animation: none !important;
   }
+}
+
+/* ----- Ticker Watch placeholder card ----- */
+.ticker-watch-placeholder {
+  background: var(--bg-2);
+}
+.ticker-watch-body {
+  margin-top: 8px;
+}
+.ticker-watch-headline {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--fg);
 }
 
 /* ----- Live execution engagement modal ----- */
@@ -1037,6 +1181,11 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   margin: 0 0 14px;
   font-size: 13px;
   color: var(--fg-dim);
+}
+.execution-modal-instructions {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--fg);
 }
 .execution-modal-form label {
   display: block;

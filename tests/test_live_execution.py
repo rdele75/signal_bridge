@@ -153,7 +153,7 @@ def test_live_enable_rejects_missing_account_ack(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": False},
+            json={"confirm": "engage", "account_ack": False},
         )
     assert r.status_code == 400
     assert r.json()["status"] == "account_ack_missing"
@@ -165,7 +165,7 @@ def test_live_enable_rejects_kill_switch_active(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
     assert r.status_code == 400
     assert r.json()["status"] == "kill_switch_active"
@@ -176,7 +176,7 @@ def test_live_enable_requires_topstep_provider(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
     assert r.status_code == 400
     assert r.json()["status"] == "broker_provider_not_topstep"
@@ -191,7 +191,7 @@ def test_live_enable_requires_selected_account(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
     assert r.status_code == 400
     assert r.json()["status"] == "no_selected_account"
@@ -202,7 +202,7 @@ def test_live_enable_sets_every_gate(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
     assert r.status_code == 200
     body = r.json()
@@ -221,7 +221,7 @@ def test_live_enable_requires_admin_auth(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
     assert r.status_code == 401
 
@@ -236,7 +236,7 @@ def test_live_disable_resets_every_gate(tmp_path, monkeypatch):
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post("/api/topstep/live-execution/disable")
     assert r.status_code == 200
@@ -375,7 +375,7 @@ def test_submit_live_test_order_rejects_unsupported_action(tmp_path, monkeypatch
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post(
             "/api/topstep/submit-live-test-order",
@@ -392,7 +392,7 @@ def test_submit_live_test_order_rejects_contracts_above_live_cap(
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post(
             "/api/topstep/submit-live-test-order",
@@ -409,7 +409,7 @@ def test_submit_live_test_order_rejects_symbol_not_allowed(
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post(
             "/api/topstep/submit-live-test-order",
@@ -425,7 +425,7 @@ def test_submit_live_test_order_rejects_missing_mapping(tmp_path, monkeypatch):
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post(
             "/api/topstep/submit-live-test-order",
@@ -447,7 +447,7 @@ def test_submit_live_test_order_posts_when_gates_pass(
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post(
             "/api/topstep/submit-live-test-order",
@@ -485,7 +485,7 @@ def test_webhook_live_mode_blocks_when_gates_open(tmp_path, monkeypatch):
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         # Knock the live confirm token out: the broker form rejects this,
         # but a direct settings_store write simulates a corrupted state.
@@ -512,7 +512,7 @@ def test_webhook_live_mode_submits_when_gates_pass(tmp_path, monkeypatch):
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post(
             "/webhooks/tradingview", json=make_alert(order_id="live_ok_1")
@@ -534,7 +534,7 @@ def test_webhook_live_mode_blocks_when_kill_switch_active(tmp_path, monkeypatch)
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         app.state.kill_switch.activate("kill_live")
         r = c.post(
@@ -581,8 +581,10 @@ def test_dashboard_renders_live_execution_arming_form(tmp_path, monkeypatch):
     html = r.text
     # Modal element exists.
     assert 'id="live-execution-modal"' in html
-    # Confirmation phrase appears inside the modal copy.
-    assert "I_UNDERSTAND_LIVE_ORDERS" in html
+    # Short typed phrase appears inside the modal copy; legacy long
+    # phrase must not be exposed in the UI.
+    assert ">engage<" in html
+    assert "I_UNDERSTAND_LIVE_ORDERS" not in html
     # Engagement primary button.
     assert "Engage Live Execution" in html
     # Account acknowledgement copy.
@@ -619,7 +621,7 @@ def test_live_arm_response_does_not_leak_secrets(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
     body = r.text
     settings = app.state.settings
@@ -633,7 +635,7 @@ def test_live_disable_response_does_not_leak_secrets(tmp_path, monkeypatch):
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         r = c.post("/api/topstep/live-execution/disable")
     body = r.text
@@ -654,7 +656,7 @@ def test_demo_arm_after_live_arm_disarm(tmp_path, monkeypatch):
     with TestClient(app) as c:
         c.post(
             "/api/topstep/live-execution/enable",
-            json={"confirm": "I_UNDERSTAND_LIVE_ORDERS", "account_ack": True},
+            json={"confirm": "engage", "account_ack": True},
         )
         c.post("/api/topstep/live-execution/disable")
         r = c.post(

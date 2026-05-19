@@ -15,58 +15,67 @@ Save / Apply button, account line, and two secondary actions.
 ### What the card shows
 
 * **Title** — `Execution`.
-* **Status pill** — one of:
-  * `Dry Run` — `EXECUTION_MODE=paper`. No broker orders fired.
-  * `Demo` — `EXECUTION_MODE=demo`. Topstep demo/sim execution
-    enabled.
-  * `Live Locked` — `EXECUTION_MODE=live` but live is not yet
-    engaged. Status pill is red but the card is dormant — no orders
-    will route until the engagement flow has completed.
-  * `Live Engaging` — transient client-side state while the live
-    engagement animation + backend verification are running.
-  * `Live Armed` — every live gate is satisfied. The card border
-    glows red with a subtle pulse.
-  * `Kill Switch Active` — the global kill switch is up.
-* **Execution mode dropdown** — `dry-run` (`paper`) / `demo` / `live`.
-* **Save / Apply** — primary action.
+* **Status text** — small, low-key label next to the title. Reflects
+  the current state (`Dry-run`, `Live Locked`, `Live Engaging`,
+  `Live armed`, `Kill Switch Active`). Not a colored bubble — the
+  selected mode in the dropdown is the canonical state.
+* **Execution mode dropdown** — `dry-run` and `live` only. Topstep
+  does not expose a freely controllable demo/paper surface, so the
+  UI no longer offers a "demo" choice in this dropdown. The backend
+  still accepts demo for scripted / sbctl flows.
+* **Apply** — primary action. While the request is in flight a
+  small spinner sits next to the button label; the card never
+  dumps raw JSON, just a short human-readable status message.
 * **Account line** — `Account: <selected_account_id>` and the
   account name when known.
-* **Disable Execution** — single-click reset to dry-run.
+* **Smoke Test** — visible in dry-run mode. Runs a dual-mode
+  Topstep smoke test against the selected account + the contract
+  mapping. **First click**: dry-run preview only (builds BUY entry
+  + SELL exit payloads, no broker order placed). **If demo or live
+  execution is already armed**, the button prompts for a second
+  confirmation phrase (`smoke`); typing it sends a real one-contract
+  MES1! enter/exit pair through `submit_market_order`. Cancel falls
+  back to the dry-run preview. Helper text reads:
+  *Runs a dry-run enter/exit check. No broker order is sent.*
+* **Disengage** — single-click reset to dry-run. Disarms live +
+  demo flags, returns the app to a safe state, and never disconnects
+  broker credentials.
 * **Exit All / Flatten** — `POST /api/broker/flatten-all`.
 
-The old top-right cluster (`broker / mode / order exec / kill switch
-/ account`) is gone. That information is either redundant with the
-status pill / account line or available on the Broker account card
-below.
+The old top-right meta cluster (`broker / mode / order exec / kill
+switch / account`) is gone, and so is the colored status pill —
+they were redundant with the dropdown + account line.
 
 ### Mode behaviour
 
-* **dry-run / paper** — Save / Apply calls `POST
+* **dry-run / paper** — Apply calls `POST
   /api/execution/apply-mode` with `mode=paper`. The endpoint clears
   `ENABLE_TOPSTEP_ORDER_EXECUTION`, `TOPSTEP_EXECUTION_CONFIRM`,
   `ENABLE_LIVE_TRADING`, `LIVE_TRADING_CONFIRM`, and
   `LIVE_TRADING_ACCOUNT_ACK`.
 
-* **demo** — Save / Apply calls the same endpoint with `mode=demo`.
-  The backend flips `EXECUTION_MODE=demo`,
-  `ENABLE_TOPSTEP_ORDER_EXECUTION=true`, and
-  `TOPSTEP_EXECUTION_CONFIRM=DEMO_ONLY` automatically. **No phrase
-  entry is required from the operator.** Live trading remains locked
-  and every existing demo safety gate (provider, account, kill
-  switch, live-lock) still runs.
+* **live** — Apply opens the **Live Execution Warning** modal.
+  Live is never engaged just by picking it in the dropdown.
 
-* **live** — Save / Apply opens the **Live Execution Warning**
-  modal. Live is never engaged just by picking it in the dropdown.
+* **demo** (scripted only) — the apply-mode endpoint still accepts
+  `mode=demo` for sbctl / scripting flows. It flips
+  `EXECUTION_MODE=demo`, `ENABLE_TOPSTEP_ORDER_EXECUTION=true`, and
+  `TOPSTEP_EXECUTION_CONFIRM=DEMO_ONLY` automatically. Live trading
+  remains locked, and every existing demo safety gate still runs.
+  The dashboard does not expose this option in the dropdown.
 
 ### Live engagement flow
 
-1. Operator picks `live` and clicks Save / Apply.
+1. Operator picks `live` and clicks Apply.
 2. The modal opens with the warning copy:
    > You are about to enable live/funded order routing for the
    > selected Topstep account. Orders may route to a real funded
    > account. Confirm only if you understand the risk.
 3. The operator must:
-   * Type `I_UNDERSTAND_LIVE_ORDERS` exactly.
+   * Type `engage` exactly (the short typed phrase replaces the
+     legacy `I_UNDERSTAND_LIVE_ORDERS` UX wording — the long token
+     still lives in `LIVE_TRADING_CONFIRM` as the persisted broker
+     safety check, but the operator never sees it).
    * Tick the checkbox: *I acknowledge orders will hit account
      `<selected_account_id>` / `<account_name>`*.
 4. On submit:
@@ -102,8 +111,23 @@ The card carries exactly one of:
 * `execution-kill-switch-active`
 * `execution-disabled`
 
-`prefers-reduced-motion` users still get the colour change but the
-keyframe animations are dropped.
+Dry-run runs a deliberately slow safe-state breathing animation
+(`execution-dry-run-pulse`, ~5.6 s cycle) — gentle blue/green
+glow that signals "alive but idle" without competing with the
+live indicators. Live armed pulses faster (~1.6 s) so the two
+states are visually distinct at a glance.
+
+When the live engagement flow finishes successfully, the status
+text fades through two CSS classes:
+
+* `execution-status-transitioning` — used by JS to fade the old
+  text out before swapping the label.
+* `execution-live-armed-enter` — a one-shot animation that flashes
+  a green checkmark + colour swing as the label settles into
+  "Live armed" red.
+
+`prefers-reduced-motion` users get the colour change without the
+keyframe animations.
 
 ## Broker Settings page
 
@@ -127,13 +151,30 @@ notice points operators back to the Dashboard for execution.
 * `POST /api/execution/apply-mode` — body `{ "mode": "paper" | "demo" }`.
   Live is rejected here on purpose.
 * `POST /api/execution/disable` — clears all execution flags;
-  returns the app to dry-run.
+  returns the app to dry-run. The dashboard calls this from the
+  **Disengage** button.
+* `POST /api/topstep/smoke-test` — dual-mode. Body:
+  `{ "symbol": "MES1!", "contracts": 1, "execute": false,
+  "confirmation": "" }`. With `execute=false` (default) it builds
+  BUY entry + SELL exit previews and never calls
+  `/api/Order/place` (returns `would_submit=false`). With
+  `execute=true` it requires `confirmation="smoke"` exactly, plus
+  every armed-execution prerequisite (provider topstep, selected
+  account, valid mapping, kill switch off, `contracts ≤
+  MAX_CONTRACTS_PER_TRADE`, `ENABLE_TOPSTEP_ORDER_EXECUTION=true`,
+  and — if `EXECUTION_MODE=live` — the full live gate stack via
+  `submit_market_order`). When everything passes, it places the
+  entry, then the exit, journals both, and returns both broker
+  responses.
 * `POST /api/topstep/live-execution/verify` — non-mutating live-gate
   preview. Returns `ok`, `failed_gates`, `selected_account_id`,
   `account_name`, `canTrade`, `kill_switch`, `live_allowed_symbols`,
   `live_max_contracts`.
-* `POST /api/topstep/live-execution/enable` — unchanged. Still
-  requires the exact confirmation phrase + account ack.
+* `POST /api/topstep/live-execution/enable` — unchanged contract.
+  The typed `confirm` body field must equal the short phrase
+  `engage`; the endpoint persists the long-form token
+  (`I_UNDERSTAND_LIVE_ORDERS`) into `LIVE_TRADING_CONFIRM`, so the
+  broker safety check sees the same value it always has.
 * `POST /api/topstep/live-execution/disable` — unchanged.
 * `POST /api/topstep/demo-execution/{enable,disable}` — unchanged;
   the dashboard does not call them directly, but they remain for
@@ -146,25 +187,29 @@ All endpoints require admin auth when `ADMIN_AUTH_ENABLED=true`.
 
 ## Ticker Watch (placeholder)
 
-A separate card on the Dashboard scaffolds the future ProjectX
-market-data hub:
+A separate card on the Dashboard is an honest placeholder until the
+ProjectX market-data hub lands. It shows:
 
-* Selected ticker dropdown (sourced from configured symbol
-  mappings).
-* Mapped contract ID (from the symbol map).
-* Current price — `Not connected yet`.
-* Mode — `polling / SignalR not enabled`.
+* *Ticker Watch is not connected yet.*
+* *Realtime price feed will be added through ProjectX market data
+  later.*
 
-No live market data is wired yet.
+No broken controls, no dropdowns that imply a connection that does
+not exist yet.
 
 ## Safety guarantees preserved
 
 * Live execution is **never** enabled by default.
 * `apply-mode` cannot set `EXECUTION_MODE=live` — that path goes
-  through verify + enable with the typed confirmation phrase + the
-  account acknowledgement.
+  through verify + enable with the typed phrase + the account
+  acknowledgement.
 * The kill switch, allowed symbols, max-contracts cap, and existing
   broker-level safety check (`_live_execution_safety_check`) are
-  unchanged.
-* Disable Execution does not touch broker credentials or the
-  selected account — only the execution flags.
+  unchanged. The stored `LIVE_TRADING_CONFIRM` token is the same
+  long-form value as before — only the user-facing typed phrase
+  changed (to `engage`).
+* Disengage (the dashboard's reset action) does not touch broker
+  credentials or the selected account — only the execution flags.
+* The Smoke Test endpoint is dry-run only. It refuses to run while
+  `EXECUTION_MODE=live` (the `dry_run_mode` check fails), and never
+  hits `/api/Order/place` regardless of state.

@@ -6,11 +6,11 @@
 <p class="subtitle">Live status of your local trading bridge.</p>
 
 {# ---- Execution card.
-       Compact, intentional layout: title + status pill + mode dropdown
-       + Save/Apply + Disable Execution + Exit All / Flatten + account
-       line. Live arming uses a dedicated modal with a typed phrase
-       and an account acknowledgement. No top-right cluster, no inline
-       arming blocks. #}
+       Compact: title + mode dropdown + Apply + account line +
+       Disengage / Exit-All / Smoke Test. No top-right meta cluster,
+       no redundant status pill — the selected mode is already the
+       canonical state. Live arming uses a dedicated modal with the
+       typed "engage" phrase and an account acknowledgement. #}
 <section class="section">
   <div class="card execution-card execution-{{ exec_card_state }}"
        id="exec-card"
@@ -19,12 +19,12 @@
        data-broker-provider="{{ broker_provider }}"
        data-selected-account-id="{{ selected_account_id or '' }}"
        data-selected-account-name="{{ broker_account_card.selected_account_name or '' }}"
+       data-execution-armed="{{ 'true' if (demo_execution.is_armed or live_execution.is_armed) else 'false' }}"
        data-live-confirm-phrase="{{ live_execution.confirm_phrase }}">
     <div class="execution-card-inner">
       <div class="execution-card-head">
         <h3 class="execution-card-title">Execution</h3>
-        <span class="execution-pill execution-pill-{{ exec_card_state }}"
-              id="execution-status-pill">
+        <span class="execution-status-text" id="execution-status-text">
           {{ exec_card_label }}
         </span>
       </div>
@@ -33,13 +33,14 @@
         <label for="execution_mode_select" class="execution-mode-label">
           Execution mode
         </label>
-        <select id="execution_mode_select" name="execution_mode">
+        <select id="execution_mode_select" name="execution_mode"
+                class="dark-select">
           <option value="paper" {% if execution_mode == 'paper' %}selected{% endif %}>dry-run</option>
-          <option value="demo"  {% if execution_mode == 'demo'  %}selected{% endif %}>demo</option>
           <option value="live"  {% if execution_mode == 'live'  %}selected{% endif %}>live</option>
         </select>
         <button type="submit" class="btn btn-primary" id="btn-execution-apply">
-          Save / Apply
+          <span class="btn-label">Apply</span>
+          <span class="btn-spinner" aria-hidden="true" hidden></span>
         </button>
       </form>
 
@@ -57,10 +58,14 @@
 
       <div class="execution-actions">
         <button type="button" id="btn-disable-exec" class="btn">
-          Disable Execution
+          Disengage
         </button>
         <button type="button" id="btn-flatten-all" class="btn">
           Exit All / Flatten
+        </button>
+        <button type="button" id="btn-smoke-test" class="btn"
+                {% if execution_mode != 'paper' %}hidden{% endif %}>
+          Smoke Test
         </button>
         {% if kill_switch_enabled %}
           <span class="execution-kill-switch-indicator
@@ -70,7 +75,19 @@
         {% endif %}
       </div>
 
-      <pre id="execution-out" class="output execution-out" hidden></pre>
+      <p class="execution-smoke-hint"
+         {% if execution_mode != 'paper' %}hidden{% endif %}
+         id="execution-smoke-hint">
+        Runs a dry-run enter/exit check. No broker order is sent.
+      </p>
+
+      <div id="execution-feedback" class="execution-feedback" hidden
+           role="status" aria-live="polite"></div>
+
+      <details id="execution-feedback-detail" class="execution-feedback-detail" hidden>
+        <summary>raw response</summary>
+        <pre id="execution-feedback-raw" class="output execution-feedback-raw"></pre>
+      </details>
     </div>
   </div>
 </section>
@@ -102,11 +119,16 @@
         <span id="live-modal-account-name">{{ broker_account_card.selected_account_name }}</span>
       {% endif %}
     </p>
+    <p class="execution-modal-instructions">
+      Type <code>{{ live_execution.confirm_phrase }}</code> and check
+      the box to confirm live execution.
+    </p>
     <form id="form-live-engage" class="execution-modal-form">
       <label for="live_confirm_phrase">
-        Type <code>{{ live_execution.confirm_phrase }}</code> exactly to confirm
+        Confirmation phrase
       </label>
       <input id="live_confirm_phrase" name="confirm" type="text"
+             class="dark-input"
              autocomplete="off"
              placeholder="{{ live_execution.confirm_phrase }}" />
       <label class="execution-modal-ack">
@@ -267,46 +289,25 @@
   </div>
 </section>
 
-{# Ticker Watch — placeholder for the future ProjectX market-data hub.
-   For now: dropdown of mapped tickers + the resolved contract id, no
-   price feed wired. The text intentionally calls this out so the
-   operator isn't surprised by a static value. #}
+{# Ticker Watch — honest placeholder.
+   Realtime price feed (ProjectX market hub) is not implemented yet.
+   The card carries no broken controls; it just shows the future-state
+   note so the operator isn't surprised by a static value. #}
 <section class="section">
-  <div class="card" id="ticker-watch-card">
+  <div class="card ticker-watch-placeholder" id="ticker-watch-card">
     <div class="card-row">
       <div class="card-label">Ticker Watch</div>
-      <span class="badge badge-warn plain">placeholder</span>
+      <span class="badge badge-warn plain">not connected</span>
     </div>
-    <div class="grid grid-3" style="margin-top: 8px;">
-      <div>
-        <div class="card-label">Selected ticker</div>
-        {% if ticker_watch.tickers %}
-          <select id="ticker-watch-select">
-            {% for row in ticker_watch.tickers %}
-              <option value="{{ row.ticker }}"
-                      data-contract="{{ row.contract_id }}"
-                      {% if row.ticker == ticker_watch.default_ticker %}selected{% endif %}>
-                {{ row.ticker }}
-              </option>
-            {% endfor %}
-          </select>
-        {% else %}
-          <div class="card-value sm muted">no mappings configured</div>
-        {% endif %}
-      </div>
-      <div>
-        <div class="card-label">Mapped contract ID</div>
-        <div class="card-value sm mono" id="ticker-watch-contract">
-          {{ ticker_watch.default_contract_id or '—' }}
-        </div>
-      </div>
-      <div>
-        <div class="card-label">Current price</div>
-        <div class="card-value sm muted">Not connected yet</div>
-        <div class="card-sub">mode: {{ ticker_watch.mode_label }}</div>
-      </div>
+    <div class="ticker-watch-body">
+      <p class="ticker-watch-headline">
+        Ticker Watch is not connected yet.
+      </p>
+      <p class="muted">
+        Realtime price feed will be added through ProjectX market data
+        later.
+      </p>
     </div>
-    <p class="muted" style="margin: 8px 0 0;">{{ ticker_watch.feed_note }}</p>
   </div>
 </section>
 
@@ -462,20 +463,22 @@
 
   var modeForm = document.getElementById('form-execution-apply');
   var modeSelect = document.getElementById('execution_mode_select');
-  var statusPill = document.getElementById('execution-status-pill');
-  var execOut = document.getElementById('execution-out');
+  var applyBtn = document.getElementById('btn-execution-apply');
+  var applySpinner = applyBtn && applyBtn.querySelector('.btn-spinner');
+  var statusText = document.getElementById('execution-status-text');
+  var feedback = document.getElementById('execution-feedback');
+  var feedbackDetail = document.getElementById('execution-feedback-detail');
+  var feedbackRaw = document.getElementById('execution-feedback-raw');
   var disableBtn = document.getElementById('btn-disable-exec');
   var flattenBtn = document.getElementById('btn-flatten-all');
+  var smokeBtn = document.getElementById('btn-smoke-test');
+  var smokeHint = document.getElementById('execution-smoke-hint');
   var initialMode = card.dataset.executionMode || 'paper';
-  var initialState = card.dataset.executionState || '';
-  var brokerProvider = card.dataset.brokerProvider || '';
-  var selectedAccountId = card.dataset.selectedAccountId || '';
   var liveModal = document.getElementById('live-execution-modal');
   var liveForm = document.getElementById('form-live-engage');
-  var liveOut = document.getElementById('live-engage-out');
   var liveConfirmInput = document.getElementById('live_confirm_phrase');
   var liveAckInput = document.getElementById('live_account_ack');
-  var livePhrase = card.dataset.liveConfirmPhrase || 'I_UNDERSTAND_LIVE_ORDERS';
+  var livePhrase = card.dataset.liveConfirmPhrase || 'engage';
 
   var STATE_CLASSES = [
     'execution-dry-run',
@@ -485,22 +488,76 @@
     'execution-live-armed',
     'execution-kill-switch-active',
     'execution-disabled',
+    'execution-transitioning',
   ];
 
-  function showOut(msg) {
-    if (!execOut) return;
-    execOut.hidden = false;
-    execOut.textContent = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
+  var _statusFadeTimer = null;
+  function setStatusText(label, opts) {
+    if (!statusText || !label) return;
+    var current = (statusText.textContent || '').trim();
+    if (current === label.trim()) return;
+    // Fade out, swap, fade back in — keeps the swap feeling deliberate.
+    if (_statusFadeTimer) { window.clearTimeout(_statusFadeTimer); _statusFadeTimer = null; }
+    statusText.classList.add('execution-status-transitioning');
+    _statusFadeTimer = window.setTimeout(function () {
+      statusText.textContent = label;
+      statusText.classList.remove('execution-status-transitioning');
+      if (opts && opts.armed) {
+        statusText.classList.add('execution-live-armed-enter');
+        // Drop the enter class once the animation settles.
+        window.setTimeout(function () {
+          statusText.classList.remove('execution-live-armed-enter');
+        }, 1600);
+      } else {
+        statusText.classList.remove('execution-live-armed-enter');
+      }
+    }, 220);
   }
 
-  function setState(state, label) {
+  function setState(state) {
     STATE_CLASSES.forEach(function (cls) { card.classList.remove(cls); });
+    // Briefly add a transition helper so border/shadow fades cleanly.
+    card.classList.add('execution-transitioning');
     card.classList.add('execution-' + state);
     card.dataset.executionState = state;
-    if (statusPill && label) {
-      statusPill.textContent = label;
-      statusPill.className = 'execution-pill execution-pill-' + state;
+    window.setTimeout(function () {
+      card.classList.remove('execution-transitioning');
+    }, 350);
+  }
+
+  function setBusy(busy) {
+    if (!applyBtn) return;
+    applyBtn.disabled = !!busy;
+    if (applySpinner) applySpinner.hidden = !busy;
+  }
+
+  function showFeedback(message, kind, rawBody) {
+    if (!feedback) return;
+    feedback.hidden = !message;
+    feedback.textContent = message || '';
+    feedback.className = 'execution-feedback'
+      + (kind ? ' execution-feedback-' + kind : '');
+    if (feedbackDetail && feedbackRaw) {
+      if (rawBody) {
+        feedbackRaw.textContent = typeof rawBody === 'string'
+          ? rawBody
+          : JSON.stringify(rawBody, null, 2);
+        feedbackDetail.hidden = false;
+      } else {
+        feedbackRaw.textContent = '';
+        feedbackDetail.hidden = true;
+        feedbackDetail.open = false;
+      }
     }
+  }
+
+  function clearFeedback() { showFeedback('', null, null); }
+
+  function syncSmokeVisibility() {
+    if (!smokeBtn) return;
+    var dryRun = modeSelect && modeSelect.value === 'paper';
+    smokeBtn.hidden = !dryRun;
+    if (smokeHint) smokeHint.hidden = !dryRun;
   }
 
   function openLiveModal() {
@@ -512,17 +569,15 @@
       window.setTimeout(function () { liveConfirmInput.focus(); }, 0);
     }
     if (liveAckInput) liveAckInput.checked = false;
-    if (liveOut) {
-      liveOut.hidden = true;
-      liveOut.textContent = '';
-    }
   }
 
   function closeLiveModal() {
     if (!liveModal) return;
     liveModal.hidden = true;
     liveModal.setAttribute('aria-hidden', 'true');
+    // Revert the dropdown to whatever was actually saved on the server.
     if (modeSelect) modeSelect.value = initialMode;
+    syncSmokeVisibility();
   }
 
   if (liveModal) {
@@ -534,21 +589,45 @@
     });
   }
 
-  function applyPaperOrDemo(mode) {
-    showOut('applying mode: ' + mode + '…');
+  if (modeSelect) {
+    modeSelect.addEventListener('change', syncSmokeVisibility);
+  }
+
+  function applyMode(mode) {
+    setBusy(true);
+    clearFeedback();
+    setStatusText(mode === 'paper' ? 'Applying dry-run…' : 'Applying…');
     return fetch('/api/execution/apply-mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode: mode }),
     })
-      .then(function (r) { return r.json().then(function (b) { return { status: r.status, body: b }; }); })
+      .then(function (r) {
+        return r.json().then(function (body) {
+          return { ok: r.ok, body: body };
+        });
+      })
       .then(function (resp) {
-        showOut(resp.body);
-        if (resp.body && resp.body.ok) {
-          window.setTimeout(function () { window.location.reload(); }, 300);
+        setBusy(false);
+        if (resp.ok && resp.body && resp.body.ok) {
+          if (mode === 'paper') {
+            setState('dry-run');
+            setStatusText('Dry-run');
+            showFeedback('Dry-run selected.', 'ok', null);
+          }
+          window.setTimeout(function () { window.location.reload(); }, 400);
+        } else {
+          var reason = (resp.body && (resp.body.message || resp.body.status))
+            || 'apply failed';
+          showFeedback('Failed: ' + reason, 'bad', resp.body);
+          setStatusText('Apply failed');
         }
       })
-      .catch(function (err) { showOut('apply-mode failed: ' + err); });
+      .catch(function (err) {
+        setBusy(false);
+        showFeedback('Failed: ' + err, 'bad', null);
+        setStatusText('Apply failed');
+      });
   }
 
   if (modeForm && modeSelect) {
@@ -556,60 +635,193 @@
       e.preventDefault();
       var picked = modeSelect.value;
       if (picked === 'live') {
+        setStatusText('Live verification required');
         openLiveModal();
         return;
       }
-      applyPaperOrDemo(picked);
+      applyMode(picked);
     });
   }
 
   if (disableBtn) {
     disableBtn.addEventListener('click', function () {
-      if (!window.confirm('Disable execution? This returns the app to a safe dry-run state.')) return;
-      showOut('disabling execution…');
+      if (!window.confirm('Disengage execution? This returns the app to a safe dry-run state.')) return;
+      setBusy(true);
+      clearFeedback();
+      setStatusText('Disengaging…');
       fetch('/api/execution/disable', { method: 'POST' })
-        .then(function (r) { return r.json(); })
-        .then(function (body) {
-          showOut(body);
-          if (body && body.ok) {
-            window.setTimeout(function () { window.location.reload(); }, 300);
+        .then(function (r) {
+          return r.json().then(function (body) {
+            return { ok: r.ok, body: body };
+          });
+        })
+        .then(function (resp) {
+          setBusy(false);
+          if (resp.ok && resp.body && resp.body.ok) {
+            setState('dry-run');
+            setStatusText('Dry-run');
+            showFeedback('Execution disengaged.', 'ok', null);
+            window.setTimeout(function () { window.location.reload(); }, 400);
+          } else {
+            var reason = (resp.body && (resp.body.message || resp.body.status))
+              || 'disengage failed';
+            showFeedback('Failed: ' + reason, 'bad', resp.body);
+            setStatusText('Disengage failed');
           }
         })
-        .catch(function (err) { showOut('disable failed: ' + err); });
+        .catch(function (err) {
+          setBusy(false);
+          showFeedback('Failed: ' + err, 'bad', null);
+          setStatusText('Disengage failed');
+        });
     });
   }
 
   if (flattenBtn) {
     flattenBtn.addEventListener('click', function () {
       if (!window.confirm('Flatten/Exit all positions on the active broker?')) return;
-      showOut('flattening…');
+      clearFeedback();
+      showFeedback('Flattening…', 'info', null);
       fetch('/api/broker/flatten-all', { method: 'POST' })
         .then(function (r) { return r.json(); })
-        .then(function (body) { showOut(body); })
-        .catch(function (err) { showOut('flatten failed: ' + err); });
+        .then(function (body) {
+          if (body && body.ok) {
+            showFeedback('Flatten complete.', 'ok', body);
+          } else if (body && body.not_implemented) {
+            showFeedback(
+              (body.provider || 'broker') + ': flatten not implemented yet.',
+              'warn',
+              body
+            );
+          } else {
+            showFeedback(
+              'Flatten refused: ' + (body && (body.message || body.status) || 'unknown'),
+              'bad',
+              body
+            );
+          }
+        })
+        .catch(function (err) {
+          showFeedback('Flatten failed: ' + err, 'bad', null);
+        });
+    });
+  }
+
+  function runSmokeTest(execute, confirmation) {
+    if (!smokeBtn) return;
+    smokeBtn.disabled = true;
+    clearFeedback();
+    showFeedback(
+      execute ? 'Submitting smoke entry + exit…' : 'Running dry-run smoke test…',
+      'info',
+      null
+    );
+    fetch('/api/topstep/smoke-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: 'MES1!',
+        contracts: 1,
+        execute: !!execute,
+        confirmation: confirmation || '',
+      }),
+    })
+      .then(function (r) {
+        return r.json().then(function (body) {
+          return { ok: r.ok, body: body };
+        });
+      })
+      .then(function (resp) {
+        smokeBtn.disabled = false;
+        var body = resp.body || {};
+        if (resp.ok && body.ok && !body.execute) {
+          showFeedback(
+            'Dry-run smoke test passed — entry payload built, exit payload built. No broker order sent.',
+            'ok',
+            body
+          );
+          return;
+        }
+        if (resp.ok && body.ok && body.execute) {
+          var entryId = (body.entry_response && (body.entry_response.broker_order_id
+            || body.entry_response.order_id)) || '—';
+          var exitId = (body.exit_response && (body.exit_response.broker_order_id
+            || body.exit_response.order_id)) || '—';
+          showFeedback(
+            'Smoke test executed — entry ' + entryId + ', exit ' + exitId + '.',
+            'ok',
+            body
+          );
+          return;
+        }
+        // Failure path.
+        var firstBad = (body.checks || []).find(function (c) { return !c.ok; });
+        var hint = firstBad
+          ? firstBad.name + (firstBad.detail ? ' (' + firstBad.detail + ')' : '')
+          : (body && (body.message || body.status)) || 'failed';
+        showFeedback('Smoke test failed: ' + hint, 'bad', body);
+      })
+      .catch(function (err) {
+        smokeBtn.disabled = false;
+        showFeedback('Smoke test failed: ' + err, 'bad', null);
+      });
+  }
+
+  if (smokeBtn) {
+    smokeBtn.addEventListener('click', function () {
+      // First click → dry-run preview. If demo/live execution is
+      // already armed, prompt the operator for a second confirmation
+      // before placing real orders. Cancel keeps the dry-run safe path.
+      var armed = card.dataset.executionArmed === 'true';
+      if (armed) {
+        var phrase = window.prompt(
+          'Execution is armed. Type "smoke" to submit a real BUY entry and SELL exit on MES1! (1 contract). Cancel to run a dry-run preview instead.'
+        );
+        if (phrase === null) {
+          runSmokeTest(false, '');
+          return;
+        }
+        if ((phrase || '').trim() === 'smoke') {
+          runSmokeTest(true, 'smoke');
+          return;
+        }
+        showFeedback(
+          'Smoke test cancelled: confirmation must equal "smoke" exactly.',
+          'warn',
+          null
+        );
+        return;
+      }
+      runSmokeTest(false, '');
     });
   }
 
   // ---- Live engagement: verify → animate → enable ----
-  function writeLive(msg) {
-    if (!liveOut) return;
-    liveOut.hidden = false;
-    liveOut.textContent = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
-  }
-
   function runLiveEngagement() {
     var phrase = (liveConfirmInput && liveConfirmInput.value) || '';
     var ack = !!(liveAckInput && liveAckInput.checked);
     if (phrase !== livePhrase) {
-      writeLive('Confirmation phrase must equal ' + livePhrase + ' exactly.');
+      showFeedback(
+        'Failed: confirmation phrase must equal ' + livePhrase + ' exactly.',
+        'bad',
+        null
+      );
+      setStatusText('Live verification required');
       return;
     }
     if (!ack) {
-      writeLive('You must check the account acknowledgement box.');
+      showFeedback(
+        'Failed: you must check the account acknowledgement box.',
+        'bad',
+        null
+      );
+      setStatusText('Live verification required');
       return;
     }
-    writeLive('Authorizing account…');
-    setState('live-engaging', 'Live Engaging');
+    clearFeedback();
+    setBusy(true);
+    setStatusText('Authorizing account…');
+    setState('live-engaging');
     var animationStart = Date.now();
     var minDurationMs = 3000;
 
@@ -617,19 +829,26 @@
       var elapsed = Date.now() - animationStart;
       var wait = Math.max(0, minDurationMs - elapsed);
       window.setTimeout(function () {
+        setBusy(false);
         if (success) {
-          setState('live-armed', 'Live Armed');
-          writeLive(body || 'Live execution armed.');
-          window.setTimeout(function () { window.location.reload(); }, 600);
+          setState('live-armed');
+          setStatusText('Live armed', { armed: true });
+          showFeedback('Live execution armed.', 'ok', null);
+          // Hold the live-armed-enter animation visible briefly before
+          // reload so the operator sees the success cue land.
+          window.setTimeout(function () { window.location.reload(); }, 1400);
         } else {
-          // Failed gates or enable error → revert to Live Locked.
-          setState('live-locked', 'Live Locked');
-          writeLive(body || 'Live execution refused.');
+          setState('live-locked');
+          var reason = (body && (body.message || body.status))
+            || 'live execution refused';
+          var gates = (body && body.failed_gates) || [];
+          if (gates.length) reason += ' — ' + gates.join(', ');
+          setStatusText('Live verification required');
+          showFeedback('Failed: ' + reason, 'bad', body);
         }
       }, wait);
     }
 
-    // Step 1: verify gates without enabling.
     fetch('/api/topstep/live-execution/verify', { method: 'POST' })
       .then(function (r) { return r.json(); })
       .then(function (verifyBody) {
@@ -637,8 +856,7 @@
           finishEngagement(false, verifyBody || { ok: false, message: 'verify failed' });
           return;
         }
-        writeLive('Checking live gates… ok\nConfirming selected account…');
-        // Step 2: enable.
+        setStatusText('Confirming selected account…');
         return fetch('/api/topstep/live-execution/enable', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -646,11 +864,7 @@
         })
           .then(function (r) { return r.json(); })
           .then(function (enableBody) {
-            if (enableBody && enableBody.ok) {
-              finishEngagement(true, enableBody);
-            } else {
-              finishEngagement(false, enableBody);
-            }
+            finishEngagement(!!(enableBody && enableBody.ok), enableBody);
           });
       })
       .catch(function (err) {
@@ -661,7 +875,6 @@
   if (liveForm) {
     liveForm.addEventListener('submit', function (e) {
       e.preventDefault();
-      // Hide modal but keep status pulse running on the card.
       if (liveModal) {
         liveModal.hidden = true;
         liveModal.setAttribute('aria-hidden', 'true');
@@ -669,17 +882,8 @@
       runLiveEngagement();
     });
   }
-})();
 
-// ---- Ticker watch select → update contract id ----
-(function () {
-  var sel = document.getElementById('ticker-watch-select');
-  var out = document.getElementById('ticker-watch-contract');
-  if (!sel || !out) return;
-  sel.addEventListener('change', function () {
-    var opt = sel.options[sel.selectedIndex];
-    out.textContent = (opt && opt.dataset.contract) || '—';
-  });
+  syncSmokeVisibility();
 })();
 </script>
 {% endblock %}

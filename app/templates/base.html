@@ -8,8 +8,10 @@
 </head>
 <body>
 {% set path = request.url.path %}
-{% set mode_class = 'badge-paper' if execution_mode == 'paper' else ('badge-good' if execution_mode == 'live' else 'badge-info') %}
-{% set broker_class = 'badge-paper' if broker_provider == 'paper' else 'badge-warn' %}
+{# Mode + broker badges used to live in the topbar. They're gone now —
+   the Dashboard Execution card owns execution status. Only the
+   kill-switch toggle remains, because operators need it on every
+   page. #}
 {% set ks_class = 'badge-bad' if kill_switch_active else 'badge-good' %}
 {% set ks_text  = 'kill switch active' if kill_switch_active else 'kill switch off' %}
 
@@ -70,7 +72,7 @@
       </form>
       {% endif %}
       private local bridge<br>
-      paper-mode only
+      execution lives on the dashboard
     </div>
   </aside>
 
@@ -81,10 +83,6 @@
     <div class="status-strip">
       <span class="label">app</span>
       <span class="badge badge-info plain">{{ app_name or 'SignalBridge' }}</span>
-      <span class="label">mode</span>
-      <span class="badge {{ mode_class }}">{{ execution_mode }}</span>
-      <span class="label">broker</span>
-      <span class="badge {{ broker_class }}">{{ broker_provider }}</span>
 
       {# Header kill-switch toggle. Replaces the old dashboard card —
          always visible across pages so the operator can hit it
