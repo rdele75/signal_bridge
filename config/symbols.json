@@ -11,12 +11,12 @@
   },
   "NQ1!": {
     "paper": "NQ1!",
-    "topstep": "",
+    "topstep": "CON.F.US.ENQ.M26",
     "tradovate": "NQ"
   },
   "ES1!": {
     "paper": "ES1!",
-    "topstep": "",
+    "topstep": "CON.F.US.EP.M26",
     "tradovate": "ES"
   }
 }

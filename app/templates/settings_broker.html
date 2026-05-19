@@ -149,6 +149,127 @@
 </section>
 {% endif %}
 
+{# ---- Topstep Demo Execution controls + status ---- #}
+<section class="card section" id="topstep-demo-execution">
+  <div class="section-head">
+    <h3>Topstep Demo Execution</h3>
+    <span class="hint">demo/sim only · live/funded execution stays locked</span>
+  </div>
+  <div class="banner {% if demo_execution.state_kind == 'good' %}{% elif demo_execution.state_kind == 'warn' %}warn{% else %}warn{% endif %}">
+    <span class="t">State:</span>
+    <strong>{{ demo_execution.state_label }}</strong>
+    {% if demo_execution.is_live_locked %}
+      · live mode is blocked and cannot be armed
+    {% elif demo_execution.is_armed %}
+      · Topstep <code>/api/Order/place</code> is reachable for demo signals
+    {% else %}
+      · webhooks build dry-run previews and never POST
+    {% endif %}
+  </div>
+
+  <dl class="kv">
+    <dt>BROKER_PROVIDER</dt><dd><code>{{ demo_execution.broker_provider or '—' }}</code></dd>
+    <dt>EXECUTION_MODE</dt><dd><code>{{ demo_execution.execution_mode or '—' }}</code></dd>
+    <dt>ENABLE_TOPSTEP_ORDER_EXECUTION</dt>
+    <dd>
+      {% if demo_execution.enable_topstep_order_execution %}
+        <span class="badge badge-warn plain">true</span>
+      {% else %}
+        <span class="badge badge-good plain">false</span>
+      {% endif %}
+    </dd>
+    <dt>TOPSTEP_EXECUTION_CONFIRM</dt>
+    <dd><code>{{ demo_execution.topstep_execution_confirm or 'disabled' }}</code></dd>
+    <dt>ENABLE_LIVE_TRADING</dt>
+    <dd>
+      {% if demo_execution.enable_live_trading %}
+        <span class="badge badge-bad plain">true — locked</span>
+      {% else %}
+        <span class="badge badge-good plain">false (locked)</span>
+      {% endif %}
+    </dd>
+    <dt>selected account id</dt>
+    <dd><code>{{ demo_execution.selected_account_id or '—' }}</code></dd>
+    <dt>selected account name</dt>
+    <dd>{{ demo_execution.selected_account_name or '—' }}</dd>
+    <dt>canTrade</dt>
+    <dd>
+      {% if demo_execution.can_trade is true %}
+        <span class="badge badge-good plain">yes</span>
+      {% elif demo_execution.can_trade is false %}
+        <span class="badge badge-bad plain">no</span>
+      {% else %}
+        —
+      {% endif %}
+    </dd>
+    <dt>kill switch</dt>
+    <dd>
+      {% if demo_execution.kill_switch_active %}
+        <span class="badge badge-bad plain">active</span>
+      {% else %}
+        <span class="badge badge-good plain">off</span>
+      {% endif %}
+    </dd>
+  </dl>
+
+  {% if demo_execution.blockers %}
+    <p class="muted" style="margin: 6px 0 10px;">
+      Cannot arm demo execution yet:
+      <ul style="margin: 4px 0 0 20px;">
+        {% for b in demo_execution.blockers %}
+          <li>{{ b }}</li>
+        {% endfor %}
+      </ul>
+    </p>
+  {% endif %}
+
+  <div class="grid grid-2" style="margin-top: 10px;">
+    <form id="form-demo-execution-enable" class="form">
+      <h4 style="margin: 0 0 4px;">Enable Demo Execution</h4>
+      <p class="muted" style="margin: 0 0 8px;">
+        Type <code>{{ demo_execution.confirm_token }}</code> below to arm
+        demo-mode execution. Live trading stays locked regardless.
+      </p>
+      <div class="form-row">
+        <label for="demo_confirm">Confirmation token</label>
+        <input
+          id="demo_confirm"
+          name="confirm"
+          type="text"
+          autocomplete="off"
+          placeholder="{{ demo_execution.confirm_token }}"
+          {% if demo_execution.is_armed %}disabled{% endif %}
+        />
+      </div>
+      <div class="btn-row">
+        <button
+          type="submit"
+          class="btn btn-primary"
+          {% if not demo_execution.can_enable or demo_execution.is_armed %}disabled{% endif %}>
+          Enable Demo Execution
+        </button>
+      </div>
+    </form>
+
+    <form id="form-demo-execution-disable" class="form">
+      <h4 style="margin: 0 0 4px;">Disable Demo Execution</h4>
+      <p class="muted" style="margin: 0 0 8px;">
+        Returns Topstep to dry-run only. Broker provider and selected
+        account stay where you set them.
+      </p>
+      <div class="btn-row">
+        <button
+          type="submit"
+          class="btn"
+          {% if not demo_execution.is_armed and not demo_execution.enable_topstep_order_execution %}disabled{% endif %}>
+          Disable Demo Execution
+        </button>
+      </div>
+    </form>
+  </div>
+  <pre id="demo-execution-out" class="output" style="margin-top: 8px;">demo execution controls ready…</pre>
+</section>
+
 {# ---- Form: provider + mode + selected account (collapsible) ---- #}
 <section class="card section">
   <details class="collapsible">
@@ -446,5 +567,55 @@ if (_btnAccts) _btnAccts.addEventListener('click', async () => {
   const body = await _call('/api/topstep/accounts', 'GET');
   if (body) _renderAccountsList(body);
 });
+
+// -- Topstep demo-execution arm/disarm controls --
+const _demoOut = document.getElementById('demo-execution-out');
+function _writeDemoOut(body) {
+  if (_demoOut) _demoOut.textContent = JSON.stringify(body, null, 2);
+}
+
+const _formEnable = document.getElementById('form-demo-execution-enable');
+if (_formEnable) {
+  _formEnable.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const confirmEl = document.getElementById('demo_confirm');
+    const token = (confirmEl && confirmEl.value) || '';
+    if (_demoOut) _demoOut.textContent = 'arming demo execution…';
+    try {
+      const r = await fetch('/api/topstep/demo-execution/enable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: token }),
+      });
+      const body = await r.json();
+      _writeDemoOut(body);
+      if (body && body.ok) {
+        window.setTimeout(() => window.location.reload(), 600);
+      }
+    } catch (err) {
+      if (_demoOut) _demoOut.textContent = 'enable failed: ' + err;
+    }
+  });
+}
+
+const _formDisable = document.getElementById('form-demo-execution-disable');
+if (_formDisable) {
+  _formDisable.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (_demoOut) _demoOut.textContent = 'disabling demo execution…';
+    try {
+      const r = await fetch('/api/topstep/demo-execution/disable', {
+        method: 'POST',
+      });
+      const body = await r.json();
+      _writeDemoOut(body);
+      if (body && body.ok) {
+        window.setTimeout(() => window.location.reload(), 600);
+      }
+    } catch (err) {
+      if (_demoOut) _demoOut.textContent = 'disable failed: ' + err;
+    }
+  });
+}
 </script>
 {% endblock %}

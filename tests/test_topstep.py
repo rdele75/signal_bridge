@@ -1952,6 +1952,96 @@ def test_api_topstep_submit_test_order_posts_when_safety_passes(
     assert place_calls[0][1]["accountId"] == 5001
 
 
+def test_api_topstep_submit_test_order_rejects_unsupported_action(
+    make_app, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TOPSTEP_USERNAME", "trader42")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "5001")
+    _write_topstep_symbol_map(tmp_path)
+    app = make_app(provider="topstep")
+    _enable_demo_execution(app)
+
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/topstep/submit-test-order",
+            json={"symbol": "MES1!", "action": "EXIT", "contracts": 1},
+        )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["ok"] is False
+    assert body["status"] == "unsupported_action"
+    assert body["would_submit"] is False
+
+
+def test_api_topstep_submit_test_order_rejects_above_max_contracts(
+    make_app, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TOPSTEP_USERNAME", "trader42")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "5001")
+    monkeypatch.setenv("MAX_CONTRACTS_PER_TRADE", "1")
+    _write_topstep_symbol_map(tmp_path)
+    app = make_app(provider="topstep")
+    _enable_demo_execution(app)
+
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/topstep/submit-test-order",
+            json={"symbol": "MES1!", "action": "BUY", "contracts": 99},
+        )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["status"] == "contracts_above_max"
+    assert body["would_submit"] is False
+
+
+def test_api_topstep_submit_test_order_rejects_missing_mapping(
+    make_app, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TOPSTEP_USERNAME", "trader42")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "5001")
+    # Note: NO _write_topstep_symbol_map(tmp_path) — symbol map file
+    # doesn't exist, so resolve_explicit returns None.
+    app = make_app(provider="topstep")
+    _enable_demo_execution(app)
+
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/topstep/submit-test-order",
+            json={"symbol": "MES1!", "action": "BUY", "contracts": 1},
+        )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["status"] == "symbol_mapping_missing"
+    assert body["would_submit"] is False
+
+
+def test_api_topstep_submit_test_order_rejects_live_mode(
+    make_app, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TOPSTEP_USERNAME", "trader42")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "5001")
+    _write_topstep_symbol_map(tmp_path)
+    app = make_app(provider="topstep")
+    _enable_demo_execution(app)
+    # Bypass settings-layer validation: set execution_mode=live directly.
+    app.state.settings.execution_mode = "live"
+
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/topstep/submit-test-order",
+            json={"symbol": "MES1!", "action": "BUY", "contracts": 1},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["status"] == "live_execution_locked"
+    assert body["would_submit"] is False
+
+
 # ----------------------------------------------------------------------
 # Tests preserved from earlier phases
 # ----------------------------------------------------------------------

@@ -179,6 +179,26 @@ Response includes the normalized signal, account id, contract id,
 side, size, full order payload, the safety state, and **always**
 `would_submit: false`.
 
+## Metrics → Past Orders
+
+`/metrics` includes a **Past Orders** card that lists recent orders for
+the active broker:
+
+- **Paper** — pulled from `broker.get_orders()` (recent simulated
+  fills + signal rows).
+- **Topstep** — pulled from `broker.get_orders()` (Phase 1 read-only
+  `/api/Order/searchOpen` adapter). When ProjectX rejects or the
+  adapter has nothing yet, the card surfaces
+  `Topstep order history is not available yet.` and falls back to
+  journal rows that include `order_id` / `broker_order_id` or
+  dry-run payloads.
+- **Empty / failed states** — `No past orders yet.` or
+  `Topstep order history is not available yet.` are rendered instead
+  of fake data. The page never crashes when the broker raises.
+
+Columns: Time · Broker · Symbol · Side/Action · Size · Status ·
+Order ID · Source/Strategy.
+
 ## Demo/sim execution (Phase 3)
 
 Disabled by default. **All five** of the following must be true to
@@ -208,6 +228,64 @@ Behavior under each combination:
 | topstep  | live | any      | any     | refused (`live_execution_locked`) |
 | any      | any  | any      | any     | `ENABLE_LIVE_TRADING=true` → refused (`live_execution_locked`) |
 
+### Arming demo execution from the dashboard
+
+`/settings/broker` includes a **Topstep Demo Execution** card showing
+the current state plus arm/disarm forms. The card surfaces every
+safety switch (`BROKER_PROVIDER`, `EXECUTION_MODE`,
+`ENABLE_TOPSTEP_ORDER_EXECUTION`, `TOPSTEP_EXECUTION_CONFIRM`,
+`ENABLE_LIVE_TRADING`, selected account id, account name, `canTrade`)
+and labels the state as one of:
+
+- **Dry Run Active** — default; webhooks build previews and never POST.
+- **Demo Execution Armed** — all preconditions met; demo signals POST
+  to `/api/Order/place`.
+- **Live Locked** — `EXECUTION_MODE=live` or `ENABLE_LIVE_TRADING=true`
+  is set somehow; execution is blocked regardless of other switches.
+
+The **Enable Demo Execution** button requires typing `DEMO_ONLY`
+verbatim. It only flips three settings:
+
+```
+ENABLE_TOPSTEP_ORDER_EXECUTION = true
+TOPSTEP_EXECUTION_CONFIRM      = DEMO_ONLY
+EXECUTION_MODE                 = demo
+```
+
+It **never** sets `ENABLE_LIVE_TRADING` or `EXECUTION_MODE=live`.
+
+The **Disable Demo Execution** button returns to dry-run by setting
+`ENABLE_TOPSTEP_ORDER_EXECUTION=false` and
+`TOPSTEP_EXECUTION_CONFIRM=disabled`. Provider and selected account
+stay where they are.
+
+### `/api/topstep/demo-execution/enable`
+
+Admin-only JSON endpoint backing the Enable button. Body:
+
+```
+{ "confirm": "DEMO_ONLY" }
+```
+
+Rejected (HTTP 400, `ok: false`) when any of these is true:
+
+- `confirm` is not exactly `DEMO_ONLY` (`invalid_confirmation`)
+- `BROKER_PROVIDER` is not `topstep` (`broker_provider_not_topstep`)
+- no Topstep account is selected (`no_selected_account`)
+- `EXECUTION_MODE` is already `live` (`execution_mode_live_blocked`)
+- `ENABLE_LIVE_TRADING` is true (`live_trading_locked`)
+- kill switch is active (`kill_switch_active`)
+
+On success the response is `status: demo_execution_armed` and the
+post-flip values of every safety switch.
+
+### `/api/topstep/demo-execution/disable`
+
+Admin-only JSON endpoint backing the Disable button. No body. Sets
+`ENABLE_TOPSTEP_ORDER_EXECUTION=false` and
+`TOPSTEP_EXECUTION_CONFIRM=disabled`. Response:
+`status: demo_execution_disabled`.
+
 ### `/api/topstep/submit-test-order`
 
 A manual demo-order helper. Requires admin auth and obeys every
@@ -220,9 +298,22 @@ Content-Type: application/json
 { "symbol": "MES1!", "action": "BUY", "contracts": 1 }
 ```
 
-If any safety gate is open the response is an `ok: false` envelope
-labeled with the failing gate (e.g. `topstep_execution_disabled`,
-`execution_mode_not_demo`, `live_execution_locked`).
+Additional input rules (HTTP 400 with stable status labels):
+
+- `action` must be `BUY` or `SELL` (`unsupported_action`).
+- `contracts` must be a positive integer ≤ `MAX_CONTRACTS_PER_TRADE`
+  (`invalid_contracts` / `contracts_above_max`).
+- `symbol` must have a Topstep contract id configured in the Symbols
+  map (`symbol_mapping_missing`).
+- `EXECUTION_MODE=live` or `ENABLE_LIVE_TRADING=true` short-circuits
+  with `live_execution_locked` — the helper never works in live mode.
+
+If any other safety gate is open the response is an `ok: false`
+envelope labeled with the failing gate (e.g.
+`topstep_execution_disabled`, `execution_mode_not_demo`,
+`live_execution_locked`).
+
+**Recommended first demo test:** 1 contract of MES (`MES1!`).
 
 ## Webhook behavior summary
 
@@ -301,17 +392,29 @@ Secrets are never returned in full.
 4. Flip `BROKER_PROVIDER=topstep` and restart. Webhooks now dry-run.
    The dashboard shows the built payload but nothing leaves the
    building.
-5. To enable demo/sim execution later: flip `EXECUTION_MODE=demo`,
-   `ENABLE_TOPSTEP_ORDER_EXECUTION=true`,
-   `TOPSTEP_EXECUTION_CONFIRM=DEMO_ONLY`, and confirm
-   `ENABLE_LIVE_TRADING=false`.
+5. To arm demo/sim execution later, open `/settings/broker`,
+   scroll to **Topstep Demo Execution**, type `DEMO_ONLY` into the
+   confirmation field, and click **Enable Demo Execution**. That
+   flips:
+   - `EXECUTION_MODE=demo`
+   - `ENABLE_TOPSTEP_ORDER_EXECUTION=true`
+   - `TOPSTEP_EXECUTION_CONFIRM=DEMO_ONLY`
+
+   `ENABLE_LIVE_TRADING` stays false (locked). Click **Disable
+   Demo Execution** to return to dry-run.
+6. Recommended first demo test: 1 contract of MES (`MES1!`).
 
 ## Secrets / safety reminders
 
 - **Never share or commit API keys or tokens.** `.env` is gitignored.
   `TOPSTEP_API_KEY` and `TOPSTEP_TOKEN` are masked in the dashboard
   and in API responses.
+- **Dry-run is the default** Topstep behavior. Demo execution is
+  disabled out of the box and the dashboard arm action requires the
+  `DEMO_ONLY` confirmation token.
 - Live/funded execution stays locked until a future phase. There is
-  no path through the dashboard to enable it in this build.
+  no path through the dashboard to enable it in this build, and the
+  arm endpoint refuses if `EXECUTION_MODE=live` or
+  `ENABLE_LIVE_TRADING=true`.
 - The copier, MCP server, bracket orders, and the dashboard overhaul
   are explicitly out of scope here.

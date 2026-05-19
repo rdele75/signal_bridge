@@ -62,6 +62,92 @@ TEMPLATES_DIR = _HERE / "templates"
 STATIC_DIR = _HERE / "static"
 
 
+_DEMO_CONFIRM_TOKEN = "DEMO_ONLY"
+
+
+def _demo_execution_view(
+    *,
+    settings: Settings,
+    broker_snapshot: dict[str, Any],
+    kill_switch,
+) -> dict[str, Any]:
+    """Build the Topstep Demo Execution status panel payload.
+
+    Surfaces every safety switch in one place plus a derived state
+    label (Dry Run Active / Demo Execution Armed / Live Locked). The
+    Enable button is only offered when every prerequisite except the
+    confirm token is met — flipping the confirm token to ``DEMO_ONLY``
+    is what arms execution.
+    """
+    selected_account_id = settings.resolved_account_id or ""
+    selected_account_name = broker_snapshot.get("selected_account_name")
+    can_trade = broker_snapshot.get("can_trade")
+
+    is_live_locked = (
+        settings.execution_mode == "live"
+        or bool(settings.enable_live_trading)
+    )
+    is_armed = (
+        settings.resolved_provider == "topstep"
+        and settings.execution_mode == "demo"
+        and bool(settings.enable_topstep_order_execution)
+        and (settings.topstep_execution_confirm or "") == _DEMO_CONFIRM_TOKEN
+        and bool(selected_account_id)
+        and not is_live_locked
+        and not kill_switch.is_active()
+    )
+    if is_live_locked:
+        state_label = "Live Locked"
+        state_kind = "bad"
+    elif is_armed:
+        state_label = "Demo Execution Armed"
+        state_kind = "warn"
+    else:
+        state_label = "Dry Run Active"
+        state_kind = "good"
+
+    reasons_to_block: list[str] = []
+    if settings.resolved_provider != "topstep":
+        reasons_to_block.append(
+            f"BROKER_PROVIDER is {settings.resolved_provider!r} (need 'topstep')"
+        )
+    if settings.execution_mode != "demo":
+        reasons_to_block.append(
+            f"EXECUTION_MODE is {settings.execution_mode!r} (need 'demo')"
+        )
+    if not selected_account_id:
+        reasons_to_block.append("no selected account id")
+    if is_live_locked:
+        reasons_to_block.append(
+            "live mode/kill is set — cannot arm demo execution"
+        )
+    if kill_switch.is_active():
+        reasons_to_block.append("kill switch is active")
+
+    can_enable = not is_live_locked and not kill_switch.is_active()
+
+    return {
+        "state_label": state_label,
+        "state_kind": state_kind,
+        "is_armed": is_armed,
+        "is_live_locked": is_live_locked,
+        "broker_provider": settings.resolved_provider,
+        "execution_mode": settings.execution_mode,
+        "enable_topstep_order_execution": (
+            settings.enable_topstep_order_execution
+        ),
+        "topstep_execution_confirm": settings.topstep_execution_confirm,
+        "enable_live_trading": settings.enable_live_trading,
+        "selected_account_id": selected_account_id or None,
+        "selected_account_name": selected_account_name,
+        "can_trade": can_trade,
+        "kill_switch_active": kill_switch.is_active(),
+        "can_enable": can_enable,
+        "blockers": reasons_to_block,
+        "confirm_token": _DEMO_CONFIRM_TOKEN,
+    }
+
+
 def _mask_identifier(value: str) -> str:
     """Return a masked version of a username-like identifier.
 
@@ -231,7 +317,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/metrics", dependencies=[Depends(require_admin_api)])
     def api_metrics() -> dict[str, Any]:
-        return metrics_summary(journal=journal)
+        return metrics_summary(journal=journal, broker=broker)
 
     @app.get(
         "/api/journal/recent", dependencies=[Depends(require_admin_api)]
@@ -592,6 +678,20 @@ def create_app() -> FastAPI:
                 },
             )
 
+        if settings.execution_mode == "live" or settings.enable_live_trading:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "status": "live_execution_locked",
+                    "message": (
+                        "EXECUTION_MODE=live (or ENABLE_LIVE_TRADING) is "
+                        "set — live execution is intentionally locked"
+                    ),
+                    "would_submit": False,
+                },
+            )
+
         try:
             body = await request.json()
         except Exception:
@@ -602,22 +702,89 @@ def create_app() -> FastAPI:
             str(body.get("symbol") or "").strip()
             or (settings.allowed_symbols[0] if settings.allowed_symbols else "MES1!")
         )
-        action = str(body.get("action") or "BUY").upper()
-        contracts = int(body.get("contracts") or 1)
+        action_raw = str(body.get("action") or "BUY").strip().upper()
+        if action_raw not in {"BUY", "SELL"}:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "unsupported_action",
+                    "message": (
+                        f"action must be BUY or SELL (got {action_raw!r})"
+                    ),
+                    "would_submit": False,
+                },
+            )
 
-        broker_symbol = (
-            symbol_map.resolve(symbol, broker.provider)
+        try:
+            contracts = int(body.get("contracts") or 1)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "invalid_contracts",
+                    "message": (
+                        "contracts must be a positive integer"
+                    ),
+                    "would_submit": False,
+                },
+            )
+        if contracts < 1:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "invalid_contracts",
+                    "message": "contracts must be >= 1",
+                    "would_submit": False,
+                },
+            )
+        if contracts > settings.max_contracts_per_trade:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "contracts_above_max",
+                    "message": (
+                        f"contracts={contracts} exceeds "
+                        f"MAX_CONTRACTS_PER_TRADE="
+                        f"{settings.max_contracts_per_trade}"
+                    ),
+                    "would_submit": False,
+                },
+            )
+
+        # Hard reject when the operator forgot to map this ticker — the
+        # builder would refuse later anyway, but failing here gives a
+        # clearer 400 with a stable status label tests can assert on.
+        explicit_mapping = (
+            symbol_map.resolve_explicit(symbol, broker.provider)
             if symbol_map is not None
-            else symbol
+            else None
         )
+        if not explicit_mapping:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "symbol_mapping_missing",
+                    "message": (
+                        f"Topstep contract id missing for {symbol!r} —"
+                        " add it in Configuration > Symbols"
+                    ),
+                    "would_submit": False,
+                },
+            )
+        broker_symbol = explicit_mapping
         signal = NormalizedSignal(
             source="manual_test",
             strategy="topstep_submit_test_order",
             symbol=symbol,
             broker_symbol=broker_symbol,
             exchange=None,
-            action=action,
-            contracts=max(1, contracts),
+            action=action_raw,
+            contracts=contracts,
             price=None,
             order_id=body.get("order_id"),
             comment="topstep_submit_test_order",
@@ -628,6 +795,246 @@ def create_app() -> FastAPI:
         topstep = _topstep_adapter_for_admin()
         result = topstep.submit_market_order(signal, symbol_map=symbol_map)
         return JSONResponse(status_code=200, content=result)
+
+    @app.post(
+        "/api/topstep/demo-execution/enable",
+        dependencies=[Depends(require_admin_api)],
+    )
+    async def api_topstep_demo_execution_enable(
+        request: Request,
+    ) -> JSONResponse:
+        """Arm Topstep demo execution.
+
+        Hard rules (any failure → 400 with structured envelope):
+
+          * Confirmation text must equal ``DEMO_ONLY``.
+          * BROKER_PROVIDER must already be ``topstep`` (we never flip it
+            for the operator — that requires a restart anyway).
+          * A Topstep account must be selected (numeric or otherwise).
+          * EXECUTION_MODE must not be ``live`` (it's blocked at the
+            settings layer too — this is defense in depth).
+          * The kill switch must not be active.
+
+        Sets:
+
+          * ``ENABLE_TOPSTEP_ORDER_EXECUTION = true``
+          * ``TOPSTEP_EXECUTION_CONFIRM = DEMO_ONLY``
+          * ``EXECUTION_MODE = demo`` (only when not already live)
+
+        Never touches ``ENABLE_LIVE_TRADING``. Live/funded execution
+        stays locked.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        body = body if isinstance(body, dict) else {}
+        confirm = str(body.get("confirm") or "").strip()
+        if confirm != _DEMO_CONFIRM_TOKEN:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "invalid_confirmation",
+                    "message": (
+                        "confirmation token must equal "
+                        f"{_DEMO_CONFIRM_TOKEN!r}"
+                    ),
+                },
+            )
+
+        if settings.resolved_provider != "topstep":
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "broker_provider_not_topstep",
+                    "message": (
+                        f"BROKER_PROVIDER is {settings.resolved_provider!r}"
+                        " — set it to 'topstep' before arming demo execution"
+                    ),
+                },
+            )
+
+        selected_id = settings.resolved_account_id or ""
+        if not selected_id:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "no_selected_account",
+                    "message": (
+                        "no Topstep account selected — set "
+                        "SELECTED_ACCOUNT_ID / TOPSTEP_ACCOUNT_ID first"
+                    ),
+                },
+            )
+
+        if settings.execution_mode == "live":
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "execution_mode_live_blocked",
+                    "message": (
+                        "EXECUTION_MODE=live is blocked — cannot arm demo"
+                    ),
+                },
+            )
+
+        if settings.enable_live_trading:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "live_trading_locked",
+                    "message": (
+                        "ENABLE_LIVE_TRADING is true (locked) — refusing "
+                        "to touch execution settings"
+                    ),
+                },
+            )
+
+        if kill_switch.is_active():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "kill_switch_active",
+                    "message": (
+                        "kill switch is active — deactivate it before "
+                        "arming demo execution"
+                    ),
+                },
+            )
+
+        try:
+            execution_mode = settings_store.update_typed(
+                "EXECUTION_MODE", "demo"
+            )
+            order_exec_flag = settings_store.update_typed(
+                "ENABLE_TOPSTEP_ORDER_EXECUTION", "true"
+            )
+            confirm_token = settings_store.update_typed(
+                "TOPSTEP_EXECUTION_CONFIRM", _DEMO_CONFIRM_TOKEN
+            )
+        except SettingsValidationError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "settings_error",
+                    "message": str(exc),
+                },
+            )
+
+        settings_store.apply_to_settings(
+            settings, "EXECUTION_MODE", execution_mode
+        )
+        settings_store.apply_to_settings(
+            settings, "ENABLE_TOPSTEP_ORDER_EXECUTION", order_exec_flag
+        )
+        settings_store.apply_to_settings(
+            settings, "TOPSTEP_EXECUTION_CONFIRM", confirm_token
+        )
+        # Mirror onto the live broker so the next webhook reflects the
+        # new state without a restart.
+        if isinstance(broker, TopstepBroker):
+            broker.execution_mode = execution_mode
+            broker.enable_order_execution = order_exec_flag
+            broker.execution_confirm = confirm_token
+
+        log.info(
+            "topstep demo execution armed: provider=%s mode=%s account=%s",
+            settings.resolved_provider,
+            settings.execution_mode,
+            settings.resolved_account_id,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "status": "demo_execution_armed",
+                "broker_provider": settings.resolved_provider,
+                "execution_mode": settings.execution_mode,
+                "enable_topstep_order_execution": (
+                    settings.enable_topstep_order_execution
+                ),
+                "topstep_execution_confirm": (
+                    settings.topstep_execution_confirm
+                ),
+                "enable_live_trading": settings.enable_live_trading,
+                "selected_account_id": settings.resolved_account_id or None,
+                "message": (
+                    "Demo execution armed. Live/funded execution is "
+                    "still locked."
+                ),
+            },
+        )
+
+    @app.post(
+        "/api/topstep/demo-execution/disable",
+        dependencies=[Depends(require_admin_api)],
+    )
+    def api_topstep_demo_execution_disable() -> JSONResponse:
+        """Disarm Topstep demo execution.
+
+        Sets ``ENABLE_TOPSTEP_ORDER_EXECUTION=false`` and
+        ``TOPSTEP_EXECUTION_CONFIRM=disabled``. Provider and account
+        stay where they are.
+        """
+        try:
+            order_exec_flag = settings_store.update_typed(
+                "ENABLE_TOPSTEP_ORDER_EXECUTION", "false"
+            )
+            confirm_token = settings_store.update_typed(
+                "TOPSTEP_EXECUTION_CONFIRM", "disabled"
+            )
+        except SettingsValidationError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "settings_error",
+                    "message": str(exc),
+                },
+            )
+
+        settings_store.apply_to_settings(
+            settings, "ENABLE_TOPSTEP_ORDER_EXECUTION", order_exec_flag
+        )
+        settings_store.apply_to_settings(
+            settings, "TOPSTEP_EXECUTION_CONFIRM", confirm_token
+        )
+        if isinstance(broker, TopstepBroker):
+            broker.enable_order_execution = order_exec_flag
+            broker.execution_confirm = confirm_token
+
+        log.info(
+            "topstep demo execution disabled: provider=%s mode=%s",
+            settings.resolved_provider,
+            settings.execution_mode,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "status": "demo_execution_disabled",
+                "broker_provider": settings.resolved_provider,
+                "execution_mode": settings.execution_mode,
+                "enable_topstep_order_execution": (
+                    settings.enable_topstep_order_execution
+                ),
+                "topstep_execution_confirm": (
+                    settings.topstep_execution_confirm
+                ),
+                "enable_live_trading": settings.enable_live_trading,
+                "message": (
+                    "Demo execution disabled. Topstep webhooks build "
+                    "dry-run previews only."
+                ),
+            },
+        )
 
     @app.post(
         "/api/topstep/select-account",
@@ -809,6 +1216,11 @@ def create_app() -> FastAPI:
         api_key_preview = (
             f"…{api_key[-4:]}" if len(api_key) >= 4 else ""
         )
+        demo_exec = _demo_execution_view(
+            settings=settings,
+            broker_snapshot=broker_snapshot,
+            kill_switch=kill_switch,
+        )
         ctx.update(
             {
                 "topstep": {
@@ -828,6 +1240,7 @@ def create_app() -> FastAPI:
                     "token_cached": bool(settings.topstep_token),
                     "token_expires_at": settings.topstep_token_expires_at or "",
                 },
+                "demo_execution": demo_exec,
                 "tradovate": {
                     "username_set": bool(settings.tradovate_username),
                     "username_preview": _mask_identifier(settings.tradovate_username),
@@ -1408,7 +1821,7 @@ def create_app() -> FastAPI:
     )
     def page_metrics(request: Request) -> HTMLResponse:
         ctx = _page_ctx(request)
-        ctx["m"] = metrics_summary(journal=journal)
+        ctx["m"] = metrics_summary(journal=journal, broker=broker)
         return templates.TemplateResponse(request, "metrics.html", ctx)
 
     @app.get(

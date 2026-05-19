@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+# sbctl — SignalBridge control script.
+#
+# Wraps uvicorn so the operator doesn't have to retype the full command.
+# All state lives under the SignalBridge project root:
+#
+#   runtime/signalbridge.pid   live PID of the running uvicorn (if any)
+#   logs/server.out            captured stdout/stderr of the server
+#   logs/signalbridge.log      application logger output (rotated)
+#
+# Commands: start | stop | restart | status | logs | health
+#
+# Defaults to host 127.0.0.1 and port 8000. APP_HOST/APP_PORT in .env
+# override; pass --host / --port to override the env. Tailscale Funnel
+# (and any other public proxy) should forward to 127.0.0.1:8000.
+set -euo pipefail
+
+# Resolve PROJECT_ROOT from the script's location so `sbctl` works the
+# same whether invoked directly or via a ~/.local/bin symlink.
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+PROJECT_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+
+RUNTIME_DIR="$PROJECT_ROOT/runtime"
+LOGS_DIR="$PROJECT_ROOT/logs"
+PID_FILE="$RUNTIME_DIR/signalbridge.pid"
+SERVER_OUT="$LOGS_DIR/server.out"
+APP_LOG="$LOGS_DIR/signalbridge.log"
+
+DEFAULT_HOST="127.0.0.1"
+DEFAULT_PORT="8000"
+
+# ----- helpers -----
+
+err() { echo "sbctl: $*" >&2; }
+info() { echo "[sbctl] $*"; }
+
+ensure_dirs() {
+  mkdir -p "$RUNTIME_DIR" "$LOGS_DIR"
+}
+
+load_env_host_port() {
+  # Source .env so APP_HOST / APP_PORT propagate, but only export those
+  # two — sourcing the whole file blindly could clobber values the
+  # operator is intentionally controlling via shell env.
+  HOST_VALUE="$DEFAULT_HOST"
+  PORT_VALUE="$DEFAULT_PORT"
+  if [ -f "$PROJECT_ROOT/.env" ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        APP_HOST=*) HOST_VALUE="${line#APP_HOST=}" ;;
+        APP_PORT=*) PORT_VALUE="${line#APP_PORT=}" ;;
+      esac
+    done < "$PROJECT_ROOT/.env"
+  fi
+  # Strip surrounding quotes if present.
+  HOST_VALUE="${HOST_VALUE%\"}"; HOST_VALUE="${HOST_VALUE#\"}"
+  HOST_VALUE="${HOST_VALUE%\'}"; HOST_VALUE="${HOST_VALUE#\'}"
+  PORT_VALUE="${PORT_VALUE%\"}"; PORT_VALUE="${PORT_VALUE#\"}"
+  PORT_VALUE="${PORT_VALUE%\'}"; PORT_VALUE="${PORT_VALUE#\'}"
+}
+
+read_pid() {
+  if [ -f "$PID_FILE" ]; then
+    cat "$PID_FILE" 2>/dev/null || true
+  fi
+}
+
+pid_alive() {
+  local pid="$1"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+port_listener_pid() {
+  # Best-effort: returns the PID listening on $1 (PORT_VALUE), if any.
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti ":$port" 2>/dev/null | head -n 1 || true
+  elif command -v ss >/dev/null 2>&1; then
+    ss -ltnpH "sport = :$port" 2>/dev/null \
+      | grep -oE 'pid=[0-9]+' | head -n 1 | cut -d= -f2 || true
+  fi
+}
+
+# ----- commands -----
+
+cmd_start() {
+  ensure_dirs
+  load_env_host_port
+
+  local existing_pid
+  existing_pid="$(read_pid)"
+  if pid_alive "$existing_pid"; then
+    info "already running (pid $existing_pid) on $HOST_VALUE:$PORT_VALUE"
+    return 0
+  fi
+
+  # Stale pid file — clear it before starting fresh.
+  if [ -f "$PID_FILE" ]; then
+    rm -f "$PID_FILE"
+  fi
+
+  local listener
+  listener="$(port_listener_pid "$PORT_VALUE")"
+  if [ -n "$listener" ]; then
+    err "port $PORT_VALUE is already in use by pid $listener"
+    err "stop that process (or run 'sbctl stop') before starting"
+    return 1
+  fi
+
+  cd "$PROJECT_ROOT"
+
+  if [ -f ".venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+  fi
+
+  info "starting uvicorn on $HOST_VALUE:$PORT_VALUE"
+  # nohup + setsid keeps the server alive after the controlling shell
+  # exits. stdout/stderr land in $SERVER_OUT; the application logger
+  # writes its own rotated file at $APP_LOG.
+  nohup setsid python -m uvicorn app.main:app \
+    --host "$HOST_VALUE" --port "$PORT_VALUE" \
+    >>"$SERVER_OUT" 2>&1 < /dev/null &
+  local new_pid=$!
+  echo "$new_pid" > "$PID_FILE"
+  # Give uvicorn a beat to bind the port so the message is accurate.
+  sleep 0.5
+  if pid_alive "$new_pid"; then
+    info "started (pid $new_pid); logs: $SERVER_OUT"
+  else
+    err "process exited immediately — check $SERVER_OUT"
+    rm -f "$PID_FILE"
+    return 1
+  fi
+}
+
+cmd_stop() {
+  load_env_host_port
+  local pid
+  pid="$(read_pid)"
+
+  if ! pid_alive "$pid"; then
+    # PID file missing or stale — fall back to whatever owns the port.
+    pid="$(port_listener_pid "$PORT_VALUE")"
+  fi
+
+  if [ -z "$pid" ]; then
+    info "nothing to stop"
+    [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
+    return 0
+  fi
+
+  info "stopping pid $pid"
+  # Kill the whole process group so child workers go with the parent.
+  if kill -TERM "-$pid" 2>/dev/null; then
+    :
+  else
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+
+  local i=0
+  while pid_alive "$pid" && [ "$i" -lt 20 ]; do
+    sleep 0.25
+    i=$((i + 1))
+  done
+  if pid_alive "$pid"; then
+    err "process did not exit after SIGTERM; sending SIGKILL"
+    kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  fi
+  [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
+  info "stopped"
+}
+
+cmd_restart() {
+  cmd_stop || true
+  cmd_start
+}
+
+cmd_status() {
+  ensure_dirs
+  load_env_host_port
+  local pid running
+  pid="$(read_pid)"
+  if pid_alive "$pid"; then
+    running="yes"
+  else
+    running="no"
+    pid=""
+  fi
+
+  echo "project    : $PROJECT_ROOT"
+  echo "pid file   : $PID_FILE"
+  echo "running    : $running"
+  [ -n "$pid" ] && echo "pid        : $pid"
+  echo "bind       : $HOST_VALUE:$PORT_VALUE"
+
+  local listener
+  listener="$(port_listener_pid "$PORT_VALUE")"
+  if [ -n "$listener" ]; then
+    echo "port owner : pid $listener"
+  else
+    echo "port owner : (none)"
+  fi
+
+  if command -v curl >/dev/null 2>&1; then
+    local health
+    health="$(curl -sf --max-time 2 \
+      "http://$HOST_VALUE:$PORT_VALUE/health" 2>/dev/null || true)"
+    if [ -n "$health" ]; then
+      echo "health     : $health"
+    else
+      echo "health     : (unreachable)"
+    fi
+  else
+    echo "health     : (curl not installed)"
+  fi
+}
+
+cmd_logs() {
+  ensure_dirs
+  local files=()
+  [ -f "$SERVER_OUT" ] && files+=("$SERVER_OUT")
+  [ -f "$APP_LOG" ] && files+=("$APP_LOG")
+  if [ "${#files[@]}" -eq 0 ]; then
+    info "no logs yet; expected $APP_LOG (and $SERVER_OUT after start)"
+    return 0
+  fi
+  info "tailing: ${files[*]} (Ctrl+C to stop)"
+  # `tail -F` keeps following across log rotation; safe for both files.
+  exec tail -n 100 -F "${files[@]}"
+}
+
+cmd_health() {
+  load_env_host_port
+  if ! command -v curl >/dev/null 2>&1; then
+    err "curl is not installed"
+    return 1
+  fi
+  curl -sf --max-time 5 "http://$HOST_VALUE:$PORT_VALUE/health"
+  local rc=$?
+  echo
+  return $rc
+}
+
+usage() {
+  cat <<'EOF'
+sbctl — SignalBridge control script
+
+Usage:
+  sbctl start      start uvicorn in the background (writes runtime/signalbridge.pid)
+  sbctl stop       stop the running uvicorn
+  sbctl restart    stop then start
+  sbctl status     show pid / port / health
+  sbctl logs       tail logs/server.out and logs/signalbridge.log
+  sbctl health     curl /health and print the response
+
+Reads APP_HOST / APP_PORT from .env if present; defaults to 127.0.0.1:8000.
+EOF
+}
+
+# ----- entrypoint -----
+
+cmd="${1:-}"
+case "$cmd" in
+  start)   cmd_start ;;
+  stop)    cmd_stop ;;
+  restart) cmd_restart ;;
+  status)  cmd_status ;;
+  logs)    cmd_logs ;;
+  health)  cmd_health ;;
+  ""|-h|--help|help) usage ;;
+  *)
+    err "unknown command: $cmd"
+    usage
+    exit 2
+    ;;
+esac

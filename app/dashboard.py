@@ -341,7 +341,11 @@ def system_summary(
     }
 
 
-def metrics_summary(*, journal: Journal) -> dict[str, Any]:
+def metrics_summary(
+    *,
+    journal: Journal,
+    broker: Optional[BrokerBase] = None,
+) -> dict[str, Any]:
     closed = journal.closed_trade_stats()
     series = profit_series(journal, limit=100)
     return {
@@ -361,7 +365,222 @@ def metrics_summary(*, journal: Journal) -> dict[str, Any]:
         "daily_pnl": journal.get_daily_pnl(),
         "profit_series": series,
         "profit_chart": _profit_chart(series),
+        "past_orders": past_orders_summary(broker=broker, journal=journal),
     }
+
+
+def past_orders_summary(
+    *,
+    broker: Optional[BrokerBase],
+    journal: Journal,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Return a normalized "past orders" view for the metrics page.
+
+    Tries the active broker's ``get_orders()`` first. Falls back to the
+    journal when the broker has no order history (or returns
+    ``not_implemented``). The returned shape is always safe to render:
+
+      {
+        "rows": [...],
+        "source": "broker_paper" | "broker_topstep" | "journal",
+        "status": "ok" | "empty" | "broker_unavailable" | "fallback_journal",
+        "message": str,
+        "provider": str,
+        "broker_status_label": str | None,
+      }
+
+    No fabrication: when neither the broker nor the journal has rows,
+    the empty list is returned with an explanatory message.
+    """
+    provider = getattr(broker, "provider", "") or ""
+
+    broker_resp: dict[str, Any] = {}
+    broker_rows: list[dict[str, Any]] = []
+    broker_ok = False
+    broker_not_implemented = False
+    if broker is not None:
+        try:
+            broker_resp = broker.get_orders() or {}
+        except Exception:  # pragma: no cover - defensive
+            broker_resp = {}
+        if isinstance(broker_resp, dict):
+            broker_ok = bool(broker_resp.get("ok"))
+            broker_not_implemented = bool(
+                broker_resp.get("not_implemented")
+            )
+            raw_rows = broker_resp.get("orders") or []
+            if isinstance(raw_rows, list):
+                broker_rows = [
+                    _normalize_broker_order_row(r, provider=provider)
+                    for r in raw_rows
+                    if isinstance(r, dict)
+                ]
+
+    broker_status_label = (
+        str(broker_resp.get("status")) if broker_resp.get("status") else None
+    )
+
+    if broker_ok and broker_rows:
+        rows = broker_rows[:limit]
+        return {
+            "rows": rows,
+            "source": f"broker_{provider}" if provider else "broker",
+            "status": "ok",
+            "message": f"{len(rows)} order(s) from {provider or 'broker'}",
+            "provider": provider,
+            "broker_status_label": broker_status_label,
+        }
+
+    if broker_ok and not broker_rows:
+        if provider == "topstep":
+            message = "No broker orders yet."
+        elif provider == "paper":
+            message = "No past orders yet."
+        else:
+            message = "No broker orders yet."
+        return {
+            "rows": [],
+            "source": f"broker_{provider}" if provider else "broker",
+            "status": "empty",
+            "message": message,
+            "provider": provider,
+            "broker_status_label": broker_status_label,
+        }
+
+    # Broker is unavailable (not_implemented, auth_failed, network, etc.) —
+    # fall back to the journal. Never fabricate.
+    journal_rows = _journal_past_orders(journal=journal, limit=limit)
+
+    if provider == "topstep" and broker_not_implemented and not journal_rows:
+        return {
+            "rows": [],
+            "source": "journal",
+            "status": "topstep_not_available",
+            "message": "Topstep order history is not available yet.",
+            "provider": provider,
+            "broker_status_label": broker_status_label,
+        }
+
+    if not journal_rows:
+        return {
+            "rows": [],
+            "source": "journal",
+            "status": "empty",
+            "message": "No past orders yet.",
+            "provider": provider,
+            "broker_status_label": broker_status_label,
+        }
+
+    return {
+        "rows": journal_rows[:limit],
+        "source": "journal",
+        "status": "fallback_journal",
+        "message": (
+            f"{len(journal_rows[:limit])} signal(s) from local journal"
+        ),
+        "provider": provider,
+        "broker_status_label": broker_status_label,
+    }
+
+
+def _normalize_broker_order_row(
+    row: dict[str, Any], *, provider: str
+) -> dict[str, Any]:
+    """Project a broker ``get_orders`` row into the shape the metrics
+    template renders.
+
+    Both the paper adapter (signal-shaped rows) and the Topstep adapter
+    (ProjectX raw order rows) feed through here so the template stays
+    dumb. Unknown fields are passed through as ``None`` rather than
+    fabricated.
+    """
+    time_value = (
+        row.get("received_at")
+        or row.get("creationTimestamp")
+        or row.get("updateTimestamp")
+        or row.get("time")
+    )
+    symbol = (
+        row.get("symbol")
+        or row.get("broker_symbol")
+        or row.get("contractId")
+    )
+    action = row.get("action")
+    if action is None and "side" in row:
+        side_raw = row.get("side")
+        if side_raw == 0:
+            action = "BUY"
+        elif side_raw == 1:
+            action = "SELL"
+        else:
+            action = str(side_raw) if side_raw is not None else None
+    size = row.get("contracts")
+    if size is None:
+        size = row.get("size")
+    status = (
+        row.get("status")
+        or row.get("decision")
+        or row.get("rejection_reason")
+        or row.get("state")
+    )
+    order_id = (
+        row.get("order_id") or row.get("orderId") or row.get("id")
+    )
+    source = row.get("source") or row.get("customTag")
+    strategy = row.get("strategy")
+    source_label = source or strategy or row.get("execution_mode")
+    return {
+        "time": time_value,
+        "broker": row.get("broker_provider") or provider or None,
+        "symbol": symbol,
+        "action": action,
+        "size": size,
+        "status": status,
+        "order_id": str(order_id) if order_id is not None else None,
+        "source": source_label,
+        "strategy": strategy,
+    }
+
+
+def _journal_past_orders(
+    *, journal: Journal, limit: int
+) -> list[dict[str, Any]]:
+    """Fall-back order rows derived from the signal journal.
+
+    Only keeps signals that actually represent an order attempt —
+    either they have a real ``order_id``/``broker_order_id`` or
+    ``execution_result`` carries a dry-run payload. This stops the
+    table from filling up with malformed-payload rejection rows.
+    """
+    rows = journal.list_recent_signals(limit=max(limit * 4, limit))
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        if not r.get("order_id") and r.get("decision") != "accepted":
+            # Pre-risk rejections without an order id aren't useful here.
+            if not r.get("symbol") or not r.get("action"):
+                continue
+        status = r.get("decision") or "unknown"
+        if r.get("rejection_reason"):
+            status = f"{status}:{r.get('rejection_reason')}"
+        out.append(
+            {
+                "time": r.get("received_at"),
+                "broker": r.get("broker_provider"),
+                "symbol": r.get("symbol") or r.get("broker_symbol"),
+                "action": r.get("action"),
+                "size": r.get("contracts"),
+                "status": status,
+                "order_id": (
+                    str(r["order_id"]) if r.get("order_id") else None
+                ),
+                "source": r.get("source"),
+                "strategy": r.get("strategy"),
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _profit_chart(series: list[dict[str, Any]]) -> dict[str, Any]:

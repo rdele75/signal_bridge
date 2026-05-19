@@ -20,6 +20,10 @@ data/*
 !data/.gitkeep
 logs/*
 !logs/.gitkeep
+logs/server.out
+runtime/*
+!runtime/.gitkeep
+runtime/*.pid
 
 # OS / editor
 .DS_Store

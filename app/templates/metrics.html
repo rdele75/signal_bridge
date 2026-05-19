@@ -69,6 +69,72 @@
   {% endif %}
 </section>
 
+<section class="card section">
+  <div class="section-head">
+    <h3>Past Orders</h3>
+    <span class="hint">
+      {% if m.past_orders.source == 'broker_paper' %}
+        from paper broker
+      {% elif m.past_orders.source == 'broker_topstep' %}
+        from Topstep broker
+      {% elif m.past_orders.source == 'journal' %}
+        from local journal
+      {% else %}
+        recent orders
+      {% endif %}
+    </span>
+  </div>
+  {% if m.past_orders.rows %}
+    <div class="table-wrap">
+      <table class="mini">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Broker</th>
+            <th>Symbol</th>
+            <th>Side / Action</th>
+            <th class="num">Size</th>
+            <th>Status</th>
+            <th>Order ID</th>
+            <th>Source / Strategy</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in m.past_orders.rows %}
+            <tr>
+              <td><code>{{ o.time or '—' }}</code></td>
+              <td>{{ o.broker or '—' }}</td>
+              <td><strong>{{ o.symbol or '—' }}</strong></td>
+              <td>{{ o.action or '—' }}</td>
+              <td class="num">{{ o.size if o.size is not none else '—' }}</td>
+              <td>
+                {% if o.status %}<code>{{ o.status }}</code>{% else %}—{% endif %}
+              </td>
+              <td>
+                {% if o.order_id %}<code>{{ o.order_id }}</code>{% else %}—{% endif %}
+              </td>
+              <td>
+                {% if o.strategy %}{{ o.strategy }}
+                {% elif o.source %}{{ o.source }}
+                {% else %}—{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if m.past_orders.status == 'fallback_journal' %}
+      <p class="muted" style="margin: 6px 0 0;">
+        Broker order history unavailable — showing local journal rows.
+      </p>
+    {% endif %}
+  {% elif m.past_orders.status == 'topstep_not_available' %}
+    <div class="empty"><strong>n/a</strong>Topstep order history is not available yet.</div>
+  {% else %}
+    <div class="empty"><strong>none</strong>{{ m.past_orders.message or 'No past orders yet.' }}</div>
+  {% endif %}
+</section>
+
 <section class="grid grid-2 section">
   <div class="card">
     <h3>Rejection reasons</h3>
