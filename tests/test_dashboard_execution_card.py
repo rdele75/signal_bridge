@@ -107,29 +107,36 @@ def test_dashboard_execution_card_has_flatten_and_disable_buttons(client):
     assert "Disable Execution" not in body
 
 
-def test_dashboard_shows_smoke_test_button_in_dry_run(tmp_path, monkeypatch):
-    """Smoke Test button is visible when dry-run is the saved mode."""
+def test_dashboard_renders_single_smoke_test_button(tmp_path, monkeypatch):
+    """The unified flow: one Smoke Test button (always visible), no
+    second 'Execute smoke test' button. The button opens a soft-
+    confirm modal — same pattern as Flatten."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         body = c.get("/").text
     assert 'id="btn-smoke-test"' in body
     assert "Smoke Test" in body
-    # Helper text spells out the safety contract.
-    assert "No broker order is sent" in body
+    # The two-button setup is gone.
+    assert 'id="btn-smoke-test-execute"' not in body
+    assert "Execute smoke test" not in body
+    # Old helper hint copy was removed (modal handles the explanation).
+    assert "No broker order is sent" not in body
 
 
-def test_dashboard_hides_smoke_test_button_when_live(tmp_path, monkeypatch):
-    """The Smoke Test button hides when the saved mode is live."""
+def test_dashboard_smoke_test_button_is_visible_in_live_mode(
+    tmp_path, monkeypatch
+):
+    """Smoke Test stays visible across all execution modes. The modal
+    body copy adapts based on armed state."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     app.state.settings.execution_mode = "live"
     with TestClient(app) as c:
         body = c.get("/").text
-    # Button element exists but starts hidden — assert via the hidden
-    # attribute on its element.
     assert 'id="btn-smoke-test"' in body
-    assert 'id="btn-smoke-test" class="btn"\n                hidden' in body \
-        or 'hidden>\n          Smoke Test' in body \
-        or 'id="btn-smoke-test"' in body and 'hidden' in body
+    start = body.find('id="btn-smoke-test"')
+    tag_end = body.find(">", start)
+    button_open = body[start:tag_end]
+    assert "hidden" not in button_open
 
 
 def test_dashboard_execution_card_shows_account_line(tmp_path, monkeypatch):
@@ -1026,43 +1033,37 @@ def test_dashboard_js_uses_live_disengaging_state(client):
 # ----------------------------------------------------------------------
 
 
-def test_dashboard_renders_smoke_execute_button_and_modal(tmp_path, monkeypatch):
+def test_dashboard_renders_smoke_soft_confirm_modal(tmp_path, monkeypatch):
+    """The new unified flow uses a soft-confirm modal — no typed
+    phrase, no ack checkbox. Same pattern as Flatten."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         body = c.get("/").text
-    # Advanced execute button (hidden by default until armed) is in
-    # markup.
-    assert 'id="btn-smoke-test-execute"' in body
-    assert "Execute smoke test" in body
-    # Dedicated modal with the typed phrase + ack box.
-    assert 'id="smoke-execute-modal"' in body
-    assert 'id="smoke_confirm_phrase"' in body
-    assert 'id="smoke_ack"' in body
-    assert (
-        "I understand this will place and exit 1 MES on the selected"
-        in body
-    )
+    assert 'id="smoke-confirm-modal"' in body
+    assert 'id="btn-smoke-confirm"' in body
+    assert "Yes, run smoke test" in body
+    # The typed-phrase / ack-box scaffolding is gone.
+    assert 'id="smoke-execute-modal"' not in body
+    assert 'id="smoke_confirm_phrase"' not in body
+    assert 'id="smoke_ack"' not in body
 
 
-def test_dashboard_smoke_execute_modal_requires_phrase_and_ack(client):
-    """The JS guard refuses unless the typed phrase equals 'smoke'
-    exactly AND the ack checkbox is ticked."""
+def test_dashboard_smoke_modal_has_no_phrase_or_ack_requirement(client):
+    """Confirms the JS no longer enforces phrase==smoke or an ack
+    checkbox — the soft-confirm modal just runs the test on click."""
     body = client.get("/").text
-    # Form submit handler enforces the two checks before calling
-    # runSmokeTest(true, 'smoke').
-    assert "if (phrase !== 'smoke')" in body
-    assert "runSmokeTest(true, 'smoke')" in body
-    assert "tick the acknowledgement box" in body
+    assert "tick the acknowledgement box" not in body
+    assert "if (phrase !== 'smoke')" not in body
+    # The new flow uses isExecutionArmed() to decide execute=true/false.
+    assert "isExecutionArmed()" in body
 
 
-def test_dashboard_smoke_button_default_is_dry_run_preview(client):
-    """The visible 'Smoke Test' button must run dry-run preview ONLY —
-    no inline window.prompt for execution."""
+def test_dashboard_smoke_button_opens_confirm_modal_not_inline_run(client):
+    """The bare Smoke Test button click opens the soft-confirm modal
+    rather than firing the test inline. No window.prompt fallback."""
     body = client.get("/").text
-    # The window.prompt fallback was removed.
     assert "window.prompt(" not in body
-    # The bare button always runs runSmokeTest(false, '')
-    assert "runSmokeTest(false, '')" in body
+    assert "openSmokeConfirmModal" in body
 
 
 # ----------------------------------------------------------------------

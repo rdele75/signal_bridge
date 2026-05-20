@@ -65,13 +65,8 @@
         <button type="button" id="btn-flatten-all" class="btn">
           Flatten All Positions
         </button>
-        <button type="button" id="btn-smoke-test" class="btn"
-                {% if execution_mode != 'paper' %}hidden{% endif %}>
+        <button type="button" id="btn-smoke-test" class="btn">
           Smoke Test
-        </button>
-        <button type="button" id="btn-smoke-test-execute" class="btn btn-danger"
-                hidden>
-          Execute smoke test…
         </button>
         {% if kill_switch_enabled %}
           <span class="execution-kill-switch-indicator
@@ -88,12 +83,6 @@
 
       <p class="muted execution-disengage-note">
         Disengage stops new orders; does not close existing positions.
-      </p>
-
-      <p class="execution-smoke-hint"
-         {% if execution_mode != 'paper' %}hidden{% endif %}
-         id="execution-smoke-hint">
-        Runs an Execution Test enter/exit check. No broker order is sent.
       </p>
 
       <div id="execution-feedback" class="execution-feedback" hidden
@@ -180,55 +169,39 @@
   </div>
 </div>
 
-{# ---- Smoke-test execute confirmation modal.
-       Shown when the operator clicks "Execute smoke test…". Requires
-       typing "smoke" exactly + checking the acknowledgement box before
-       the dangerous BUY/SELL pair can hit the broker. #}
-<div id="smoke-execute-modal" class="execution-modal" hidden
+{# ---- Smoke-test soft-confirm modal.
+       Opens on Smoke Test click. No typed-phrase / ack box — same
+       soft-confirm pattern as the Flatten modal. The confirm button
+       inside fires the test; its theming and the body copy adapt to
+       whether execution is armed (real broker order) or not (safe
+       preview). #}
+<div id="smoke-confirm-modal" class="execution-modal" hidden
      aria-hidden="true" role="dialog"
-     aria-labelledby="smoke-execute-modal-title">
+     aria-labelledby="smoke-confirm-modal-title">
   <div class="execution-modal-backdrop" data-close-modal></div>
   <div class="execution-modal-panel" role="document">
-    <h3 id="smoke-execute-modal-title" class="execution-modal-title">
-      Execute Smoke Test
+    <h3 id="smoke-confirm-modal-title" class="execution-modal-title">
+      Smoke Test
     </h3>
-    <p class="execution-modal-copy">
-      This will submit a real BUY entry and SELL exit for 1 MES on the
-      selected Topstep account. Use only when execution is armed and
-      you intend to verify order routing end-to-end.
+    <p class="execution-modal-copy" id="smoke-confirm-modal-copy">
+      Submits a 1-contract entry + exit via the broker. No persistent
+      position. Used to verify execution plumbing.
     </p>
     <p class="execution-modal-account">
-      Account:
-      <code>{{ selected_account_id or '—' }}</code>
+      Mode: <code id="smoke-confirm-modal-mode">{{ execution_mode }}</code>
+      <span class="muted">·</span>
+      Account: {{ mask_value(selected_account_id or '—') }}
       {% if broker_account_card.selected_account_name %}
         <span class="muted">/</span>
-        <span>{{ broker_account_card.selected_account_name }}</span>
+        {{ mask_value(broker_account_card.selected_account_name) }}
       {% endif %}
     </p>
-    <p class="execution-modal-instructions">
-      Type <code>smoke</code> and check the acknowledgement box to
-      submit.
-    </p>
-    <form id="form-smoke-execute" class="execution-modal-form">
-      <label for="smoke_confirm_phrase">
-        Confirmation phrase
-      </label>
-      <input id="smoke_confirm_phrase" name="confirm" type="text"
-             class="dark-input" autocomplete="off"
-             placeholder="smoke" />
-      <label class="execution-modal-ack">
-        <input id="smoke_ack" type="checkbox" name="ack" />
-        I understand this will place and exit 1 MES on the selected
-        Topstep account.
-      </label>
-      <div class="execution-modal-actions">
-        <button type="button" class="btn" data-close-modal>Cancel</button>
-        <button type="submit" id="btn-smoke-execute-confirm"
-                class="btn btn-danger">
-          Submit smoke test
-        </button>
-      </div>
-    </form>
+    <div class="execution-modal-actions">
+      <button type="button" class="btn" data-close-modal>Cancel</button>
+      <button type="button" id="btn-smoke-confirm" class="btn btn-primary">
+        Yes, run smoke test
+      </button>
+    </div>
   </div>
 </div>
 
@@ -530,12 +503,10 @@
   var flattenConfirmBtn = document.getElementById('btn-flatten-confirm');
   var flattenPositionsEl = document.getElementById('flatten-modal-positions');
   var smokeBtn = document.getElementById('btn-smoke-test');
-  var smokeExecuteBtn = document.getElementById('btn-smoke-test-execute');
-  var smokeHint = document.getElementById('execution-smoke-hint');
-  var smokeExecModal = document.getElementById('smoke-execute-modal');
-  var smokeExecForm = document.getElementById('form-smoke-execute');
-  var smokeExecPhrase = document.getElementById('smoke_confirm_phrase');
-  var smokeExecAck = document.getElementById('smoke_ack');
+  var smokeConfirmModal = document.getElementById('smoke-confirm-modal');
+  var smokeConfirmBtn = document.getElementById('btn-smoke-confirm');
+  var smokeConfirmCopy = document.getElementById('smoke-confirm-modal-copy');
+  var smokeConfirmMode = document.getElementById('smoke-confirm-modal-mode');
   var initialMode = card.dataset.executionMode || 'paper';
   var liveModal = document.getElementById('live-execution-modal');
   var liveForm = document.getElementById('form-live-engage');
@@ -824,20 +795,13 @@
 
   function clearFeedback() { showFeedback('', null, null); }
 
+  // The single Smoke Test button is always visible. The modal body
+  // copy + confirm-button theming adapt to whether execution is armed,
+  // and the underlying endpoint either submits a real BUY/SELL pair
+  // (armed) or builds preview-only payloads (not armed).
   function syncSmokeVisibility() {
     if (!smokeBtn) return;
-    var dryRun = modeSelect && modeSelect.value === 'paper';
-    smokeBtn.hidden = !dryRun;
-    if (smokeHint) smokeHint.hidden = !dryRun;
-  }
-
-  // The "Execute smoke test" button is only useful once execution is
-  // armed (demo or live). Otherwise we hide it — dry-run preview is
-  // the only sane click while the broker is locked.
-  function syncSmokeExecuteVisibility() {
-    if (!smokeExecuteBtn) return;
-    var armed = card.dataset.executionArmed === 'true';
-    smokeExecuteBtn.hidden = !armed;
+    smokeBtn.hidden = false;
   }
 
   function openLiveModal() {
@@ -921,7 +885,6 @@
               // No success toast — the card's state change is the
               // signal. Only failure paths still raise showFeedback.
               card.dataset.executionArmed = 'false';
-              syncSmokeExecuteVisibility();
               // Sync the rest of the UI from the server's truth after
               // the dry-run-enter animation has had time to register.
               window.setTimeout(function () { fetchStatus(); },
@@ -995,7 +958,6 @@
               // Card transitioned to dry-run; arm flag is now false and
               // the smoke-execute button should hide.
               card.dataset.executionArmed = 'false';
-              syncSmokeExecuteVisibility();
               // Sync the rest of the UI from the server's truth without
               // reloading — keeps the dry-run-enter animation visible.
               window.setTimeout(function () { fetchStatus(); },
@@ -1292,77 +1254,65 @@
       });
   }
 
-  if (smokeBtn) {
-    // Default Smoke Test click → safe dry-run preview, always. The
-    // execute path requires the dedicated modal below.
-    smokeBtn.addEventListener('click', function () {
-      runSmokeTest(false, '');
-    });
+  // Unified Smoke Test flow: click opens a soft-confirm modal. The
+  // modal copy + confirm-button theme adapt to whether execution is
+  // armed. Confirm → fire runSmokeTest with the right execute flag.
+  function isExecutionArmed() {
+    return card.dataset.executionArmed === 'true';
   }
 
-  function openSmokeExecuteModal() {
-    if (!smokeExecModal) return;
-    smokeExecModal.hidden = false;
-    smokeExecModal.setAttribute('aria-hidden', 'false');
-    if (smokeExecPhrase) {
-      smokeExecPhrase.value = '';
-      window.setTimeout(function () { smokeExecPhrase.focus(); }, 0);
+  function syncSmokeConfirmModal() {
+    if (!smokeConfirmModal || !smokeConfirmBtn) return;
+    var armed = isExecutionArmed();
+    var mode = (modeSelect && modeSelect.value) || 'paper';
+    if (smokeConfirmMode) smokeConfirmMode.textContent = mode;
+    if (smokeConfirmCopy) {
+      smokeConfirmCopy.textContent = armed
+        ? 'Submits a 1-contract entry + exit via the broker. No '
+          + 'persistent position. Used to verify execution plumbing.'
+        : 'Builds and validates entry + exit payloads only — no '
+          + 'broker order is submitted. Arm execution from this card '
+          + 'first to test the full broker round-trip.';
     }
-    if (smokeExecAck) smokeExecAck.checked = false;
+    smokeConfirmBtn.classList.remove('btn-primary', 'btn-danger');
+    smokeConfirmBtn.classList.add(
+      mode === 'live' && armed ? 'btn-danger' : 'btn-primary'
+    );
   }
 
-  function closeSmokeExecuteModal() {
-    if (!smokeExecModal) return;
-    smokeExecModal.hidden = true;
-    smokeExecModal.setAttribute('aria-hidden', 'true');
+  function openSmokeConfirmModal() {
+    if (!smokeConfirmModal) return;
+    syncSmokeConfirmModal();
+    smokeConfirmModal.hidden = false;
+    smokeConfirmModal.setAttribute('aria-hidden', 'false');
   }
 
-  if (smokeExecModal) {
-    smokeExecModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
-      el.addEventListener('click', function () { closeSmokeExecuteModal(); });
+  function closeSmokeConfirmModal() {
+    if (!smokeConfirmModal) return;
+    smokeConfirmModal.hidden = true;
+    smokeConfirmModal.setAttribute('aria-hidden', 'true');
+  }
+
+  if (smokeConfirmModal) {
+    smokeConfirmModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
+      el.addEventListener('click', function () { closeSmokeConfirmModal(); });
     });
     document.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape' && !smokeExecModal.hidden) closeSmokeExecuteModal();
+      if (ev.key === 'Escape' && !smokeConfirmModal.hidden) closeSmokeConfirmModal();
     });
   }
 
-  if (smokeExecuteBtn) {
-    smokeExecuteBtn.addEventListener('click', function () {
-      if (card.dataset.executionArmed !== 'true') {
-        showFeedback(
-          'Execute smoke test refused: execution is not armed.',
-          'bad',
-          null
-        );
-        return;
-      }
-      openSmokeExecuteModal();
+  if (smokeBtn) {
+    smokeBtn.addEventListener('click', function () {
+      openSmokeConfirmModal();
     });
   }
 
-  if (smokeExecForm) {
-    smokeExecForm.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var phrase = (smokeExecPhrase && smokeExecPhrase.value || '').trim();
-      var ack = !!(smokeExecAck && smokeExecAck.checked);
-      if (phrase !== 'smoke') {
-        showFeedback(
-          'Smoke test cancelled: confirmation must equal "smoke" exactly.',
-          'bad',
-          null
-        );
-        return;
-      }
-      if (!ack) {
-        showFeedback(
-          'Smoke test cancelled: please tick the acknowledgement box.',
-          'bad',
-          null
-        );
-        return;
-      }
-      closeSmokeExecuteModal();
-      runSmokeTest(true, 'smoke');
+  if (smokeConfirmBtn) {
+    smokeConfirmBtn.addEventListener('click', function () {
+      closeSmokeConfirmModal();
+      var armed = isExecutionArmed();
+      runSmokeTest(armed, armed ? 'smoke' : '');
     });
   }
 
@@ -1423,7 +1373,6 @@
           // Card is armed: reflect it on the dataset so the smoke-
           // execute button surfaces and any other "armed" gates pass.
           card.dataset.executionArmed = 'true';
-          syncSmokeExecuteVisibility();
           // Sync the surrounding UI (summary badges + mode select) from
           // the server's truth instead of reloading. The success-flash
           // overlay finishes its 1.2s animation around the same time;
@@ -1478,7 +1427,6 @@
   }
 
   syncSmokeVisibility();
-  syncSmokeExecuteVisibility();
 
   // If the server rendered the card already armed, keep the persistent
   // checkmark visible so the operator sees the confirmation cue even
