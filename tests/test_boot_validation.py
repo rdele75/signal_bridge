@@ -1,10 +1,15 @@
-"""Tests for the boot-time secret validator (finding C2).
+"""Tests for the boot-time secret validator (findings C2 and C1).
 
 The validator runs inside ``create_app()`` and refuses to build the app
-when the TradingView webhook secret is missing, the public placeholder,
-or shorter than the minimum length. An escape hatch via
-``SIGNALBRIDGE_ALLOW_INSECURE_BOOT=1`` downgrades the refusal to a loud
-WARNING for debug sessions.
+when:
+
+* TRADINGVIEW_WEBHOOK_SECRET is missing, the public placeholder, or
+  shorter than ``WEBHOOK_SECRET_MIN_LENGTH`` (always checked).
+* SESSION_SECRET is missing, the public placeholder, or shorter than
+  ``SESSION_SECRET_MIN_LENGTH`` when admin auth is enabled.
+
+An escape hatch via ``SIGNALBRIDGE_ALLOW_INSECURE_BOOT=1`` downgrades
+all of these refusals to a loud WARNING for debug sessions.
 """
 from __future__ import annotations
 
@@ -21,17 +26,30 @@ def _fresh_settings(
     *,
     webhook_secret: str | None,
     allow_insecure: bool = False,
+    admin_auth_enabled: bool = False,
+    session_secret: str | None = "a" * 64,
 ):
-    """Build a Settings instance with the supplied webhook secret.
+    """Build a Settings instance with the supplied webhook + session secrets.
 
     ``webhook_secret=None`` removes the env var so the default applies.
-    Returns ``(settings, log)`` for the caller to feed into the
-    validator.
+    ``session_secret=None`` removes the env var (so the Settings field
+    default — the placeholder — applies). The helper defaults to
+    ``admin_auth_enabled=False`` so tests focused on webhook validation
+    don't have to satisfy the session-secret gate too.
     """
     if webhook_secret is None:
         monkeypatch.delenv("TRADINGVIEW_WEBHOOK_SECRET", raising=False)
     else:
         monkeypatch.setenv("TRADINGVIEW_WEBHOOK_SECRET", webhook_secret)
+
+    if session_secret is None:
+        monkeypatch.delenv("SESSION_SECRET", raising=False)
+    else:
+        monkeypatch.setenv("SESSION_SECRET", session_secret)
+
+    monkeypatch.setenv(
+        "ADMIN_AUTH_ENABLED", "true" if admin_auth_enabled else "false"
+    )
 
     if allow_insecure:
         monkeypatch.setenv("SIGNALBRIDGE_ALLOW_INSECURE_BOOT", "1")
@@ -170,3 +188,99 @@ def config_module_placeholder() -> str:
     from app.config import WEBHOOK_SECRET_PLACEHOLDER
 
     return WEBHOOK_SECRET_PLACEHOLDER
+
+
+def session_secret_placeholder() -> str:
+    for mod in [m for m in list(sys.modules) if m == "app.config"]:
+        del sys.modules[mod]
+    from app.config import SESSION_SECRET_PLACEHOLDER
+
+    return SESSION_SECRET_PLACEHOLDER
+
+
+# ---------------------------------------------------------------------
+# C1 — SESSION_SECRET checks gated on admin_auth_enabled
+# ---------------------------------------------------------------------
+
+
+def test_session_secret_fatal_when_auth_on_and_unset(tmp_path, monkeypatch):
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=True,
+        session_secret="",
+    )
+    errors = config_mod.validate_secrets(settings)
+    assert any("SESSION_SECRET is unset" in e for e in errors)
+
+
+def test_session_secret_fatal_when_auth_on_and_placeholder(tmp_path, monkeypatch):
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=True,
+        session_secret=session_secret_placeholder(),
+    )
+    errors = config_mod.validate_secrets(settings)
+    assert any(
+        "SESSION_SECRET is still the public placeholder" in e
+        for e in errors
+    )
+
+
+def test_session_secret_fatal_when_auth_on_and_short(tmp_path, monkeypatch):
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=True,
+        session_secret="x" * 16,
+    )
+    errors = config_mod.validate_secrets(settings)
+    assert any("SESSION_SECRET is shorter than" in e for e in errors)
+
+
+def test_session_secret_ok_when_auth_on_and_good(tmp_path, monkeypatch):
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=True,
+        session_secret="x" * 64,
+    )
+    assert config_mod.validate_secrets(settings) == []
+
+
+def test_session_secret_ignored_when_auth_off(tmp_path, monkeypatch):
+    """With admin auth off the session secret is unused. Validator must
+    not raise even with the placeholder in place."""
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=False,
+        session_secret=session_secret_placeholder(),
+    )
+    # No fatal errors despite the placeholder.
+    assert config_mod.validate_secrets(settings) == []
+
+
+def test_session_secret_warns_when_auth_off_and_unset(tmp_path, monkeypatch, caplog):
+    """Defensive WARNING so the operator notices before flipping auth on."""
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=False,
+        session_secret="",
+    )
+    log = logging.getLogger("signalbridge.boot_test_c1")
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        config_mod.enforce_boot_validation(settings, log)
+    assert any(
+        "SESSION_SECRET is unset or placeholder" in record.message
+        and record.levelno == logging.WARNING
+        for record in caplog.records
+    )

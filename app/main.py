@@ -309,9 +309,13 @@ def create_app() -> FastAPI:
     warn_if_default_secrets(settings, log)
 
     if settings.admin_auth_enabled:
+        # ``enforce_boot_validation`` above guarantees session_secret is
+        # non-empty, not the placeholder, and at least
+        # SESSION_SECRET_MIN_LENGTH characters when auth is on. No
+        # silent fallback string here.
         app.add_middleware(
             SessionMiddleware,
-            secret_key=settings.session_secret or "signalbridge-fallback-secret",
+            secret_key=settings.session_secret,
             session_cookie="signalbridge_session",
             same_site="lax",
             https_only=False,

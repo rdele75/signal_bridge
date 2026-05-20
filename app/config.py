@@ -22,6 +22,13 @@ load_dotenv(PROJECT_ROOT / ".env")
 # constant to keep the check honest.
 WEBHOOK_SECRET_PLACEHOLDER = "change_me_to_a_long_random_secret"
 WEBHOOK_SECRET_MIN_LENGTH = 16
+
+# Public placeholder for SESSION_SECRET. Same shape as the webhook
+# placeholder — validator refuses to start with admin auth on when the
+# session secret is this value, empty, or shorter than the minimum.
+SESSION_SECRET_PLACEHOLDER = "generate_or_require_secret"
+SESSION_SECRET_MIN_LENGTH = 32
+
 # Escape hatch env var. When set to a truthy value the validator emits a
 # loud WARNING and lets the app boot anyway. Intended for debug sessions
 # only — never set this in production .env.
@@ -297,7 +304,7 @@ class Settings(BaseModel):
     )
     session_secret: str = Field(
         default_factory=lambda: os.getenv(
-            "SESSION_SECRET", "generate_or_require_secret"
+            "SESSION_SECRET", SESSION_SECRET_PLACEHOLDER
         )
     )
 
@@ -385,6 +392,32 @@ def validate_secrets(settings: Settings) -> List[str]:
             "Generate one with: openssl rand -hex 32"
         )
 
+    # SESSION_SECRET is only fatal when admin auth is on — when auth is
+    # off, SessionMiddleware isn't installed and the value is unused. A
+    # missing secret with auth off still gets a WARNING (see
+    # ``enforce_boot_validation``) so an operator who later flips auth on
+    # doesn't get a silent forgery surface.
+    if settings.admin_auth_enabled:
+        session_secret = settings.session_secret or ""
+        if not session_secret:
+            errors.append(
+                "SESSION_SECRET is unset or empty (admin auth is enabled). "
+                "Generate one with: openssl rand -hex 32"
+            )
+        elif session_secret == SESSION_SECRET_PLACEHOLDER:
+            errors.append(
+                "SESSION_SECRET is still the public placeholder "
+                f"({SESSION_SECRET_PLACEHOLDER!r}) (admin auth is enabled). "
+                "Generate one with: openssl rand -hex 32"
+            )
+        elif len(session_secret) < SESSION_SECRET_MIN_LENGTH:
+            errors.append(
+                "SESSION_SECRET is shorter than "
+                f"{SESSION_SECRET_MIN_LENGTH} characters "
+                f"(got {len(session_secret)}). "
+                "Generate one with: openssl rand -hex 32"
+            )
+
     return errors
 
 
@@ -401,6 +434,23 @@ def enforce_boot_validation(
 
     if log is None:
         log = _logging.getLogger("signalbridge")
+
+    # Defensive WARNING when admin auth is off but SESSION_SECRET is
+    # missing or the placeholder — the operator may flip auth on later
+    # and we want them to notice before that's a silent forgery surface.
+    if not settings.admin_auth_enabled:
+        session_secret = settings.session_secret or ""
+        if (
+            not session_secret
+            or session_secret == SESSION_SECRET_PLACEHOLDER
+        ):
+            log.warning(
+                "SESSION_SECRET is unset or placeholder. Admin auth is "
+                "currently disabled so SessionMiddleware is not installed, "
+                "but enabling auth without a real secret would leave "
+                "sessions forgeable. Generate one with: "
+                "openssl rand -hex 32"
+            )
 
     errors = validate_secrets(settings)
     if not errors:
