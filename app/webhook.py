@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hmac
 import logging
-from typing import Any, Optional
+import threading
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 from .config import Settings
 from .execution.broker_base import BrokerBase
@@ -54,6 +56,43 @@ class WebhookHandler:
         self.risk = risk
         self.broker = broker
         self.symbol_map = symbol_map
+        # H1 — per-order_id serialization. Without this, two concurrent
+        # webhooks with the same order_id can both pass
+        # find_recent_order_id() before either writes a journal row,
+        # which means both can hit the broker. The dict-of-locks plus a
+        # short-lived guard for atomic get-or-create gives us a
+        # per-key mutex; SignalBridge is single-process by design so a
+        # process-local lock is sufficient. Entries are never evicted —
+        # each is ~100 bytes and order_id cardinality is bounded.
+        self._order_id_locks: dict[str, threading.Lock] = {}
+        self._order_id_locks_guard = threading.Lock()
+
+    @contextmanager
+    def _serialize_order_id(
+        self, order_id: Optional[str]
+    ) -> Iterator[None]:
+        """Hold a process-local lock keyed on ``order_id`` for the
+        duration of the ``with`` block.
+
+        Closes the read-then-write race in the duplicate-order check:
+        the lock must wrap both ``risk.evaluate`` (which queries
+        ``find_recent_order_id``) and the journal write that follows
+        the broker call. Signals without an ``order_id`` skip the lock
+        entirely (matches the existing duplicate-check behavior).
+        """
+        if not order_id:
+            yield
+            return
+        with self._order_id_locks_guard:
+            lock = self._order_id_locks.get(order_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._order_id_locks[order_id] = lock
+        lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
 
     # ------------------------------------------------------------------
 
@@ -524,6 +563,20 @@ class WebhookHandler:
     # -- Shared risk+execute pipeline -----------------------------------
 
     def _run_risk_and_execute(
+        self,
+        signal: NormalizedSignal,
+        raw_payload: dict[str, Any],
+        *,
+        extra_execution_metadata: Optional[dict[str, Any]] = None,
+    ) -> WebhookResponse:
+        with self._serialize_order_id(signal.order_id):
+            return self._run_risk_and_execute_locked(
+                signal,
+                raw_payload,
+                extra_execution_metadata=extra_execution_metadata,
+            )
+
+    def _run_risk_and_execute_locked(
         self,
         signal: NormalizedSignal,
         raw_payload: dict[str, Any],
