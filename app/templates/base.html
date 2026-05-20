@@ -65,6 +65,14 @@
       <div class="section-label">Overview</div>
       <a href="/"                class="{{ 'active' if path == '/' else '' }}">Dashboard</a>
 
+      <details class="nav-group" {% if path in act_paths %}open{% endif %}>
+        <summary class="section-label nav-group-toggle">Activity</summary>
+        <div class="nav-group-body">
+          <a href="/journal"         class="{{ 'active' if path == '/journal' else '' }}">Journal</a>
+          <a href="/metrics"         class="{{ 'active' if path == '/metrics' else '' }}">Metrics</a>
+        </div>
+      </details>
+
       <details class="nav-group" {% if path in cfg_paths %}open{% endif %}>
         <summary class="section-label nav-group-toggle">Configuration</summary>
         <div class="nav-group-body">
@@ -72,14 +80,6 @@
           <a href="/settings/risk"    class="{{ 'active' if path == '/settings/risk' else '' }}">Risk</a>
           <a href="/tradingview"      class="{{ 'active' if path == '/tradingview' else '' }}">TradingView</a>
           <a href="/settings/symbols" class="{{ 'active' if path == '/settings/symbols' else '' }}">Symbols</a>
-        </div>
-      </details>
-
-      <details class="nav-group" {% if path in act_paths %}open{% endif %}>
-        <summary class="section-label nav-group-toggle">Activity</summary>
-        <div class="nav-group-body">
-          <a href="/journal"         class="{{ 'active' if path == '/journal' else '' }}">Journal</a>
-          <a href="/metrics"         class="{{ 'active' if path == '/metrics' else '' }}">Metrics</a>
         </div>
       </details>
 

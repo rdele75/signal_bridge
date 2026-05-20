@@ -347,12 +347,14 @@ def test_tradingview_page_shows_three_url_forms(client):
 # ---------- Shared layout: sidebar nav + top status strip ----------
 
 NAV_LINKS = [
+    # Order matches the sidebar's group order:
+    # Overview → Activity → Configuration → System.
     ("Dashboard",   'href="/"'),
+    ("Journal",     'href="/journal"'),
+    ("Metrics",     'href="/metrics"'),
     ("Broker",      'href="/settings/broker"'),
     ("Risk",        'href="/settings/risk"'),
     ("TradingView", 'href="/tradingview"'),
-    ("Journal",     'href="/journal"'),
-    ("Metrics",     'href="/metrics"'),
     ("Logs",        'href="/logs"'),
     ("System",      'href="/system"'),
 ]
