@@ -1153,6 +1153,8 @@ class TopstepBroker(BrokerBase):
     def _live_execution_safety_check(
         self,
         signal: Optional[NormalizedSignal] = None,
+        *,
+        bypass_kill_switch: bool = False,
     ) -> Optional[str]:
         """Gate evaluation for live (funded) execution.
 
@@ -1161,6 +1163,11 @@ class TopstepBroker(BrokerBase):
         suite. ``signal`` is optional — when omitted the symbol /
         contract caps are skipped (used by panel rendering); when set,
         they are enforced (used by ``submit_market_order``).
+
+        ``bypass_kill_switch`` lets exit paths (flatten, cancel) skip
+        the kill-switch gate. Kill switch blocks NEW entries; closing
+        an existing position is a different action and should remain
+        available even after the operator hits emergency stop.
         """
         if not self.enable_live_trading:
             return "live_trading_disabled"
@@ -1172,7 +1179,11 @@ class TopstepBroker(BrokerBase):
             return "live_confirmation_missing"
         if not self.live_trading_account_ack:
             return "live_account_ack_missing"
-        if self.live_require_kill_switch_off and self.kill_switch_active:
+        if (
+            not bypass_kill_switch
+            and self.live_require_kill_switch_off
+            and self.kill_switch_active
+        ):
             return "kill_switch_active"
         if not self._has_required_credentials():
             return "missing_credentials"
@@ -1419,10 +1430,437 @@ class TopstepBroker(BrokerBase):
             },
         }
 
-    def flatten_position(self, symbol: Optional[str] = None) -> dict[str, Any]:
-        return self._execution_disabled_envelope(
-            "flatten_position", symbol=symbol
+    # ------------------------------------------------------------------
+    # Exit helpers (flatten / cancel)
+    #
+    # Kill switch blocks NEW entries; these close EXISTING state. The
+    # safety gates still apply (auth, account ack, canTrade, etc.) but
+    # the kill-switch check is bypassed so an operator can still exit
+    # after hitting emergency stop.
+    # ------------------------------------------------------------------
+
+    def _flatten_demo_noop(self, symbol: Optional[str]) -> dict[str, Any]:
+        """Envelope returned when flatten/cancel is invoked outside live
+        mode. We never fake the action with phantom orders — demo
+        positions exist (if at all) inside TopstepX's own demo book and
+        must be closed there."""
+        return {
+            "ok": False,
+            "provider": self.provider,
+            "status": "not_in_live_mode",
+            "message": (
+                "flatten requires live execution mode — use TopstepX "
+                "directly for demo positions"
+            ),
+            "symbol": symbol,
+            "legs": [],
+            "positions_before": 0,
+            "safety": self._safety_state(),
+        }
+
+    def _exit_safety_refusal(
+        self, op: str, gate: str, symbol: Optional[str], container_key: str
+    ) -> dict[str, Any]:
+        """Build a structured refusal for flatten/cancel when a safety
+        gate is open. Mirrors ``submit_market_order``'s refusal shape."""
+        return {
+            "ok": False,
+            "provider": self.provider,
+            "status": gate,
+            "gate": gate,
+            "message": f"Topstep {op} refused: {gate}",
+            "symbol": symbol,
+            container_key: [],
+            "safety": self._safety_state(),
+        }
+
+    def _post_close_with_auth_retry(
+        self, path: str, payload: dict[str, Any]
+    ) -> tuple[int, Any]:
+        """POST ``path`` with bearer auth, retrying once on an auth
+        failure. Mirrors the H5 retry pattern from
+        ``submit_market_order`` so a stale-but-locally-valid token
+        gets one shot at re-auth before the leg is recorded as failed.
+        """
+        http_status, response = self._post_json(path, payload, auth=True)
+        if _is_auth_failure(http_status, response):
+            log.info(
+                "topstep %s auth failure (http=%s errorCode=%s) — "
+                "re-authenticating and retrying once",
+                path,
+                http_status,
+                response.get("errorCode") if isinstance(response, dict) else None,
+            )
+            auth_retry = self.authenticate()
+            if auth_retry.get("ok"):
+                http_status, response = self._post_json(
+                    path, payload, auth=True
+                )
+        return http_status, response
+
+    @staticmethod
+    def _position_matches_symbol(
+        position: dict[str, Any], symbol: str
+    ) -> bool:
+        """Decide whether ``position`` falls under the operator-supplied
+        symbol filter. We accept three matches in this order:
+
+        1. exact equality with the contract id (ProjectX's identifier);
+        2. exact equality with any plausible label field (``symbol``,
+           ``ticker``);
+        3. substring match against the contract id (so ``"MES"`` matches
+           ``"CON.F.US.MES.M26"``).
+
+        Substring match is forgiving on purpose — the operator types
+        the TV ticker, the position carries a broker contract id, and
+        we don't have a reverse mapping at this layer.
+        """
+        needle = (symbol or "").strip()
+        if not needle:
+            return True
+        for key in ("contractId", "symbol", "ticker"):
+            value = position.get(key)
+            if value is None:
+                continue
+            if str(value) == needle:
+                return True
+        contract_id = position.get("contractId")
+        if contract_id and needle in str(contract_id):
+            return True
+        return False
+
+    @staticmethod
+    def _closing_side_for_position(position: dict[str, Any]) -> Optional[str]:
+        """Return the side a closing market order would use, given the
+        ProjectX position row. Long (type 1) closes with SELL; short
+        (type 2) closes with BUY. Unknown shapes return ``None`` so
+        the leg leaves ``side`` blank rather than misreporting.
+        """
+        pos_type = position.get("type")
+        try:
+            pos_type_int = int(pos_type) if pos_type is not None else None
+        except (TypeError, ValueError):
+            return None
+        if pos_type_int == 1:
+            return "SELL"
+        if pos_type_int == 2:
+            return "BUY"
+        return None
+
+    def _flatten_one_position(
+        self, position: dict[str, Any], numeric_account_id: int
+    ) -> dict[str, Any]:
+        """Close one ProjectX position via ``/api/Position/closeContract``.
+
+        Returns the structured leg result for the flatten envelope.
+        Never raises — transport / auth / business failures are
+        captured in ``status`` + ``message``.
+
+        ``closeContract`` is preferred over an opposite-side market
+        order because it is atomic and the broker handles direction.
+        Documented ProjectX request shape:
+            POST /api/Position/closeContract
+            {"accountId": <int>, "contractId": "<str>"}
+        """
+        contract_id = position.get("contractId")
+        size_raw = position.get("size")
+        try:
+            size = int(size_raw) if size_raw is not None else 0
+        except (TypeError, ValueError):
+            size = 0
+        side = self._closing_side_for_position(position)
+
+        leg: dict[str, Any] = {
+            "symbol": (
+                position.get("symbol") or position.get("ticker") or contract_id
+            ),
+            "contract_id": contract_id,
+            "size": size,
+            "side": side,
+            "ok": False,
+            "order_id": None,
+        }
+
+        if not contract_id:
+            leg.update(
+                status="invalid_position",
+                message="position row missing contractId — cannot close",
+            )
+            return leg
+
+        http_status, response = self._post_close_with_auth_retry(
+            "/api/Position/closeContract",
+            {"accountId": numeric_account_id, "contractId": contract_id},
         )
+        leg["http_status"] = http_status
+
+        if http_status == 0:
+            leg.update(
+                status="network_error",
+                message=(
+                    response
+                    if isinstance(response, str)
+                    else "topstep closeContract network error"
+                ),
+            )
+            return leg
+
+        if not isinstance(response, dict):
+            leg.update(
+                status="close_failed",
+                message=(
+                    f"topstep closeContract returned non-JSON ({http_status})"
+                ),
+            )
+            return leg
+
+        success_flag = bool(response.get("success"))
+        error_code = response.get("errorCode")
+        error_message = response.get("errorMessage")
+        order_id = response.get("orderId")
+
+        if http_status == 200 and success_flag:
+            leg.update(
+                ok=True,
+                status="accepted",
+                message="position closed",
+                order_id=str(order_id) if order_id is not None else None,
+                error_code=error_code,
+            )
+            return leg
+
+        leg.update(
+            status="close_rejected",
+            error_code=error_code,
+            error_message=error_message,
+            message=(
+                str(error_message)
+                if error_message
+                else f"topstep closeContract rejected (errorCode={error_code})"
+            ),
+        )
+        return leg
+
+    def _cancel_one_order(
+        self, order: dict[str, Any], numeric_account_id: int
+    ) -> dict[str, Any]:
+        """Cancel one ProjectX working order via ``/api/Order/cancel``.
+
+        Same one-shot auth retry as flatten. Returns the structured
+        leg result; never raises.
+        """
+        order_id_raw = order.get("id")
+        if order_id_raw is None:
+            order_id_raw = order.get("orderId")
+        try:
+            order_id_int = (
+                int(order_id_raw) if order_id_raw is not None else None
+            )
+        except (TypeError, ValueError):
+            order_id_int = None
+
+        leg: dict[str, Any] = {
+            "symbol": (
+                order.get("symbol")
+                or order.get("ticker")
+                or order.get("contractId")
+            ),
+            "contract_id": order.get("contractId"),
+            "order_id": (
+                str(order_id_raw) if order_id_raw is not None else None
+            ),
+            "ok": False,
+        }
+
+        if order_id_int is None:
+            leg.update(
+                status="invalid_order",
+                message="order row missing numeric id — cannot cancel",
+            )
+            return leg
+
+        http_status, response = self._post_close_with_auth_retry(
+            "/api/Order/cancel",
+            {"accountId": numeric_account_id, "orderId": order_id_int},
+        )
+        leg["http_status"] = http_status
+
+        if http_status == 0:
+            leg.update(
+                status="network_error",
+                message=(
+                    response
+                    if isinstance(response, str)
+                    else "topstep cancel network error"
+                ),
+            )
+            return leg
+
+        if not isinstance(response, dict):
+            leg.update(
+                status="cancel_failed",
+                message=f"topstep cancel returned non-JSON ({http_status})",
+            )
+            return leg
+
+        success_flag = bool(response.get("success"))
+        error_code = response.get("errorCode")
+        error_message = response.get("errorMessage")
+
+        if http_status == 200 and success_flag:
+            leg.update(
+                ok=True,
+                status="cancelled",
+                message="order cancelled",
+                error_code=error_code,
+            )
+            return leg
+
+        leg.update(
+            status="cancel_rejected",
+            error_code=error_code,
+            error_message=error_message,
+            message=(
+                str(error_message)
+                if error_message
+                else f"topstep cancel rejected (errorCode={error_code})"
+            ),
+        )
+        return leg
+
+    @staticmethod
+    def _summarize_legs(legs: list[dict[str, Any]], success_label: str) -> tuple[bool, str]:
+        """Collapse a leg list into ``(ok, status)`` for the top-level
+        envelope. ``success_label`` is the all-good status name
+        (``flattened`` or ``cancelled``).
+        """
+        if not legs:
+            return True, success_label
+        ok_count = sum(1 for leg in legs if leg.get("ok"))
+        if ok_count == len(legs):
+            return True, success_label
+        if ok_count == 0:
+            return False, "failed"
+        return False, "partial"
+
+    def flatten_position(self, symbol: Optional[str] = None) -> dict[str, Any]:
+        """Close one or every open Topstep position via
+        ``/api/Position/closeContract``.
+
+        Behavior:
+
+        * Demo / dry-run mode → no-op envelope with
+          ``status="not_in_live_mode"``. No phantom orders.
+        * Live mode → runs the live safety gates (account ack, auth,
+          confirm tokens, canTrade) with the kill switch bypassed,
+          fetches open positions, closes each one independently, and
+          returns a structured envelope with one entry per leg.
+        * ``symbol`` is optional. When set, only positions whose
+          ``contractId`` matches are closed (exact or substring — see
+          ``_position_matches_symbol``).
+
+        Partial failures: legs are independent. If leg N fails, legs
+        N+1..end are still attempted. The envelope reports every
+        attempt so the operator can decide what to do next.
+        """
+        if self.execution_mode != "live":
+            return self._flatten_demo_noop(symbol)
+
+        gate = self._live_execution_safety_check(bypass_kill_switch=True)
+        if gate is not None:
+            return self._exit_safety_refusal(
+                "flatten", gate, symbol, container_key="legs"
+            )
+
+        positions_resp = self.get_positions()
+        if not positions_resp.get("ok"):
+            payload = dict(positions_resp)
+            payload.setdefault("provider", self.provider)
+            payload["legs"] = []
+            payload["positions_before"] = 0
+            payload["safety"] = self._safety_state()
+            payload["message"] = (
+                f"flatten aborted before any orders sent — "
+                f"{payload.get('message', 'positions fetch failed')}"
+            )
+            return payload
+
+        positions = positions_resp.get("positions") or []
+        all_positions_count = len(positions)
+        if symbol:
+            positions = [
+                p
+                for p in positions
+                if isinstance(p, dict)
+                and self._position_matches_symbol(p, symbol)
+            ]
+
+        if not positions:
+            status = "no_open_positions"
+            if symbol and all_positions_count > 0:
+                message = (
+                    f"no open positions match {symbol!r} — "
+                    f"{all_positions_count} other position(s) untouched"
+                )
+            else:
+                message = "no open positions to flatten"
+            return {
+                "ok": True,
+                "provider": self.provider,
+                "status": status,
+                "message": message,
+                "symbol": symbol,
+                "legs": [],
+                "positions_before": all_positions_count,
+                "safety": self._safety_state(),
+            }
+
+        # ``get_positions`` already validated numeric account id.
+        numeric_account_id = self._numeric_account_id()
+        # numeric_account_id is guaranteed non-None here because the
+        # get_positions call would have failed first otherwise.
+        assert numeric_account_id is not None
+
+        legs: list[dict[str, Any]] = []
+        for pos in positions:
+            if not isinstance(pos, dict):
+                legs.append(
+                    {
+                        "symbol": None,
+                        "contract_id": None,
+                        "size": 0,
+                        "side": None,
+                        "ok": False,
+                        "order_id": None,
+                        "status": "invalid_position",
+                        "message": "position row was not a JSON object",
+                    }
+                )
+                continue
+            legs.append(self._flatten_one_position(pos, numeric_account_id))
+
+        ok, status = self._summarize_legs(legs, "flattened")
+        ok_count = sum(1 for leg in legs if leg.get("ok"))
+        if status == "flattened":
+            message = f"flattened {ok_count} of {len(legs)} position(s)"
+        elif status == "partial":
+            message = (
+                f"flattened {ok_count} of {len(legs)} — "
+                f"{len(legs) - ok_count} failed"
+            )
+        else:
+            message = f"flatten failed for all {len(legs)} position(s)"
+
+        return {
+            "ok": ok,
+            "provider": self.provider,
+            "status": status,
+            "message": message,
+            "symbol": symbol,
+            "legs": legs,
+            "positions_before": all_positions_count,
+            "safety": self._safety_state(),
+        }
 
     def cancel_all_orders(self, symbol: Optional[str] = None) -> dict[str, Any]:
         return self._execution_disabled_envelope(
