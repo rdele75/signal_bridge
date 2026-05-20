@@ -607,7 +607,34 @@
     }, 220);
   }
 
+  // Cross-fade the account line whenever the card's identity flips
+  // between dry-run and live-armed. The status text already has its
+  // own fade via setStatusText() — this matches it for the account
+  // block so the two move together. Brief 180ms ease both ways.
+  var _accountFadeTimer = null;
+  function crossFadeAccountIfNeeded(prevState, newState) {
+    var accountEl = card.querySelector('.execution-account');
+    if (!accountEl) return;
+    var crossesIdentity = (
+      (newState === 'dry-run' &&
+        (prevState === 'live-armed' || prevState === 'live-disengaging')) ||
+      (newState === 'live-armed' &&
+        (prevState === 'dry-run' || prevState === 'live-engaging'))
+    );
+    if (!crossesIdentity) return;
+    if (_accountFadeTimer) {
+      window.clearTimeout(_accountFadeTimer);
+      _accountFadeTimer = null;
+    }
+    accountEl.classList.add('execution-account-transitioning');
+    _accountFadeTimer = window.setTimeout(function () {
+      accountEl.classList.remove('execution-account-transitioning');
+      _accountFadeTimer = null;
+    }, 180);
+  }
+
   function setState(state) {
+    var prevState = card.dataset.executionState;
     STATE_CLASSES.forEach(function (cls) { card.classList.remove(cls); });
     // Briefly add a transition helper so border/shadow fades cleanly.
     card.classList.add('execution-transitioning');
@@ -621,6 +648,7 @@
         statusText.classList.remove('execution-status-check-visible');
       }
     }
+    crossFadeAccountIfNeeded(prevState, state);
     window.setTimeout(function () {
       card.classList.remove('execution-transitioning');
     }, 350);

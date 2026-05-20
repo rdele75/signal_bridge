@@ -931,6 +931,13 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   margin-top: 10px;
   font-size: 13px;
   color: var(--fg-dim);
+  /* Cross-fade when the card transitions between dry-run and
+     live-armed identities. Matches the status-text cross-fade so the
+     two elements move together. */
+  transition: opacity 0.18s ease;
+}
+.execution-account.execution-account-transitioning {
+  opacity: 0;
 }
 .execution-account-label {
   font-size: 11px;
@@ -1262,6 +1269,8 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   .execution-card,
   .execution-card::before,
   .execution-card::after,
+  .execution-account,
+  .execution-status-text,
   .btn-spinner,
   .execution-toast {
     animation: none !important;
