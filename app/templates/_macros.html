@@ -1,0 +1,20 @@
+{# Shared Jinja macros. Import with:
+     {% from "_macros.html" import mask_value %}
+#}
+
+{# Render a value with all but the trailing ``suffix_chars`` characters
+   masked. Click to reveal the full value (handler in base.html).
+   ``dom_id`` is optional — preserves IDs that other code references.
+#}
+{% macro mask_value(value, suffix_chars=4, dom_id=None) -%}
+  {%- set s = value|string -%}
+  {%- if s|length > suffix_chars -%}
+    {%- set display = '•' * (s|length - suffix_chars) ~ s[-suffix_chars:] -%}
+  {%- else -%}
+    {%- set display = '•' * s|length -%}
+  {%- endif -%}
+  <span class="masked-value"{% if dom_id %} id="{{ dom_id }}"{% endif %} data-full="{{ s }}" title="Click to reveal"
+    ><span class="masked-display">{{ display }}</span
+    ><span class="masked-reveal-icon" aria-hidden="true">👁</span
+  ></span>
+{%- endmacro %}

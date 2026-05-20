@@ -2152,25 +2152,30 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 
 /* =====================================================================
    Sensitive content reveal (account ids / names).
-   Blur by default; click to reveal. Stays revealed for the page
-   lifetime so the operator only has to click once per visit.
+   Mask all but the last few characters by default; click to reveal
+   the full value. Stays revealed for the page lifetime so the
+   operator only has to click once per visit.
    ===================================================================== */
-.sensitive {
-  filter: blur(6px);
-  transition: filter 0.18s ease;
+.masked-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono-font, monospace);
   cursor: pointer;
   user-select: none;
 }
-.sensitive:hover {
-  filter: blur(4px);
+.masked-value .masked-display { letter-spacing: 0.04em; }
+.masked-value .masked-reveal-icon {
+  opacity: 0.6;
+  font-size: 0.85em;
+  transition: opacity 0.18s ease;
 }
-.sensitive.is-revealed {
-  filter: none;
-  user-select: text;
-  cursor: text;
-}
+.masked-value:hover .masked-reveal-icon { opacity: 1; }
+.masked-value.is-revealed { cursor: default; user-select: text; }
+.masked-value.is-revealed .masked-display { letter-spacing: 0; }
+.masked-value.is-revealed .masked-reveal-icon { display: none; }
 @media (prefers-reduced-motion: reduce) {
-  .sensitive { transition: none; }
+  .masked-value .masked-reveal-icon { transition: none; }
 }
 
 /* =====================================================================

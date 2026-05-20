@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import mask_value %}
 {% block title %}Dashboard · SignalBridge{% endblock %}
 {% block page_title %}Dashboard{% endblock %}
 {% block content %}
@@ -63,9 +64,9 @@
       <div class="execution-account">
         <span class="execution-account-label">Account:</span>
         {% if selected_account_id %}
-          <code class="sensitive" title="Click to reveal">{{ selected_account_id }}</code>
+          {{ mask_value(selected_account_id) }}
           {% if broker_account_card.selected_account_name %}
-            <span class="execution-account-name sensitive" title="Click to reveal">/ {{ broker_account_card.selected_account_name }}</span>
+            <span class="execution-account-name">/ {{ mask_value(broker_account_card.selected_account_name) }}</span>
           {% endif %}
         {% else %}
           <span class="muted">no account selected</span>
@@ -155,10 +156,10 @@
     </p>
     <p class="execution-modal-account">
       Account:
-      <code id="live-modal-account-id" class="sensitive" title="Click to reveal">{{ selected_account_id or '—' }}</code>
+      {{ mask_value(selected_account_id or '—', dom_id='live-modal-account-id') }}
       {% if broker_account_card.selected_account_name %}
         <span class="muted">/</span>
-        <span id="live-modal-account-name" class="sensitive" title="Click to reveal">{{ broker_account_card.selected_account_name }}</span>
+        {{ mask_value(broker_account_card.selected_account_name, dom_id='live-modal-account-name') }}
       {% endif %}
     </p>
     <p class="muted execution-modal-reveal-hint">
@@ -325,7 +326,7 @@
       {% endif %}
     </div>
     <div class="card-sub">
-      {% if selected_account_id %}acct <code class="sensitive" title="Click to reveal">{{ selected_account_id }}</code>{% else %}<a href="/settings/broker">configure</a>{% endif %}
+      {% if selected_account_id %}acct {{ mask_value(selected_account_id) }}{% else %}<a href="/settings/broker">configure</a>{% endif %}
     </div>
   </div>
 </section>

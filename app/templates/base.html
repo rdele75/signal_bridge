@@ -316,13 +316,17 @@
   });
 })();
 
-// Click any .sensitive element to reveal it. Stays revealed for the
-// page lifetime; refresh the page to re-blur. Used for account ids /
-// names that are screen-shareable context.
+// Click any .masked-value element to reveal the full string. Stays
+// revealed for the page lifetime; refresh to re-mask. Used for
+// account ids / names that are screen-shareable context.
 document.addEventListener('click', function (ev) {
-  var t = ev.target.closest('.sensitive');
-  if (!t) return;
-  t.classList.toggle('is-revealed');
+  var t = ev.target.closest('.masked-value');
+  if (!t || t.classList.contains('is-revealed')) return;
+  var full = t.getAttribute('data-full');
+  if (!full) return;
+  var display = t.querySelector('.masked-display');
+  if (display) display.textContent = full;
+  t.classList.add('is-revealed');
 });
 </script>
 </body>
