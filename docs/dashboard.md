@@ -16,10 +16,10 @@ Save / Apply button, account line, and two secondary actions.
 
 * **Title** — `Execution`.
 * **Status text** — small, low-key label next to the title. Reflects
-  the current state (`Dry-run`, `Live Locked`, `Live Engaging`,
+  the current state (`Execution Test`, `Live Locked`, `Live Engaging`,
   `Live armed`, `Kill Switch Active`). Not a colored bubble — the
   selected mode in the dropdown is the canonical state.
-* **Execution mode dropdown** — `dry-run` and `live` only. Topstep
+* **Execution mode dropdown** — `Execution Test` and `live` only. Topstep
   does not expose a freely controllable demo/paper surface, so the
   UI no longer offers a "demo" choice in this dropdown. The backend
   still accepts demo for scripted / sbctl flows.
@@ -28,12 +28,12 @@ Save / Apply button, account line, and two secondary actions.
   dumps raw JSON, just a short human-readable status message.
 * **Account line** — `Account: <selected_account_id>` and the
   account name when known.
-* **Smoke Test** — visible in dry-run mode. Runs a Topstep smoke
-  test against the selected account + the contract mapping.
+* **Smoke Test** — visible in Execution Test mode. Runs a Topstep
+  smoke test against the selected account + the contract mapping.
   Clicking this button **always** runs the dry-run preview only —
   it builds a BUY entry + SELL exit payload pair and never calls
   `/api/Order/place`. Helper text reads:
-  *Runs a dry-run enter/exit check. No broker order is sent.*
+  *Runs an Execution Test enter/exit check. No broker order is sent.*
 * **Execute smoke test…** — secondary button that appears only when
   execution is already armed (demo or live). Opens a dedicated
   confirmation modal that requires:
@@ -45,9 +45,10 @@ Save / Apply button, account line, and two secondary actions.
   `confirmation="smoke"`. The backend then re-runs every safety gate
   (provider, account, mapping, kill switch, contract cap, armed
   state) before submitting the BUY entry + SELL exit pair.
-* **Disengage** — single-click reset to dry-run. Disarms live +
-  demo flags, returns the app to a safe state, and never disconnects
-  broker credentials.
+* **Disengage** — single-click reset to Execution Test. Disarms live
+  + demo flags, returns the app to a safe state, and never disconnects
+  broker credentials. Visible only when execution is armed; hidden in
+  the Execution Test state where there is nothing to disengage.
 * **Exit All / Flatten** — `POST /api/broker/flatten-all`.
 
 The old top-right meta cluster (`broker / mode / order exec / kill
@@ -56,7 +57,7 @@ they were redundant with the dropdown + account line.
 
 ### Mode behaviour
 
-* **dry-run / paper** — Apply calls `POST
+* **Execution Test / paper** — Apply calls `POST
   /api/execution/apply-mode` with `mode=paper`. The endpoint clears
   `ENABLE_TOPSTEP_ORDER_EXECUTION`, `TOPSTEP_EXECUTION_CONFIRM`,
   `ENABLE_LIVE_TRADING`, `LIVE_TRADING_CONFIRM`, and
@@ -112,9 +113,9 @@ The verify endpoint exists so the UI can render the engagement
 animation while the gate check is in flight, and so it can show a
 deterministic failure reason without ever flipping settings.
 
-### Live → dry-run transition
+### Live → Execution Test transition
 
-Selecting `dry-run` (or clicking **Disengage**) while live is armed
+Selecting `Execution Test` (or clicking **Disengage**) while live is armed
 no longer snaps the card from red to green. Instead:
 
 1. The status text fades to *Disengaging live…*.
@@ -125,8 +126,8 @@ no longer snaps the card from red to green. Instead:
 4. The card lands on `execution-dry-run` with the one-shot
    `execution-dryrun-enter` cue, then settles into the slow
    `execution-dry-run-pulse` breathing animation.
-5. The status text becomes *Dry-run* and the page reloads to pick
-   up the persisted state.
+5. The status text becomes *Execution Test* and the page reloads to
+   pick up the persisted state.
 
 ### CSS state classes
 
@@ -141,7 +142,7 @@ The card carries exactly one of:
 * `execution-kill-switch-active`
 * `execution-disabled`
 
-Dry-run runs a deliberately slow safe-state breathing animation
+Execution Test runs a deliberately slow safe-state breathing animation
 (`execution-dry-run-pulse`, ~6.5 s cycle) — gentle blue/green
 glow that signals "alive but idle" without competing with the
 live indicators. Live armed pulses faster (~1.6 s) so the two
@@ -208,8 +209,8 @@ tooling and tests:
 * `POST /api/execution/apply-mode` — body `{ "mode": "paper" | "demo" }`.
   Live is rejected here on purpose.
 * `POST /api/execution/disable` — clears all execution flags;
-  returns the app to dry-run. The dashboard calls this from the
-  **Disengage** button.
+  returns the app to Execution Test. The dashboard calls this from
+  the **Disengage** button.
 * `POST /api/topstep/smoke-test` — dual-mode. Body:
   `{ "symbol": "MES1!", "contracts": 1, "execute": false,
   "confirmation": "" }`. With `execute=false` (default) it builds

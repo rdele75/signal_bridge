@@ -35,7 +35,7 @@
         </label>
         <select id="execution_mode_select" name="execution_mode"
                 class="dark-select">
-          <option value="paper" {% if execution_mode == 'paper' %}selected{% endif %}>dry-run</option>
+          <option value="paper" {% if execution_mode == 'paper' %}selected{% endif %}>Execution Test</option>
           <option value="live"  {% if execution_mode == 'live'  %}selected{% endif %}>live</option>
         </select>
         <button type="submit" class="btn btn-primary" id="btn-execution-apply">
@@ -118,7 +118,7 @@
       <p class="execution-smoke-hint"
          {% if execution_mode != 'paper' %}hidden{% endif %}
          id="execution-smoke-hint">
-        Runs a dry-run enter/exit check. No broker order is sent.
+        Runs an Execution Test enter/exit check. No broker order is sent.
       </p>
 
       <div id="execution-feedback" class="execution-feedback" hidden
@@ -879,7 +879,7 @@
       previewLabel.textContent = 'live (verification required)';
       previewLabel.classList.add('is-live');
     } else {
-      previewLabel.textContent = 'dry-run';
+      previewLabel.textContent = 'Execution Test';
       previewLabel.classList.add('is-dry-run');
     }
     previewEl.hidden = false;
@@ -912,7 +912,7 @@
     clearFeedback();
     var wasLive = card.dataset.executionState === 'live-armed';
     setStatusText(mode === 'paper'
-      ? (wasLive ? 'Disengaging live…' : 'Applying dry-run…')
+      ? (wasLive ? 'Disengaging live…' : 'Applying Execution Test…')
       : 'Applying…');
     // Smooth live → dry-run transition: red border retreats while we
     // call the backend; the final dry-run state lands after the fade
@@ -944,11 +944,11 @@
                 card.classList.remove('execution-dryrun-enter');
                 card.classList.add('execution-dryrun-active');
               }, 1400);
-              setStatusText('Dry-run');
+              setStatusText('Execution Test');
               if (wasLive) {
                 showToast('Live execution disengaged', 'info');
               }
-              showFeedback('Dry-run selected.', 'ok', null);
+              showFeedback('Execution Test selected.', 'ok', null);
               card.dataset.executionArmed = 'false';
               syncSmokeExecuteVisibility();
               // Sync the rest of the UI from the server's truth after
@@ -992,7 +992,7 @@
 
   if (disableBtn) {
     disableBtn.addEventListener('click', function () {
-      if (!window.confirm('Disengage execution? This returns the app to a safe dry-run state.')) return;
+      if (!window.confirm('Disengage execution? This returns the app to a safe Execution Test state.')) return;
       setBusy(true);
       clearFeedback();
       var wasLive = card.dataset.executionState === 'live-armed';
@@ -1015,7 +1015,7 @@
                 card.classList.remove('execution-dryrun-enter');
                 card.classList.add('execution-dryrun-active');
               }, 1400);
-              setStatusText('Dry-run');
+              setStatusText('Execution Test');
               if (wasLive) {
                 showToast('Live execution disengaged', 'info');
               }
@@ -1121,7 +1121,7 @@
     smokeBtn.disabled = true;
     clearFeedback();
     showFeedback(
-      execute ? 'Submitting smoke entry + exit…' : 'Running dry-run smoke test…',
+      execute ? 'Submitting smoke entry + exit…' : 'Running Execution Test smoke test…',
       'info',
       null
     );
@@ -1145,7 +1145,7 @@
         var body = resp.body || {};
         if (resp.ok && body.ok && !body.execute) {
           showFeedback(
-            'Dry-run smoke test passed — entry payload built, exit payload built. No broker order sent.',
+            'Execution Test smoke test passed — entry payload built, exit payload built. No broker order sent.',
             'ok',
             body
           );

@@ -66,13 +66,15 @@ def test_dashboard_renders_execution_card(client):
 
 def test_dashboard_execution_card_shows_mode_dropdown(client):
     body = client.get("/").text
-    # Mode select rendered with only dry-run and live (demo removed).
+    # Mode select rendered with only Execution Test (paper) and live
+    # (demo removed). The option label was renamed from "dry-run" to
+    # "Execution Test"; the backend value stays paper.
     assert 'id="execution_mode_select"' in body
     assert 'value="paper"' in body
     assert 'value="live"' in body
     assert 'value="demo"' not in body
-    # The dropdown option label reads ``dry-run`` rather than ``paper``.
-    assert ">dry-run<" in body
+    assert ">Execution Test<" in body
+    assert ">dry-run<" not in body
     # Apply primary action.
     assert 'id="btn-execution-apply"' in body
     # Button label is just "Apply" — not the legacy "Save / Apply".
