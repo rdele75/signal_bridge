@@ -655,15 +655,35 @@
   }
 
   // ---- Toast helper. Slides in, holds, slides out. Idempotent — a
-  // new toast cancels any in-flight enter/exit cycle. ----
+  // new toast cancels any in-flight enter/exit cycle. Pauses the
+  // auto-dismiss while the operator hovers or focuses the toast so
+  // important messages can be read without sprinting. ----
   var _toastTimers = [];
+  var _toastPaused = false;
   function clearToastTimers() {
     _toastTimers.forEach(function (t) { window.clearTimeout(t); });
     _toastTimers = [];
   }
+  function _scheduleToastExit(holdMs) {
+    if (_toastPaused) return;
+    _toastTimers.push(window.setTimeout(function () {
+      if (_toastPaused) {
+        // Paused mid-hold: just keep the enter state, reschedule on
+        // mouseleave.
+        return;
+      }
+      toastEl.classList.remove('execution-toast-enter');
+      toastEl.classList.add('execution-toast-exit');
+      _toastTimers.push(window.setTimeout(function () {
+        toastEl.classList.remove('execution-toast-exit');
+        toastEl.hidden = true;
+      }, 360));
+    }, holdMs));
+  }
   function showToast(message, kind) {
     if (!toastEl || !message) return;
     clearToastTimers();
+    _toastPaused = false;
     toastEl.textContent = message;
     toastEl.classList.remove('toast-bad', 'toast-info', 'execution-toast-exit');
     if (kind === 'bad') toastEl.classList.add('toast-bad');
@@ -672,14 +692,26 @@
     // Force a reflow so the enter transition actually runs.
     void toastEl.offsetWidth;
     toastEl.classList.add('execution-toast-enter');
-    _toastTimers.push(window.setTimeout(function () {
-      toastEl.classList.remove('execution-toast-enter');
-      toastEl.classList.add('execution-toast-exit');
-      _toastTimers.push(window.setTimeout(function () {
-        toastEl.classList.remove('execution-toast-exit');
-        toastEl.hidden = true;
-      }, 360));
-    }, 2200));
+    _scheduleToastExit(2200);
+  }
+  if (toastEl) {
+    var resumeHoldMs = 1500;
+    function pauseToast() {
+      _toastPaused = true;
+      clearToastTimers();
+    }
+    function resumeToast() {
+      if (!_toastPaused) return;
+      _toastPaused = false;
+      if (toastEl.hidden) return;
+      // Briefly hold after the operator moves away so the message
+      // isn't yanked the instant the cursor leaves.
+      _scheduleToastExit(resumeHoldMs);
+    }
+    toastEl.addEventListener('mouseenter', pauseToast);
+    toastEl.addEventListener('mouseleave', resumeToast);
+    toastEl.addEventListener('focusin', pauseToast);
+    toastEl.addEventListener('focusout', resumeToast);
   }
 
   function setBusy(busy) {

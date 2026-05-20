@@ -1252,6 +1252,10 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 .execution-toast.execution-toast-enter {
   opacity: 1;
   transform: translateY(0) scale(1);
+  /* Allow hover/focus while the toast is visible so the operator can
+     pause the auto-dismiss. Click-through is restored as soon as the
+     exit transition begins (the class is dropped before exit). */
+  pointer-events: auto;
 }
 .execution-toast.execution-toast-exit {
   opacity: 0;
