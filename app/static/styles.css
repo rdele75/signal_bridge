@@ -1038,9 +1038,13 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   flex-wrap: wrap;
 }
 .execution-mode-form select {
-  flex: 1 1 200px;
-  min-width: 200px;
+  /* Size to content on desktop; the dropdown only ever holds two
+     short labels (Execution Test / live) so a wide select was
+     wasted space. Mobile breakpoint below overrides to 100%. */
+  flex: 0 0 auto;
   width: auto;
+  min-width: 140px;
+  max-width: 220px;
 }
 /* Apply sits at the trailing edge of the row so the select can grow
    into the card width instead of leaving the row left-clumped. The
