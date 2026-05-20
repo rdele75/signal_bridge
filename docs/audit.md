@@ -184,6 +184,12 @@ In order, fastest first:
 
 Each step is independent — running them in sequence is belt-and-braces.
 
+> **Steps 1–4 stop new orders. They do not close existing Topstep
+> positions.** Use the TopstepX app to flatten — the dashboard's
+> Flatten button operates on the paper broker only. The Topstep
+> button is disabled and labelled "Flatten (paper only)" for that
+> reason.
+
 ## Secret handling
 
 - Webhook secret: stored in SQLite via the managed key

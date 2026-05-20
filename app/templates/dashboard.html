@@ -71,9 +71,16 @@
         <button type="button" id="btn-disable-exec" class="btn">
           Disengage
         </button>
+        {% if broker_provider == 'topstep' %}
+        <button type="button" id="btn-flatten-all" class="btn" disabled
+                title="Topstep flatten not yet implemented — close positions directly in TopstepX">
+          Flatten (paper only)
+        </button>
+        {% else %}
         <button type="button" id="btn-flatten-all" class="btn">
           Exit All / Flatten
         </button>
+        {% endif %}
         <button type="button" id="btn-smoke-test" class="btn"
                 {% if execution_mode != 'paper' %}hidden{% endif %}>
           Smoke Test
@@ -89,6 +96,18 @@
           </span>
         {% endif %}
       </div>
+
+      <p class="muted execution-disengage-note">
+        Disengage stops new orders; does not close existing positions.
+      </p>
+
+      {% if broker_provider == 'topstep' %}
+      <p class="muted banner warn execution-flatten-topstep-note">
+        <strong>No emergency flatten available for Topstep yet.</strong>
+        To exit positions, use the TopstepX app or website directly. The
+        Disengage button stops NEW orders from being sent.
+      </p>
+      {% endif %}
 
       <p class="execution-smoke-hint"
          {% if execution_mode != 'paper' %}hidden{% endif %}

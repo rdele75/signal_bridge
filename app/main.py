@@ -2746,6 +2746,15 @@ def create_app() -> FastAPI:
             return JSONResponse(
                 status_code=200, content=broker.flatten_all_positions()
             )
+        if broker.provider == "topstep":
+            message = (
+                "Topstep flatten is not implemented yet — exit positions "
+                "in the TopstepX app/web directly."
+            )
+        else:
+            message = (
+                f"{broker.provider} flatten-all is not implemented yet"
+            )
         return JSONResponse(
             status_code=200,
             content={
@@ -2753,9 +2762,7 @@ def create_app() -> FastAPI:
                 "provider": broker.provider,
                 "status": "not_implemented",
                 "not_implemented": True,
-                "message": (
-                    f"{broker.provider} flatten-all is not implemented yet"
-                ),
+                "message": message,
             },
         )
 
