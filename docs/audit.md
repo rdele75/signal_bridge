@@ -75,7 +75,6 @@ flip every flag together.
 
 ## Known limitations
 
-- Tradovate adapter is scaffolded but not connected.
 - Topstep order history is only available via the journal fallback —
   ProjectX search-orders is wired but not yet rendered in the metrics
   page beyond raw rows.

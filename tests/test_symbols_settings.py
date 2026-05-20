@@ -79,10 +79,10 @@ def test_symbols_json_includes_mnq_mes_nq_es():
 def test_symbol_map_loads_default_topstep_mappings(tmp_path: Path):
     p = tmp_path / "symbols.json"
     p.write_text(json.dumps({
-        "MNQ1!": {"paper": "MNQ1!", "topstep": "CON.F.US.MNQ.M26", "tradovate": "MNQ"},
-        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26", "tradovate": "MES"},
-        "NQ1!":  {"paper": "NQ1!",  "topstep": "",                 "tradovate": "NQ"},
-        "ES1!":  {"paper": "ES1!",  "topstep": "",                 "tradovate": "ES"},
+        "MNQ1!": {"paper": "MNQ1!", "topstep": "CON.F.US.MNQ.M26"},
+        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26"},
+        "NQ1!":  {"paper": "NQ1!",  "topstep": ""},
+        "ES1!":  {"paper": "ES1!",  "topstep": ""},
     }))
     sm = SymbolMap(p)
     assert sm.resolve_explicit("MNQ1!", "topstep") == "CON.F.US.MNQ.M26"
@@ -91,9 +91,21 @@ def test_symbol_map_loads_default_topstep_mappings(tmp_path: Path):
     # the raw ticker as a fake contract id.
     assert sm.resolve_explicit("NQ1!", "topstep") is None
     assert sm.resolve_explicit("ES1!", "topstep") is None
-    # Tradovate placeholders are still readable.
-    assert sm.resolve_explicit("NQ1!", "tradovate") == "NQ"
-    assert sm.resolve_explicit("ES1!", "tradovate") == "ES"
+
+
+def test_symbol_map_legacy_tradovate_keys_are_ignored_on_load(tmp_path: Path):
+    """An operator's existing config/symbols.json may still carry the
+    ``tradovate`` column from a prior install. The loader must not error
+    on those keys and must not surface them through ``all_mappings()``.
+    """
+    p = tmp_path / "symbols.json"
+    p.write_text(json.dumps({
+        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26", "tradovate": "MES"},
+    }))
+    sm = SymbolMap(p)
+    rows = sm.all_mappings()
+    assert rows == {"MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26"}}
+    assert "tradovate" not in rows["MES1!"]
 
 
 def test_symbol_map_all_mappings_filters_metadata_keys(tmp_path: Path):
@@ -101,25 +113,25 @@ def test_symbol_map_all_mappings_filters_metadata_keys(tmp_path: Path):
     p.write_text(json.dumps({
         "_comment": "ignored by the UI",
         "_warning": "also ignored",
-        "ES1!": {"paper": "ES1!", "topstep": "", "tradovate": "ES"},
+        "ES1!": {"paper": "ES1!", "topstep": ""},
     }))
     sm = SymbolMap(p)
     rows = sm.all_mappings()
     assert "_comment" not in rows
     assert "_warning" not in rows
-    assert rows == {"ES1!": {"paper": "ES1!", "topstep": "", "tradovate": "ES"}}
+    assert rows == {"ES1!": {"paper": "ES1!", "topstep": ""}}
 
 
 def test_symbol_map_replace_all_writes_disk_and_preserves_metadata(tmp_path: Path):
     p = tmp_path / "symbols.json"
     p.write_text(json.dumps({
         "_comment": "keep me",
-        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26", "tradovate": "MES"},
+        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26"},
     }))
     sm = SymbolMap(p)
     sm.replace_all({
-        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M27", "tradovate": "MES"},
-        "ES1!":  {"paper": "ES1!",  "topstep": "",                 "tradovate": "ES"},
+        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M27"},
+        "ES1!":  {"paper": "ES1!",  "topstep": ""},
     })
     reloaded = json.loads(p.read_text())
     assert reloaded["_comment"] == "keep me"
@@ -134,14 +146,14 @@ def test_symbol_map_replace_all_writes_disk_and_preserves_metadata(tmp_path: Pat
 
 def test_parse_form_mappings_paper_defaults_to_ticker():
     rows = parse_form_mappings(
-        ["ES1!", ""], ["", "ignored"], ["", ""], ["ES", ""]
+        ["ES1!", ""], ["", "ignored"], ["", ""]
     )
-    assert rows == {"ES1!": {"paper": "ES1!", "topstep": "", "tradovate": "ES"}}
+    assert rows == {"ES1!": {"paper": "ES1!", "topstep": ""}}
 
 
 def test_parse_form_mappings_mismatched_arrays_raises():
     try:
-        parse_form_mappings(["ES1!"], ["ES1!"], [], [])
+        parse_form_mappings(["ES1!"], ["ES1!"], [])
     except ValueError:
         return
     raise AssertionError("parse_form_mappings should reject mis-aligned arrays")
@@ -163,7 +175,7 @@ def test_builder_blank_topstep_for_es_rejects_with_mapping_missing():
         _signal(symbol="ES1!"),
         account_id=5001,
         symbol_map=_StubMap({
-            "ES1!": {"paper": "ES1!", "topstep": "", "tradovate": "ES"},
+            "ES1!": {"paper": "ES1!", "topstep": ""},
         }),
     )
     assert result["ok"] is False
@@ -177,7 +189,7 @@ def test_builder_blank_topstep_for_nq_rejects_with_mapping_missing():
         _signal(symbol="NQ1!"),
         account_id=5001,
         symbol_map=_StubMap({
-            "NQ1!": {"paper": "NQ1!", "topstep": "", "tradovate": "NQ"},
+            "NQ1!": {"paper": "NQ1!", "topstep": ""},
         }),
     )
     assert result["ok"] is False
@@ -190,7 +202,7 @@ def test_builder_existing_mnq_mapping_still_builds():
         _signal(symbol="MNQ1!"),
         account_id=5001,
         symbol_map=_StubMap({
-            "MNQ1!": {"paper": "MNQ1!", "topstep": "CON.F.US.MNQ.M26", "tradovate": "MNQ"},
+            "MNQ1!": {"paper": "MNQ1!", "topstep": "CON.F.US.MNQ.M26"},
         }),
     )
     assert result["ok"] is True
@@ -202,7 +214,7 @@ def test_builder_existing_mes_mapping_still_builds():
         _signal(symbol="MES1!"),
         account_id=5001,
         symbol_map=_StubMap({
-            "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26", "tradovate": "MES"},
+            "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26"},
         }),
     )
     assert result["ok"] is True
@@ -217,10 +229,10 @@ def test_builder_existing_mes_mapping_still_builds():
 def _seed_default_symbols(symbols_path: Path) -> None:
     symbols_path.parent.mkdir(parents=True, exist_ok=True)
     symbols_path.write_text(json.dumps({
-        "MNQ1!": {"paper": "MNQ1!", "topstep": "CON.F.US.MNQ.M26", "tradovate": "MNQ"},
-        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26", "tradovate": "MES"},
-        "NQ1!":  {"paper": "NQ1!",  "topstep": "",                 "tradovate": "NQ"},
-        "ES1!":  {"paper": "ES1!",  "topstep": "",                 "tradovate": "ES"},
+        "MNQ1!": {"paper": "MNQ1!", "topstep": "CON.F.US.MNQ.M26"},
+        "MES1!": {"paper": "MES1!", "topstep": "CON.F.US.MES.M26"},
+        "NQ1!":  {"paper": "NQ1!",  "topstep": ""},
+        "ES1!":  {"paper": "ES1!",  "topstep": ""},
     }))
 
 
@@ -258,7 +270,6 @@ def test_settings_symbols_post_writes_disk(make_app, tmp_path):
         "ticker":    ["MNQ1!",            "ES1!"],
         "paper":     ["MNQ1!",            ""],
         "topstep":   ["CON.F.US.MNQ.M26", "CON.F.US.ES.M26"],
-        "tradovate": ["MNQ",              "ES"],
     }
     with TestClient(app) as c:
         r = c.post("/settings/symbols", data=form, follow_redirects=False)
@@ -278,7 +289,6 @@ def test_settings_symbols_post_updates_live_loader(make_app, tmp_path):
         "ticker":    ["ES1!"],
         "paper":     ["ES1!"],
         "topstep":   ["CON.F.US.ES.M26"],
-        "tradovate": ["ES"],
     }
     with TestClient(app) as c:
         r = c.post("/settings/symbols", data=form, follow_redirects=False)

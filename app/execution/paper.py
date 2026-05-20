@@ -7,7 +7,7 @@ computed in price-points and recorded into ``closed_trades`` plus the
 daily PnL bucket.
 
 The paper adapter is the only fully-functional broker in this build.
-Topstep and Tradovate are scaffolded placeholders.
+Topstep is the scaffolded placeholder.
 """
 from __future__ import annotations
 

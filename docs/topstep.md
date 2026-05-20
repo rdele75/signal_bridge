@@ -101,12 +101,12 @@ and the dry-run is journaled as a build failure.
 
 **Default mappings** shipped in `config/symbols.example.json`:
 
-| TradingView ticker | Topstep contract id        | Tradovate symbol |
-|--------------------|----------------------------|------------------|
-| `MNQ1!`            | `CON.F.US.MNQ.M26`         | `MNQ`            |
-| `MES1!`            | `CON.F.US.MES.M26`         | `MES`            |
-| `NQ1!`             | *(blank — fill via search)* | `NQ`             |
-| `ES1!`             | *(blank — fill via search)* | `ES`             |
+| TradingView ticker | Topstep contract id         |
+|--------------------|-----------------------------|
+| `MNQ1!`            | `CON.F.US.MNQ.M26`          |
+| `MES1!`            | `CON.F.US.MES.M26`          |
+| `NQ1!`             | *(blank — fill via search)* |
+| `ES1!`             | *(blank — fill via search)* |
 
 `NQ1!` / `ES1!` ship blank because the full-size E-mini contract ids
 must be picked from the live ProjectX catalog (and they change every

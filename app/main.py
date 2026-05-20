@@ -2667,7 +2667,7 @@ def create_app() -> FastAPI:
     # Paper-only admin actions (flatten / reset)
     #
     # These only operate on the in-memory paper broker. If the active
-    # provider is topstep/tradovate they return a structured, safe
+    # provider is topstep they return a structured, safe
     # "not available for this provider yet" envelope at 200, never trying
     # to mutate a real broker's state.
     # ------------------------------------------------------------------
@@ -2940,18 +2940,7 @@ def create_app() -> FastAPI:
                 "demo_execution": demo_exec,
                 "live_execution": live_exec,
                 "realtime": realtime_view,
-                "tradovate": {
-                    "username_set": bool(settings.tradovate_username),
-                    "username_preview": _mask_identifier(settings.tradovate_username),
-                    "password_set": bool(settings.tradovate_password),
-                    "app_id_set": bool(settings.tradovate_app_id),
-                    "app_version": settings.tradovate_app_version,
-                    "cid_set": bool(settings.tradovate_cid),
-                    "sec_set": bool(settings.tradovate_sec),
-                    "account_id": settings.tradovate_account_id,
-                    "env": settings.tradovate_env,
-                },
-                "provider_options": ["paper", "topstep", "tradovate"],
+                "provider_options": ["paper", "topstep"],
                 "execution_mode_options": ["paper", "demo"],
                 "configured_provider": configured,
                 "configured_execution_mode": settings.execution_mode,
@@ -3247,11 +3236,8 @@ def create_app() -> FastAPI:
         tickers = form.getlist("ticker")
         papers = form.getlist("paper")
         topsteps = form.getlist("topstep")
-        tradovates = form.getlist("tradovate")
         try:
-            mappings = parse_form_mappings(
-                tickers, papers, topsteps, tradovates
-            )
+            mappings = parse_form_mappings(tickers, papers, topsteps)
         except ValueError as exc:
             return _flash_redirect("/settings/symbols", str(exc), kind="error")
         try:

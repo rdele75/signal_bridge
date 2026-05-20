@@ -219,26 +219,6 @@ class Settings(BaseModel):
         default_factory=lambda: _int("TOPSTEP_REALTIME_POLL_SECONDS", 5)
     )
 
-    # Tradovate placeholders — not used until the adapter is implemented.
-    tradovate_username: str = Field(
-        default_factory=lambda: os.getenv("TRADOVATE_USERNAME", "")
-    )
-    tradovate_password: str = Field(
-        default_factory=lambda: os.getenv("TRADOVATE_PASSWORD", "")
-    )
-    tradovate_app_id: str = Field(
-        default_factory=lambda: os.getenv("TRADOVATE_APP_ID", "")
-    )
-    tradovate_app_version: str = Field(
-        default_factory=lambda: os.getenv("TRADOVATE_APP_VERSION", "")
-    )
-    tradovate_cid: str = Field(default_factory=lambda: os.getenv("TRADOVATE_CID", ""))
-    tradovate_sec: str = Field(default_factory=lambda: os.getenv("TRADOVATE_SEC", ""))
-    tradovate_account_id: str = Field(
-        default_factory=lambda: os.getenv("TRADOVATE_ACCOUNT_ID", "")
-    )
-    tradovate_env: str = Field(default_factory=lambda: os.getenv("TRADOVATE_ENV", "demo"))
-
     # Currently selected trading account. Persisted alongside the broker
     # provider. Empty string means "use the per-provider default".
     selected_account_id: str = Field(
@@ -300,16 +280,14 @@ class Settings(BaseModel):
         """The selected account id for the active provider.
 
         Prefers SELECTED_ACCOUNT_ID. Otherwise falls back to the
-        per-provider account id (TOPSTEP_ACCOUNT_ID / TRADOVATE_ACCOUNT_ID)
-        or the paper default 'PAPER-001'.
+        per-provider account id (TOPSTEP_ACCOUNT_ID) or the paper default
+        'PAPER-001'.
         """
         if self.selected_account_id:
             return self.selected_account_id
         provider = self.resolved_provider
         if provider == "topstep":
             return self.topstep_account_id or ""
-        if provider == "tradovate":
-            return self.tradovate_account_id or ""
         return "PAPER-001"
 
     @property

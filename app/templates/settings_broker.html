@@ -173,7 +173,7 @@
                 <option value="{{ p }}" {% if p == configured_provider %}selected{% endif %}>{{ p }}</option>
               {% endfor %}
             </select>
-            <p class="muted mt-1">paper executes; topstep is read-only/dry-run; tradovate not implemented.</p>
+            <p class="muted mt-1">paper executes; topstep is read-only/dry-run.</p>
           </div>
           <div class="form-row">
             <label for="selected_account_id">Selected account ID</label>
@@ -312,24 +312,6 @@
     </dl>
   </div>
 
-  <div class="card">
-    <div class="card-row">
-      <h3>Tradovate</h3>
-      <span class="badge badge-warn">placeholder</span>
-    </div>
-    <p class="muted">Optional futures broker. Adapter scaffolded — not connected yet.
-    Credentials still come from <code>.env</code>; the UI never displays the raw values.</p>
-    <dl class="kv">
-      <dt>TRADOVATE_ENV</dt><dd>{{ tradovate.env or '—' }}</dd>
-      <dt>TRADOVATE_USERNAME</dt><dd>{{ tradovate.username_preview or ('configured' if tradovate.username_set else '—') }}</dd>
-      <dt>TRADOVATE_APP_ID</dt><dd>{{ 'configured' if tradovate.app_id_set else '—' }}</dd>
-      <dt>TRADOVATE_APP_VERSION</dt><dd>{{ tradovate.app_version or '—' }}</dd>
-      <dt>TRADOVATE_CID</dt><dd>{{ 'configured' if tradovate.cid_set else '—' }}</dd>
-      <dt>TRADOVATE_SEC</dt><dd>{{ 'configured' if tradovate.sec_set else '—' }}</dd>
-      <dt>TRADOVATE_PASSWORD</dt><dd>{{ 'configured' if tradovate.password_set else '—' }}</dd>
-      <dt>TRADOVATE_ACCOUNT_ID</dt><dd>{{ tradovate.account_id or '—' }}</dd>
-    </dl>
-  </div>
 </section>
 
 <script>

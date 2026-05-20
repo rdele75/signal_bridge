@@ -6,14 +6,15 @@ at) if it exists. The expected shape is provider-aware:
     {
       "MES1!": {
         "paper": "MES1!",
-        "topstep": "MES",
-        "tradovate": "MESM26"
+        "topstep": "CON.F.US.MES.M26"
       }
     }
 
 If the file is missing, malformed, or doesn't contain a mapping for a
 given (ticker, provider) pair, `resolve()` returns the original ticker
-unchanged. This keeps SignalBridge usable on day one with paper alone.
+unchanged. Unknown provider columns left over in the JSON (e.g. a stale
+``tradovate`` key from an older install) are ignored on load and dropped
+on the next save through the dashboard.
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ log = logging.getLogger("signalbridge.symbol_map")
 
 
 # Provider columns the UI knows how to edit.
-KNOWN_PROVIDERS: tuple[str, ...] = ("paper", "topstep", "tradovate")
+KNOWN_PROVIDERS: tuple[str, ...] = ("paper", "topstep")
 
 
 class SymbolMap:
@@ -136,27 +137,24 @@ def parse_form_mappings(
     tickers: Iterable[str],
     paper_values: Iterable[str],
     topstep_values: Iterable[str],
-    tradovate_values: Iterable[str],
 ) -> Dict[str, Dict[str, str]]:
     """Turn parallel form arrays into a normalized mapping dict.
 
     Validation rules:
       * TradingView ticker is required (rows with a blank ticker are dropped).
       * Paper symbol defaults to the ticker when blank.
-      * Topstep / Tradovate symbols may be blank.
+      * Topstep symbol may be blank.
 
     Raises ``ValueError`` when a row is malformed beyond a blank ticker.
     """
     tickers = list(tickers)
     paper_values = list(paper_values)
     topstep_values = list(topstep_values)
-    tradovate_values = list(tradovate_values)
 
     length = len(tickers)
     if not (
         len(paper_values) == length
         and len(topstep_values) == length
-        and len(tradovate_values) == length
     ):
         raise ValueError("symbol form arrays are mis-aligned")
 
@@ -167,10 +165,8 @@ def parse_form_mappings(
             continue
         paper = (paper_values[idx] or "").strip() or ticker
         topstep = (topstep_values[idx] or "").strip()
-        tradovate = (tradovate_values[idx] or "").strip()
         out[ticker] = {
             "paper": paper,
             "topstep": topstep,
-            "tradovate": tradovate,
         }
     return out

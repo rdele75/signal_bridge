@@ -12,7 +12,6 @@ from .config import Settings
 from .execution.broker_base import BrokerBase
 from .execution.paper import PaperBroker
 from .execution.topstep import TopstepBroker
-from .execution.tradovate import TradovateBroker
 from .journal import Journal
 from .settings_store import SettingsStore
 
@@ -77,18 +76,6 @@ def build_broker(
             live_allowed_symbols=settings.live_allowed_symbols,
             live_require_kill_switch_off=settings.live_require_kill_switch_off,
             max_contracts_per_trade=settings.max_contracts_per_trade,
-        )
-
-    if provider == "tradovate":
-        return TradovateBroker(
-            username=settings.tradovate_username,
-            password=settings.tradovate_password,
-            app_id=settings.tradovate_app_id,
-            app_version=settings.tradovate_app_version,
-            cid=settings.tradovate_cid,
-            sec=settings.tradovate_sec,
-            account_id=settings.resolved_account_id or settings.tradovate_account_id,
-            env=settings.tradovate_env,
         )
 
     # Unknown provider — fall back to paper rather than failing closed.

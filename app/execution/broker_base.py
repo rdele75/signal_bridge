@@ -95,8 +95,8 @@ class BrokerBase(ABC):
         """Submit a market order based on a normalized signal.
 
         Default: not implemented. Adapters that do route market orders
-        (e.g. paper) override this. Topstep/Tradovate keep the default
-        so a misconfigured deploy never silently submits.
+        (e.g. paper) override this. Topstep keeps the default so a
+        misconfigured deploy never silently submits.
         """
         return self._not_implemented(
             "submit_market_order",

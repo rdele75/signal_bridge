@@ -162,18 +162,6 @@ def test_api_broker_test_topstep_not_implemented(make_app):
     assert body["status"] == "missing_credentials"
 
 
-def test_api_broker_test_tradovate_not_implemented(make_app):
-    from fastapi.testclient import TestClient
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        r = c.post("/api/broker/test-connection")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is False
-    assert body["provider"] == "tradovate"
-    assert "not implemented" in body["message"].lower()
-
-
 # ---------- /api/broker/status ----------
 
 
@@ -204,16 +192,6 @@ def test_api_broker_status_topstep_not_implemented(make_app):
     assert body["status"] == "missing_credentials"
 
 
-def test_api_broker_status_tradovate_not_implemented(make_app):
-    from fastapi.testclient import TestClient
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        body = c.get("/api/broker/status").json()
-    assert body["provider"] == "tradovate"
-    assert body["not_implemented"] is True
-    assert body["broker_connected"] is False
-
-
 # ---------- /api/broker/accounts ----------
 
 
@@ -239,17 +217,6 @@ def test_api_broker_accounts_topstep_missing_credentials(make_app):
     assert body["ok"] is False
     assert body["status"] == "missing_credentials"
     assert body["provider"] == "topstep"
-    assert body["accounts"] == []
-
-
-def test_api_broker_accounts_tradovate_not_implemented(make_app):
-    from fastapi.testclient import TestClient
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        body = c.get("/api/broker/accounts").json()
-    assert body["ok"] is False
-    assert body["not_implemented"] is True
-    assert body["provider"] == "tradovate"
     assert body["accounts"] == []
 
 
@@ -289,15 +256,6 @@ def test_api_broker_positions_topstep_safe(make_app):
     assert body["positions"] == []
 
 
-def test_api_broker_positions_tradovate_safe(make_app):
-    from fastapi.testclient import TestClient
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        body = c.get("/api/broker/positions").json()
-    assert body["not_implemented"] is True
-    assert body["positions"] == []
-
-
 # ---------- /api/broker/orders ----------
 
 
@@ -324,15 +282,6 @@ def test_api_broker_orders_topstep_safe(make_app):
     with TestClient(app) as c:
         body = c.get("/api/broker/orders").json()
     assert body["status"] == "missing_credentials"
-    assert body["orders"] == []
-
-
-def test_api_broker_orders_tradovate_safe(make_app):
-    from fastapi.testclient import TestClient
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        body = c.get("/api/broker/orders").json()
-    assert body["not_implemented"] is True
     assert body["orders"] == []
 
 
