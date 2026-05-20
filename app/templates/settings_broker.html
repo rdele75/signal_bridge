@@ -49,7 +49,9 @@
 
   <div class="card">
     <div class="card-label">Selected account</div>
-    <div id="broker-selected-account-id" class="card-value sm mono">{{ selected_account_id or '—' }}</div>
+    <div id="broker-selected-account-id"
+         class="card-value sm mono sensitive"
+         title="Click to reveal">{{ selected_account_id or '—' }}</div>
     <div class="card-sub">
       {% if selected_account_id_raw %}
         from <code>SELECTED_ACCOUNT_ID</code>
