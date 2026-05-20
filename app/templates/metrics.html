@@ -70,20 +70,22 @@
 </section>
 
 <section class="card section" id="past-orders-section">
-  <div class="section-head">
-    <h3>Past Orders</h3>
-    <span class="hint" id="past-orders-source">
-      {% if m.past_orders.source == 'broker_paper' %}
-        from paper broker
-      {% elif m.past_orders.source == 'broker_topstep' %}
-        from Topstep broker
-      {% elif m.past_orders.source == 'journal' %}
-        from local journal
-      {% else %}
-        recent orders
-      {% endif %}
-    </span>
-  </div>
+  <details class="collapsible">
+    <summary class="section-head collapsible-toggle">
+      <h3>Past Orders</h3>
+      <span class="hint" id="past-orders-source">
+        {% if m.past_orders.source == 'broker_paper' %}
+          from paper broker
+        {% elif m.past_orders.source == 'broker_topstep' %}
+          from Topstep broker
+        {% elif m.past_orders.source == 'journal' %}
+          from local journal
+        {% else %}
+          recent orders
+        {% endif %}
+      </span>
+    </summary>
+    <div class="collapsible-body">
 
   {% if active_broker_provider == 'topstep' %}
     {# Topstep order history is fetched client-side from
@@ -238,6 +240,9 @@
   {% else %}
     <div class="empty"><strong>none</strong>{{ m.past_orders.message or 'No past orders yet.' }}</div>
   {% endif %}
+
+    </div>
+  </details>
 </section>
 
 {% if active_broker_provider == 'topstep' %}
