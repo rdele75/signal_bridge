@@ -87,63 +87,67 @@
 </section>
 
 <section class="card section">
-  <div class="section-head">
-    <h3>Xiznit Universal ORB — native strategy alerts</h3>
-    <span class="hint">secret goes in the Webhook URL, not the message body</span>
-  </div>
-  <p class="muted mb-4">
-    The Xiznit Universal ORB strategy emits TradingView's own
-    <code>{{ '{{strategy.order.alert_message}}' }}</code> and
-    <code>{{ '{{strategy.alert_message}}' }}</code> placeholders. Those bodies don't
-    carry our shared secret, so SignalBridge accepts the secret as a
-    <code>?secret=…</code> query parameter on the Webhook URL instead.
-  </p>
+  <details class="collapsible">
+    <summary class="section-head collapsible-toggle">
+      <h3>Xiznit Universal ORB — native strategy alerts</h3>
+      <span class="hint">click to expand</span>
+    </summary>
+    <div class="collapsible-body">
+      <p class="muted mb-4">
+        The Xiznit Universal ORB strategy emits TradingView's own
+        <code>{{ '{{strategy.order.alert_message}}' }}</code> and
+        <code>{{ '{{strategy.alert_message}}' }}</code> placeholders. Those bodies don't
+        carry our shared secret, so SignalBridge accepts the secret as a
+        <code>?secret=…</code> query parameter on the Webhook URL instead.
+      </p>
 
-  <h4 class="mt-6 mb-2">Alert 1 — Entries &amp; TPs</h4>
-  <dl class="kv">
-    <dt>Condition</dt>
-    <dd>Xiznit Universal ORB → <em>Order fills</em></dd>
-    <dt>Webhook URL</dt>
-    <dd>
-      <div class="code-frame">
-        <span class="copy-hint">url</span>
-        <pre class="code">{{ xiznit_url_tunnel }}</pre>
-      </div>
-    </dd>
-    <dt>Message</dt>
-    <dd>
-      <div class="code-frame">
-        <span class="copy-hint">message</span>
-        <pre class="code">{{ '{{strategy.order.alert_message}}' }}</pre>
-      </div>
-    </dd>
-  </dl>
+      <h4 class="mt-6 mb-2">Alert 1 — Entries &amp; TPs</h4>
+      <dl class="kv">
+        <dt>Condition</dt>
+        <dd>Xiznit Universal ORB → <em>Order fills</em></dd>
+        <dt>Webhook URL</dt>
+        <dd>
+          <div class="code-frame">
+            <span class="copy-hint">url</span>
+            <pre class="code">{{ xiznit_url_tunnel }}</pre>
+          </div>
+        </dd>
+        <dt>Message</dt>
+        <dd>
+          <div class="code-frame">
+            <span class="copy-hint">message</span>
+            <pre class="code">{{ '{{strategy.order.alert_message}}' }}</pre>
+          </div>
+        </dd>
+      </dl>
 
-  <h4 class="mt-6 mb-2">Alert 2 — SL &amp; Exits</h4>
-  <dl class="kv">
-    <dt>Condition</dt>
-    <dd>Xiznit Universal ORB → <em>alert() function calls</em></dd>
-    <dt>Webhook URL</dt>
-    <dd>
-      <div class="code-frame">
-        <span class="copy-hint">url</span>
-        <pre class="code">{{ xiznit_url_tunnel }}</pre>
-      </div>
-    </dd>
-    <dt>Message</dt>
-    <dd>
-      <div class="code-frame">
-        <span class="copy-hint">message</span>
-        <pre class="code">{{ '{{strategy.alert_message}}' }}</pre>
-      </div>
-    </dd>
-  </dl>
+      <h4 class="mt-6 mb-2">Alert 2 — SL &amp; Exits</h4>
+      <dl class="kv">
+        <dt>Condition</dt>
+        <dd>Xiznit Universal ORB → <em>alert() function calls</em></dd>
+        <dt>Webhook URL</dt>
+        <dd>
+          <div class="code-frame">
+            <span class="copy-hint">url</span>
+            <pre class="code">{{ xiznit_url_tunnel }}</pre>
+          </div>
+        </dd>
+        <dt>Message</dt>
+        <dd>
+          <div class="code-frame">
+            <span class="copy-hint">message</span>
+            <pre class="code">{{ '{{strategy.alert_message}}' }}</pre>
+          </div>
+        </dd>
+      </dl>
 
-  <p class="muted mt-5">
-    For LAN / Tailscale testing, swap <code>YOUR-TUNNEL-URL</code> for your
-    machine's host:
-    <code class="mono">http://{{ host }}:{{ port }}/webhooks/tradingview?secret=&lt;current secret&gt;&amp;symbol={{ '{{ticker}}' }}</code>.
-  </p>
+      <p class="muted mt-5">
+        For LAN / Tailscale testing, swap <code>YOUR-TUNNEL-URL</code> for your
+        machine's host:
+        <code class="mono">http://{{ host }}:{{ port }}/webhooks/tradingview?secret=&lt;current secret&gt;&amp;symbol={{ '{{ticker}}' }}</code>.
+      </p>
+    </div>
+  </details>
 </section>
 
 <section class="card section">
