@@ -3133,10 +3133,8 @@ def create_app() -> FastAPI:
                         "configured" if api_key else ""
                     ),
                     "account_id": settings.topstep_account_id,
-                    "env": settings.topstep_env,
                     "base_url": settings.topstep_base_url,
                     "ws_url": settings.topstep_ws_url,
-                    "env_options": ["demo"],
                     "token_cached": bool(settings.topstep_token),
                     "token_expires_at": settings.topstep_token_expires_at or "",
                 },

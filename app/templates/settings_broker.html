@@ -234,15 +234,6 @@
                    placeholder="e.g. PRACTICE-XXXX"
                    value="{{ topstep.account_id }}" />
           </div>
-          <div class="form-row">
-            <label for="topstep_env">TopstepX environment</label>
-            <select id="topstep_env" name="topstep_env">
-              {% for e in topstep.env_options %}
-                <option value="{{ e }}" {% if e == topstep.env %}selected{% endif %}>{{ e }}</option>
-              {% endfor %}
-            </select>
-            <p class="muted mt-1"><code>live</code> is intentionally disabled.</p>
-          </div>
         </div>
         <div class="grid grid-2">
           <div class="form-row">
@@ -304,7 +295,6 @@
     Real ProjectX authentication and active-account discovery are implemented —
     order placement is intentionally off in this phase.</p>
     <dl class="kv">
-      <dt>TOPSTEP_ENV</dt><dd>{{ topstep.env or '—' }}</dd>
       <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username_preview or ('configured' if topstep.username_set else '—') }}</dd>
       <dt>TOPSTEP_API_KEY</dt><dd>{{ topstep.api_key_preview or ('configured' if topstep.api_key_set else '—') }}</dd>
       <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>

@@ -217,16 +217,19 @@ def test_broker_page_selection_form_has_no_execution_mode_select(client):
 
 def test_broker_page_keeps_topstep_credentials(client):
     body = client.get("/settings/broker").text
-    # Topstep credential fields stay on the broker form.
+    # Topstep credential fields stay on the broker form. topstep_env
+    # was removed from the UI (settings layer still reads it from .env
+    # at boot) — see the ui-revisions commit "remove TOPSTEP_ENV
+    # display from settings UI".
     for field in (
         "topstep_username",
         "topstep_api_key",
         "topstep_account_id",
-        "topstep_env",
         "topstep_base_url",
         "topstep_ws_url",
     ):
         assert f'name="{field}"' in body, field
+    assert 'name="topstep_env"' not in body
 
 
 def test_broker_page_keeps_account_dropdown(client):
