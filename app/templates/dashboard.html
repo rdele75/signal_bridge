@@ -773,16 +773,18 @@
                 showToast('Live execution disengaged', 'info');
               }
               showFeedback('Dry-run selected.', 'ok', null);
-              // Reload only after the visible transition lands so the
-              // user actually sees it.
-              window.setTimeout(function () {
-                window.location.reload();
-              }, wasLive ? 1100 : 400);
+              card.dataset.executionArmed = 'false';
+              syncSmokeExecuteVisibility();
+              // Sync the rest of the UI from the server's truth after
+              // the dry-run-enter animation has had time to register.
+              window.setTimeout(function () { fetchStatus(); },
+                wasLive ? 1100 : 400);
             }, holdMs);
           } else {
-            window.setTimeout(function () {
-              window.location.reload();
-            }, 400);
+            // Non-paper apply path (defensive — the modal intercepts
+            // live, but a future "demo" mode would land here). Pull
+            // /api/status to mirror whatever the server just persisted.
+            window.setTimeout(function () { fetchStatus(); }, 400);
           }
         } else {
           var reason = (resp.body && (resp.body.message || resp.body.status))
