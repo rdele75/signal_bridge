@@ -166,6 +166,15 @@ class TopstepBroker(BrokerBase):
         self.password = password or ""
         self.api_key = (api_key or "").strip()
         self.account_id = (account_id or "").strip()
+        # M1 — per-account canTrade cache. Populated by ``get_accounts``
+        # whenever the call succeeds. Maps the trimmed-string account
+        # id to whatever ProjectX reported for ``canTrade``.
+        # ``None`` (no entry) means we've never received an account
+        # snapshot covering this id — the gate falls open in that case
+        # (with a one-shot WARNING) so a fresh boot doesn't refuse to
+        # submit before the operator has clicked Fetch Accounts.
+        self._can_trade_cache: dict[str, bool] = {}
+        self._can_trade_warned: bool = False
         self.env = (env or "demo").lower()
         self.base_url = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
         self.ws_url = (ws_url or DEFAULT_WS_URL).strip().rstrip("/")
@@ -535,6 +544,9 @@ class TopstepBroker(BrokerBase):
             self._normalize_account(a) if isinstance(a, dict) else {"raw": a}
             for a in raw_accounts
         ]
+        # M1 — refresh the canTrade cache from the live snapshot so the
+        # execution-safety check can consult it on the next submit.
+        self._refresh_can_trade_cache(accounts)
         return {
             "ok": True,
             "provider": self.provider,
@@ -543,6 +555,48 @@ class TopstepBroker(BrokerBase):
             "accounts": accounts,
             "credentials": self._credentials_summary(),
         }
+
+    def _refresh_can_trade_cache(
+        self, accounts: list[dict[str, Any]]
+    ) -> None:
+        """Update the canTrade cache from a fresh ``get_accounts`` payload.
+
+        Only accounts whose normalized payload carries an explicit
+        ``can_trade`` boolean overwrite the cache; anything else leaves
+        the prior entry alone (so a partial refresh doesn't drop a
+        previously-known account's flag)."""
+        for acct in accounts:
+            raw_id = acct.get("id")
+            if raw_id is None:
+                continue
+            can_trade = acct.get("can_trade")
+            if isinstance(can_trade, bool):
+                self._can_trade_cache[str(raw_id).strip()] = can_trade
+
+    def _account_can_trade(self) -> Optional[bool]:
+        """Return the cached canTrade flag for the currently selected
+        account. ``None`` means we've never received a snapshot — the
+        execution-safety gate silently bypasses the check in that case
+        (matching the "if known" language in the public docs)."""
+        target = (self.account_id or "").strip()
+        if not target:
+            return None
+        return self._can_trade_cache.get(target)
+
+    def _warn_can_trade_unknown_once(self) -> None:
+        """Log the canTrade-unknown WARNING at most once per process
+        lifetime so the audit trail records the "if known" bypass
+        without spamming every signal."""
+        if self._can_trade_warned:
+            return
+        self._can_trade_warned = True
+        log.warning(
+            "Topstep canTrade gate is unenforced for account %s — no "
+            "accounts snapshot is cached. Fetch Accounts on the broker "
+            "page to populate the cache so the gate can act. Subsequent "
+            "signals will not repeat this warning.",
+            self.account_id or "(unset)",
+        )
 
     @staticmethod
     def _match_account_by_id(
@@ -1084,6 +1138,13 @@ class TopstepBroker(BrokerBase):
             return "missing_credentials"
         if self._numeric_account_id() is None:
             return "non_numeric_account_id"
+        # M1 — canTrade gate. False blocks; unknown silently bypasses
+        # with a one-shot WARNING (matches "if known" in the docs).
+        can_trade = self._account_can_trade()
+        if can_trade is False:
+            return "account_cannot_trade"
+        if can_trade is None:
+            self._warn_can_trade_unknown_once()
         return None
 
     def _live_execution_safety_check(
@@ -1114,6 +1175,13 @@ class TopstepBroker(BrokerBase):
             return "missing_credentials"
         if self._numeric_account_id() is None:
             return "non_numeric_account_id"
+        # M1 — canTrade gate. Same shape as the demo path: False blocks,
+        # unknown bypasses with a one-shot WARNING.
+        can_trade = self._account_can_trade()
+        if can_trade is False:
+            return "account_cannot_trade"
+        if can_trade is None:
+            self._warn_can_trade_unknown_once()
         if signal is not None:
             allowed = [s.strip() for s in self.live_allowed_symbols if s and s.strip()]
             if not allowed:
