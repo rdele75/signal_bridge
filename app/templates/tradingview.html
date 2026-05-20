@@ -150,37 +150,6 @@
   </details>
 </section>
 
-<section class="card section">
-  <details class="collapsible">
-    <summary class="section-head collapsible-toggle">
-      <h3>Webhook URL — three forms</h3>
-      <span class="hint">click to expand</span>
-    </summary>
-    <div class="collapsible-body">
-      <p class="muted mb-2">
-        SignalBridge is bound to <code>{{ host }}:{{ port }}</code>. TradingView's servers
-        can't reach <code>127.0.0.1</code> directly — for real alerts, expose it via ngrok
-        or Cloudflare Tunnel and use the public HTTPS URL.
-      </p>
-      <div class="code-frame">
-        <span class="copy-hint">local</span>
-        <pre class="code">http://127.0.0.1:{{ port }}/webhooks/tradingview</pre>
-      </div>
-      <div class="code-frame">
-        <span class="copy-hint">lan / tailscale</span>
-        <pre class="code">http://HOST:{{ port }}/webhooks/tradingview</pre>
-      </div>
-      <div class="code-frame">
-        <span class="copy-hint">public tunnel (https)</span>
-        <pre class="code">https://YOUR-TUNNEL-URL/webhooks/tradingview</pre>
-      </div>
-      <p class="muted mt-3">
-        Replace <code>HOST</code> with the machine's LAN or Tailscale magic-DNS name,
-        and <code>YOUR-TUNNEL-URL</code> with the hostname your ngrok / Cloudflare Tunnel prints.
-      </p>
-    </div>
-  </details>
-</section>
 
 <section class="card section">
   <details class="collapsible">

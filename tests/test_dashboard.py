@@ -335,13 +335,10 @@ def test_api_system_runtime_status_halted_when_kill_switch_on(client):
     assert body["runtime_status"] == "halted"
 
 
-# ---------- TradingView page surfaces all three URL forms ----------
-
-def test_tradingview_page_shows_three_url_forms(client):
-    body = client.get("/tradingview").text
-    assert "http://127.0.0.1:" in body
-    assert "http://HOST:" in body
-    assert "https://YOUR-TUNNEL-URL/webhooks/tradingview" in body
+# test_tradingview_page_shows_three_url_forms removed alongside the
+# Webhook URL — three forms section itself (ui-revisions 4.5). The
+# top status card still surfaces the endpoint; the three-form
+# collapsible was operator-noise that duplicated docs.
 
 
 # ---------- Shared layout: sidebar nav + top status strip ----------

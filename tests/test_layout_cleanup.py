@@ -258,9 +258,10 @@ def test_risk_page_post_without_allowed_symbols_preserves_setting(client):
 
 def test_tradingview_page_has_collapsible_sections(client):
     body = client.get("/tradingview").text
-    # Three collapsible blocks (webhook URL forms, alert template, curl).
-    assert body.count('<details class="collapsible"') >= 3
-    # By default these should NOT be open.
+    # After ui-revisions: only Xiznit ORB and the alert template
+    # collapsibles survive (Webhook URL forms and Local curl test
+    # were removed). Two collapsibles minimum, both collapsed.
+    assert body.count('<details class="collapsible"') >= 2
     assert '<details class="collapsible" open' not in body
 
 
