@@ -129,10 +129,11 @@ def test_endpoint_requires_admin_when_auth_enabled(tmp_path, monkeypatch):
     assert r.status_code == 401
 
 
-def test_dashboard_renders_reconcile_button(client):
-    """The Reconcile button + result container must be rendered on the
-    dashboard."""
+def test_dashboard_no_longer_renders_reconcile_card(client):
+    """The reconcile card was removed from the dashboard during the
+    polish pass. The /api/broker/positions/reconcile endpoint stays
+    (covered above) but the UI surface is gone."""
     body = client.get("/").text
-    assert 'id="btn-reconcile-positions"' in body
-    assert 'id="reconcile-output"' in body
-    assert "Broker vs journal positions" in body
+    assert 'id="btn-reconcile-positions"' not in body
+    assert 'id="reconcile-output"' not in body
+    assert "Broker vs journal positions" not in body
