@@ -1261,9 +1261,13 @@
   function runLiveEngagement() {
     var phrase = (liveConfirmInput && liveConfirmInput.value) || '';
     var ack = !!(liveAckInput && liveAckInput.checked);
-    if (phrase !== livePhrase) {
+    // Compare case-insensitively — variations like ENGAGE, engage,
+    // Engage are all accepted. The server-side gate uses a separate
+    // fixed token (settings-driven), so relaxing case here is a UX
+    // gate, not a security gate.
+    if (phrase.trim().toLowerCase() !== livePhrase.trim().toLowerCase()) {
       showFeedback(
-        'Failed: confirmation phrase must equal ' + livePhrase + ' exactly.',
+        'Failed: confirmation phrase must equal ' + livePhrase + ' (case-insensitive).',
         'bad',
         null
       );
