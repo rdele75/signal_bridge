@@ -29,6 +29,11 @@
         </span>
       </div>
 
+      {# Operator decision: no "Will apply: X" preview chip beyond what
+         already ships. The dropdown selection IS the preview; Apply
+         commits the change. Do NOT extend the existing chip into a
+         richer "verification required" affordance — that path was
+         considered and explicitly rejected. #}
       <form id="form-execution-apply" class="execution-mode-form">
         <label for="execution_mode_select" class="execution-mode-label">
           Execution mode
