@@ -92,6 +92,34 @@ def _mask_token(value: Optional[str]) -> str:
     return f"…{text[-4:]}"
 
 
+# ProjectX errorCode values that indicate the request failed because of
+# authentication (token expired / missing / invalid), not a business
+# rejection. Codes inferred from the existing "phantom errorCode=3"
+# workaround in __init__ + ProjectX convention (1 = unauthorized).
+# Submission paths use this set to decide whether to re-auth + retry
+# once before giving up (H5).
+AUTH_ERROR_CODES: frozenset[int] = frozenset({1, 3})
+
+
+def _is_auth_failure(http_status: int, response: Any) -> bool:
+    """True iff a ProjectX response looks like an auth rejection.
+
+    Used by submit paths to decide whether to re-authenticate and
+    retry once. Conservative — matches HTTP 401 OR a recognized
+    errorCode in the response body. Any other status / errorCode is a
+    real business rejection (or a transport error) and is NOT retried.
+    """
+    if http_status == 401:
+        return True
+    if not isinstance(response, dict):
+        return False
+    code = response.get("errorCode")
+    try:
+        return int(code) in AUTH_ERROR_CODES
+    except (TypeError, ValueError):
+        return False
+
+
 class TopstepBroker(BrokerBase):
     name = "topstep"
     provider = "topstep"
@@ -1142,6 +1170,15 @@ class TopstepBroker(BrokerBase):
 
         No paper fallback: a refusal here surfaces clearly back to the
         webhook handler / admin endpoint instead of silently no-op'ing.
+
+        Auth-failure retry (H5): the local 23h token-validity check is
+        based on mint time + TTL and can disagree with the server's
+        actual session state. If the first POST returns HTTP 401 or a
+        ProjectX ``errorCode`` matching the documented auth-rejection
+        codes, this method calls ``authenticate()`` once and retries
+        the POST exactly once. Non-auth failures (network, validation,
+        ProjectX business rejections) are NOT retried — the retry is a
+        single shot, not a loop.
         """
         safety_gate = self._execution_safety_check(signal)
         if safety_gate is not None:
@@ -1207,6 +1244,22 @@ class TopstepBroker(BrokerBase):
         http_status, response = self._post_json(
             "/api/Order/place", payload, auth=True
         )
+        if _is_auth_failure(http_status, response):
+            log.info(
+                "topstep order place auth failure (http=%s errorCode=%s) — "
+                "re-authenticating and retrying once",
+                http_status,
+                response.get("errorCode") if isinstance(response, dict) else None,
+            )
+            auth_retry = self.authenticate()
+            if auth_retry.get("ok"):
+                http_status, response = self._post_json(
+                    "/api/Order/place", payload, auth=True
+                )
+            # If the re-auth itself failed, fall through with the
+            # original (auth-failed) response — the existing rejection
+            # envelope already conveys what went wrong. We do NOT loop.
+
         if http_status == 0:
             return {
                 "ok": False,
