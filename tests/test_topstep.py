@@ -619,18 +619,18 @@ def test_submit_market_order_refuses_when_execution_disabled_by_default():
     assert result["symbol"] == "MES1!"
 
 
-def test_flatten_short_circuits_in_demo_mode():
+def test_flatten_and_cancel_short_circuit_in_demo_mode():
     """An unarmed (default-demo) broker returns the not_in_live_mode
-    envelope without touching the wire. cancel_all_orders still
-    reports topstep_execution_not_enabled (cancel implementation lands
-    in the next commit)."""
+    envelope for both flatten and cancel without touching the wire."""
     broker = TopstepBroker(username="trader42", api_key="abcd1234efgh5678")
     flat = broker.flatten_position()
     assert flat["status"] == "not_in_live_mode"
     assert flat["ok"] is False
     assert flat["legs"] == []
     cancel = broker.cancel_all_orders()
-    assert cancel["status"] == "topstep_execution_not_enabled"
+    assert cancel["status"] == "not_in_live_mode"
+    assert cancel["ok"] is False
+    assert cancel["legs"] == []
 
 
 def test_execute_via_broker_raises_pointing_at_webhook_dispatch():

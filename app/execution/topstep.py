@@ -1863,9 +1863,120 @@ class TopstepBroker(BrokerBase):
         }
 
     def cancel_all_orders(self, symbol: Optional[str] = None) -> dict[str, Any]:
-        return self._execution_disabled_envelope(
-            "cancel_all_orders", symbol=symbol
-        )
+        """Cancel every open Topstep working order via
+        ``/api/Order/cancel``.
+
+        Same shape as ``flatten_position``: demo mode is a no-op, live
+        mode runs the gates (kill switch bypassed), fetches working
+        orders, cancels each independently, returns a per-leg envelope.
+        Partial failures are reported, not raised.
+        """
+        if self.execution_mode != "live":
+            return {
+                "ok": False,
+                "provider": self.provider,
+                "status": "not_in_live_mode",
+                "message": (
+                    "cancel-all requires live execution mode — manage "
+                    "demo orders in TopstepX directly"
+                ),
+                "symbol": symbol,
+                "legs": [],
+                "orders_before": 0,
+                "safety": self._safety_state(),
+            }
+
+        gate = self._live_execution_safety_check(bypass_kill_switch=True)
+        if gate is not None:
+            return self._exit_safety_refusal(
+                "cancel-all", gate, symbol, container_key="legs"
+            )
+
+        orders_resp = self.get_orders()
+        if not orders_resp.get("ok"):
+            payload = dict(orders_resp)
+            payload.setdefault("provider", self.provider)
+            payload["legs"] = []
+            payload["orders_before"] = 0
+            payload["safety"] = self._safety_state()
+            payload["message"] = (
+                f"cancel-all aborted before any cancels sent — "
+                f"{payload.get('message', 'orders fetch failed')}"
+            )
+            return payload
+
+        orders = orders_resp.get("orders") or []
+        all_orders_count = len(orders)
+        if symbol:
+            orders = [
+                o
+                for o in orders
+                if isinstance(o, dict)
+                and self._position_matches_symbol(o, symbol)
+            ]
+
+        if not orders:
+            if symbol and all_orders_count > 0:
+                message = (
+                    f"no open orders match {symbol!r} — "
+                    f"{all_orders_count} other order(s) untouched"
+                )
+            else:
+                message = "no open orders to cancel"
+            return {
+                "ok": True,
+                "provider": self.provider,
+                "status": "no_open_orders",
+                "message": message,
+                "symbol": symbol,
+                "legs": [],
+                "orders_before": all_orders_count,
+                "safety": self._safety_state(),
+            }
+
+        numeric_account_id = self._numeric_account_id()
+        assert numeric_account_id is not None
+
+        legs: list[dict[str, Any]] = []
+        for order in orders:
+            if not isinstance(order, dict):
+                legs.append(
+                    {
+                        "symbol": None,
+                        "contract_id": None,
+                        "order_id": None,
+                        "ok": False,
+                        "status": "invalid_order",
+                        "message": "order row was not a JSON object",
+                    }
+                )
+                continue
+            legs.append(
+                self._cancel_one_order(order, numeric_account_id)
+            )
+
+        ok, status = self._summarize_legs(legs, "cancelled")
+        ok_count = sum(1 for leg in legs if leg.get("ok"))
+        if status == "cancelled":
+            message = f"cancelled {ok_count} of {len(legs)} order(s)"
+        elif status == "partial":
+            message = (
+                f"cancelled {ok_count} of {len(legs)} — "
+                f"{len(legs) - ok_count} failed"
+            )
+        else:
+            message = f"cancel failed for all {len(legs)} order(s)"
+
+        return {
+            "ok": ok,
+            "provider": self.provider,
+            "status": status,
+            "message": message,
+            "symbol": symbol,
+            "legs": legs,
+            "orders_before": all_orders_count,
+            "safety": self._safety_state(),
+        }
 
     def execute(self, signal: NormalizedSignal) -> ExecutionResult:
         """Execute path used by the webhook handler.

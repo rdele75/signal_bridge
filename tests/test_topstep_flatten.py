@@ -449,6 +449,201 @@ def test_flatten_position_aborts_when_positions_fetch_fails(monkeypatch):
     assert close_calls == []
 
 
+def _order(
+    order_id: int = 100,
+    contract_id: str = "CON.F.US.MES.M26",
+    account_id: int = 5001,
+    status_code: int = 1,
+) -> dict[str, Any]:
+    return {
+        "id": order_id,
+        "accountId": account_id,
+        "contractId": contract_id,
+        "type": 2,
+        "side": 0,
+        "size": 1,
+        "status": status_code,
+    }
+
+
+# ----------------------------------------------------------------------
+# cancel_all_orders
+# ----------------------------------------------------------------------
+
+
+def test_cancel_all_orders_cancels_each_open_order(monkeypatch):
+    """2 working orders → 2 cancel POSTs with correct payloads, both
+    succeed, top-level ok=True, status=cancelled."""
+    cancel_calls: list[dict[str, Any]] = []
+
+    def fake_post(self, path, payload, *, auth=False):
+        if path == "/api/Order/searchOpen":
+            return 200, _orders_ok(_order(100), _order(101))
+        if path == "/api/Order/cancel":
+            cancel_calls.append(payload)
+            return 200, {"success": True, "errorCode": 0,
+                         "errorMessage": None}
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(TopstepBroker, "_post_json", fake_post)
+    broker = _ready_live_broker()
+    result = broker.cancel_all_orders()
+
+    assert result["ok"] is True
+    assert result["status"] == "cancelled"
+    assert len(result["legs"]) == 2
+    assert all(leg["ok"] for leg in result["legs"])
+    assert result["orders_before"] == 2
+    # cancel was called for each id, each with accountId + integer orderId.
+    assert len(cancel_calls) == 2
+    posted_ids = sorted(call["orderId"] for call in cancel_calls)
+    assert posted_ids == [100, 101]
+    for call in cancel_calls:
+        assert call["accountId"] == 5001
+        assert isinstance(call["orderId"], int)
+
+
+def test_cancel_all_orders_partial_failure_reports_per_leg(monkeypatch):
+    """3 orders, one rejected → status=partial, ok=False, per-leg
+    breakdown intact."""
+
+    def fake_post(self, path, payload, *, auth=False):
+        if path == "/api/Order/searchOpen":
+            return 200, _orders_ok(
+                _order(200), _order(201), _order(202)
+            )
+        if path == "/api/Order/cancel":
+            if payload["orderId"] == 201:
+                return 200, {
+                    "success": False,
+                    "errorCode": 8,
+                    "errorMessage": "order already filled",
+                }
+            return 200, {"success": True}
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(TopstepBroker, "_post_json", fake_post)
+    broker = _ready_live_broker()
+    result = broker.cancel_all_orders()
+
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert len(result["legs"]) == 3
+    assert result["legs"][0]["ok"] is True
+    assert result["legs"][1]["ok"] is False
+    assert result["legs"][1]["error_code"] == 8
+    assert result["legs"][2]["ok"] is True
+    assert "cancelled 2 of 3" in result["message"]
+
+
+def test_cancel_all_orders_no_open_orders(monkeypatch):
+    """Empty working-orders list → ok=True, status=no_open_orders, no
+    cancel POSTs."""
+    calls: list[str] = []
+
+    def fake_post(self, path, payload, *, auth=False):
+        calls.append(path)
+        if path == "/api/Order/searchOpen":
+            return 200, _orders_ok()
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(TopstepBroker, "_post_json", fake_post)
+    broker = _ready_live_broker()
+    result = broker.cancel_all_orders()
+
+    assert result["ok"] is True
+    assert result["status"] == "no_open_orders"
+    assert result["legs"] == []
+    assert "/api/Order/cancel" not in calls
+
+
+def test_cancel_all_orders_demo_mode_does_not_submit(monkeypatch):
+    """Demo mode short-circuits without HTTP calls."""
+    calls: list[str] = []
+
+    def fake_post(self, path, payload, *, auth=False):
+        calls.append(path)
+        return 200, _orders_ok()
+
+    monkeypatch.setattr(TopstepBroker, "_post_json", fake_post)
+    broker = _ready_live_broker()
+    broker.execution_mode = "demo"
+
+    result = broker.cancel_all_orders()
+    assert result["ok"] is False
+    assert result["status"] == "not_in_live_mode"
+    assert calls == []
+
+
+def test_cancel_all_orders_bypasses_kill_switch(monkeypatch):
+    """Kill switch active → cancel-all still fires. Same reasoning as
+    flatten: exits remain available after emergency stop."""
+    cancel_calls: list[dict[str, Any]] = []
+
+    def fake_post(self, path, payload, *, auth=False):
+        if path == "/api/Order/searchOpen":
+            return 200, _orders_ok(_order(300))
+        if path == "/api/Order/cancel":
+            cancel_calls.append(payload)
+            return 200, {"success": True}
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(TopstepBroker, "_post_json", fake_post)
+    broker = _ready_live_broker()
+    broker.kill_switch_active = True
+
+    result = broker.cancel_all_orders()
+    assert result["ok"] is True
+    assert result["status"] == "cancelled"
+    assert len(cancel_calls) == 1
+
+
+def test_cancel_all_orders_retries_once_on_auth_failure(monkeypatch):
+    """First cancel returns HTTP 401 → re-auth + retry same leg."""
+    state = {"cancel_attempts_first": 0}
+
+    def fake_post(self, path, payload, *, auth=False):
+        if path == "/api/Auth/loginKey":
+            return 200, {
+                "success": True, "token": "JWT.REFRESHED",
+                "errorCode": 0, "errorMessage": None,
+            }
+        if path == "/api/Order/searchOpen":
+            return 200, _orders_ok(_order(400), _order(401))
+        if path == "/api/Order/cancel":
+            if payload["orderId"] == 400:
+                state["cancel_attempts_first"] += 1
+                if state["cancel_attempts_first"] == 1:
+                    return 401, {"success": False, "errorCode": 1,
+                                 "errorMessage": "Unauthorized"}
+            return 200, {"success": True}
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(TopstepBroker, "_post_json", fake_post)
+    broker = _ready_live_broker()
+    result = broker.cancel_all_orders()
+
+    assert result["ok"] is True
+    assert state["cancel_attempts_first"] == 2
+
+
+def test_cancel_all_orders_refused_when_account_ack_missing(monkeypatch):
+    calls: list[str] = []
+
+    def fake_post(self, path, payload, *, auth=False):
+        calls.append(path)
+        return 200, _orders_ok()
+
+    monkeypatch.setattr(TopstepBroker, "_post_json", fake_post)
+    broker = _ready_live_broker()
+    broker.live_trading_account_ack = False
+
+    result = broker.cancel_all_orders()
+    assert result["ok"] is False
+    assert result["status"] == "live_account_ack_missing"
+    assert calls == []
+
+
 def test_flatten_position_envelope_omits_secrets(monkeypatch):
     """The returned envelope must not echo the API key or the cached
     JWT anywhere."""
