@@ -979,6 +979,32 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   margin: 0;
 }
 
+/* Mode-select preview chip — appears only when the operator has
+   changed the select away from the applied mode, and disappears on
+   Apply. 200ms opacity fade-in matches the cross-fade family the rest
+   of the card uses. */
+.execution-mode-preview {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--fg);
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 3px 10px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  letter-spacing: 0.01em;
+}
+.execution-mode-preview[hidden] { display: none; }
+.execution-mode-preview.execution-mode-preview-visible { opacity: 1; }
+.execution-mode-preview-label { font-weight: 600; }
+.execution-mode-preview-label.is-live { color: var(--bad); }
+.execution-mode-preview-label.is-dry-run { color: var(--good); }
+@media (prefers-reduced-motion: reduce) {
+  .execution-mode-preview { transition: none; }
+}
+
 .execution-account {
   margin-top: 10px;
   font-size: 13px;

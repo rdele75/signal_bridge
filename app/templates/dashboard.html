@@ -43,6 +43,17 @@
           <span class="btn-spinner" aria-hidden="true" hidden></span>
         </button>
       </form>
+      {# Preview chip — shown only when the operator has changed the
+         mode select away from the currently-applied mode. Tells them
+         what clicking Apply will actually do, with a "verification
+         required" tail when live is queued. JS toggles the visible
+         class for the fade-in. #}
+      <div id="execution-mode-preview" class="execution-mode-preview"
+           hidden aria-live="polite">
+        <span class="muted">Will apply: </span>
+        <span id="execution-mode-preview-label"
+              class="execution-mode-preview-label"></span>
+      </div>
 
       <div class="execution-account">
         <span class="execution-account-label">Account:</span>
@@ -513,6 +524,9 @@
         initialMode = payload.execution_mode;
       }
       syncSmokeVisibility();
+      // After the server confirms the new mode, the chip is stale —
+      // hide it so the operator sees a clean "no pending change" state.
+      hidePreviewChip();
     }
     if (typeof payload.broker_provider === 'string') {
       card.dataset.brokerProvider = payload.broker_provider;
@@ -787,8 +801,51 @@
     });
   }
 
+  // ---- Mode-select preview chip ----
+  // Shows "Will apply: dry-run" or "Will apply: live (verification
+  // required)" once the operator picks a value that differs from the
+  // currently-applied mode. Disappears on Apply or when the select
+  // is set back to the live mode.
+  var previewEl = document.getElementById('execution-mode-preview');
+  var previewLabel = document.getElementById('execution-mode-preview-label');
+  function showPreviewChip() {
+    if (!previewEl || !previewLabel || !modeSelect) return;
+    var picked = modeSelect.value;
+    if (picked === initialMode) {
+      hidePreviewChip();
+      return;
+    }
+    previewLabel.classList.remove('is-live', 'is-dry-run');
+    if (picked === 'live') {
+      previewLabel.textContent = 'live (verification required)';
+      previewLabel.classList.add('is-live');
+    } else {
+      previewLabel.textContent = 'dry-run';
+      previewLabel.classList.add('is-dry-run');
+    }
+    previewEl.hidden = false;
+    // Force a reflow so the opacity transition actually runs when
+    // toggling visible from hidden.
+    void previewEl.offsetWidth;
+    previewEl.classList.add('execution-mode-preview-visible');
+  }
+  function hidePreviewChip() {
+    if (!previewEl) return;
+    previewEl.classList.remove('execution-mode-preview-visible');
+    // Wait for the fade-out before hiding so the element animates
+    // out cleanly.
+    window.setTimeout(function () {
+      if (!previewEl.classList.contains('execution-mode-preview-visible')) {
+        previewEl.hidden = true;
+      }
+    }, 220);
+  }
+
   if (modeSelect) {
-    modeSelect.addEventListener('change', syncSmokeVisibility);
+    modeSelect.addEventListener('change', function () {
+      syncSmokeVisibility();
+      showPreviewChip();
+    });
   }
 
   function applyMode(mode) {
@@ -863,6 +920,7 @@
   if (modeForm && modeSelect) {
     modeForm.addEventListener('submit', function (e) {
       e.preventDefault();
+      hidePreviewChip();
       var picked = modeSelect.value;
       if (picked === 'live') {
         setStatusText('Live verification required');
