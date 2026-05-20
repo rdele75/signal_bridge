@@ -251,28 +251,6 @@
   <div id="topstep-accounts-list" class="mt-4"></div>
 </section>
 
-{# ---- Provider credentials summary ---- #}
-<section class="grid grid-2 section">
-  <div class="card">
-    <div class="card-row">
-      <h3>Topstep / TopstepX</h3>
-      <span class="badge badge-warn">auth + accounts only</span>
-    </div>
-    <p class="muted">Primary futures broker (ProjectX REST + WebSocket).
-    Real ProjectX authentication and active-account discovery are implemented —
-    order placement is intentionally off in this phase.</p>
-    <dl class="kv">
-      <dt>TOPSTEP_USERNAME</dt><dd>{{ topstep.username_preview or ('configured' if topstep.username_set else '—') }}</dd>
-      <dt>TOPSTEP_API_KEY</dt><dd>{{ topstep.api_key_preview or ('configured' if topstep.api_key_set else '—') }}</dd>
-      <dt>TOPSTEP_ACCOUNT_ID</dt><dd>{{ topstep.account_id or '—' }}</dd>
-      <dt>TOPSTEP_BASE_URL</dt><dd><code>{{ topstep.base_url or '—' }}</code></dd>
-      <dt>TOPSTEP_WS_URL</dt><dd><code>{{ topstep.ws_url or '—' }}</code></dd>
-      <dt>token cached</dt><dd>{{ 'yes' if topstep.token_cached else 'no' }}{% if topstep.token_expires_at %} · expires <code>{{ topstep.token_expires_at }}</code>{% endif %}</dd>
-    </dl>
-  </div>
-
-</section>
-
 <script>
 const _out = document.getElementById('test-out');
 const _tsList = document.getElementById('topstep-accounts-list');
