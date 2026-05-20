@@ -63,9 +63,9 @@
       <div class="execution-account">
         <span class="execution-account-label">Account:</span>
         {% if selected_account_id %}
-          <code>{{ selected_account_id }}</code>
+          <code class="sensitive" title="Click to reveal">{{ selected_account_id }}</code>
           {% if broker_account_card.selected_account_name %}
-            <span class="execution-account-name">/ {{ broker_account_card.selected_account_name }}</span>
+            <span class="execution-account-name sensitive" title="Click to reveal">/ {{ broker_account_card.selected_account_name }}</span>
           {% endif %}
         {% else %}
           <span class="muted">no account selected</span>
@@ -294,7 +294,7 @@
       {% endif %}
     </div>
     <div class="card-sub">
-      {% if selected_account_id %}acct <code>{{ selected_account_id }}</code>{% else %}<a href="/settings/broker">configure</a>{% endif %}
+      {% if selected_account_id %}acct <code class="sensitive" title="Click to reveal">{{ selected_account_id }}</code>{% else %}<a href="/settings/broker">configure</a>{% endif %}
     </div>
   </div>
 </section>

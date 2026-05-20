@@ -2072,6 +2072,29 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 }
 
 /* =====================================================================
+   Sensitive content reveal (account ids / names).
+   Blur by default; click to reveal. Stays revealed for the page
+   lifetime so the operator only has to click once per visit.
+   ===================================================================== */
+.sensitive {
+  filter: blur(6px);
+  transition: filter 0.18s ease;
+  cursor: pointer;
+  user-select: none;
+}
+.sensitive:hover {
+  filter: blur(4px);
+}
+.sensitive.is-revealed {
+  filter: none;
+  user-select: text;
+  cursor: text;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sensitive { transition: none; }
+}
+
+/* =====================================================================
    Honour prefers-reduced-motion for the drawer too
    ===================================================================== */
 @media (prefers-reduced-motion: reduce) {

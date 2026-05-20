@@ -315,6 +315,15 @@
     });
   });
 })();
+
+// Click any .sensitive element to reveal it. Stays revealed for the
+// page lifetime; refresh the page to re-blur. Used for account ids /
+// names that are screen-shareable context.
+document.addEventListener('click', function (ev) {
+  var t = ev.target.closest('.sensitive');
+  if (!t) return;
+  t.classList.toggle('is-revealed');
+});
 </script>
 </body>
 </html>
