@@ -68,7 +68,8 @@
       </div>
 
       <div class="execution-actions mobile-actions">
-        <button type="button" id="btn-disable-exec" class="btn">
+        <button type="button" id="btn-disable-exec" class="btn"
+                {% if not (demo_execution.is_armed or live_execution.is_armed) %}hidden{% endif %}>
           Disengage
         </button>
         {% if broker_provider == 'topstep' %}
@@ -692,6 +693,18 @@
     }, 180);
   }
 
+  // Disengage is only meaningful when execution is armed (demo or live
+  // — including the in-flight engage/disengage states so the button
+  // doesn't blink out mid-transition). Hidden in dry-run, live-locked,
+  // kill-switch-active, and any unknown state.
+  var DISENGAGE_VISIBLE_STATES = [
+    'demo', 'live-armed', 'live-engaging', 'live-disengaging',
+  ];
+  function setDisengageVisible(state) {
+    if (!disableBtn) return;
+    disableBtn.hidden = DISENGAGE_VISIBLE_STATES.indexOf(state) === -1;
+  }
+
   function setState(state) {
     var prevState = card.dataset.executionState;
     STATE_CLASSES.forEach(function (cls) { card.classList.remove(cls); });
@@ -707,6 +720,7 @@
         statusText.classList.remove('execution-status-check-visible');
       }
     }
+    setDisengageVisible(state);
     crossFadeAccountIfNeeded(prevState, state);
     window.setTimeout(function () {
       card.classList.remove('execution-transitioning');
