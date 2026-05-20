@@ -1,24 +1,20 @@
 {
   "_comment": "Provider-aware TradingView -> broker symbol map. Copy to config/symbols.json (or set SYMBOLS_MAP_PATH) to enable. Each top-level key is the TradingView ticker. Each value is a map keyed by broker provider. Missing entries fall back to the TradingView ticker.",
-  "_warning": "Broker symbols (ProjectX contract ids, Tradovate codes) roll with futures expiration — review and update them each contract quarter. Manage from Configuration > Symbols in the dashboard.",
+  "_warning": "ProjectX contract ids roll with futures expiration — review and update them each contract quarter. Manage from Configuration > Symbols in the dashboard.",
   "MNQ1!": {
     "paper": "MNQ1!",
-    "topstep": "CON.F.US.MNQ.M26",
-    "tradovate": "MNQ"
+    "topstep": "CON.F.US.MNQ.M26"
   },
   "MES1!": {
     "paper": "MES1!",
-    "topstep": "CON.F.US.MES.M26",
-    "tradovate": "MES"
+    "topstep": "CON.F.US.MES.M26"
   },
   "NQ1!": {
     "paper": "NQ1!",
-    "topstep": "",
-    "tradovate": "NQ"
+    "topstep": ""
   },
   "ES1!": {
     "paper": "ES1!",
-    "topstep": "",
-    "tradovate": "ES"
+    "topstep": ""
   }
 }

@@ -8,9 +8,7 @@ It runs on your own machine, exposes a small web UI you open in a browser, accep
 
 - **Paper** — fully functional. Simulates fills, tracks positions, and computes realized PnL in price-points. Default account id is `PAPER-001` (configurable via `SELECTED_ACCOUNT_ID`).
 - **Topstep / TopstepX** — adapter is scaffolded but **not connected** to a real API yet. `execute()` rejects with `broker_not_implemented: topstep_execution_not_implemented…`; `test_connection()` returns `missing_credentials` or `scaffolded_not_connected`; the read-only methods (`get_accounts`, `get_positions`, `get_orders`, …) return a structured `not_implemented` envelope so the dashboard never crashes. See [`docs/topstep.md`](docs/topstep.md) for the integration plan.
-- **Tradovate** — same: scaffolded placeholder, not connected.
 - Topstep credentials (`TOPSTEP_USERNAME`, `TOPSTEP_API_KEY`, `TOPSTEP_ACCOUNT_ID`, `TOPSTEP_ENV`, `TOPSTEP_BASE_URL`, `TOPSTEP_WS_URL`) can be set in `.env` or persisted via `/settings/broker`. The dashboard masks the API key (last four characters only).
-- Tradovate credentials are still env-only.
 - **No live orders are placed by this build.**
 
 > Not SaaS. Not multi-user. Not packaged for distribution. Not live yet.
@@ -25,7 +23,7 @@ SignalBridge webhook (POST /webhooks/tradingview)
 Risk engine (allow-list, caps, kill switch, dupes, daily loss…)
    │
    ▼
-Broker adapter (paper today; topstep / tradovate planned)
+Broker adapter (paper today; topstep planned)
    │
    ▼
 Journal / metrics / logs   ←—   visible in the local dashboard
@@ -40,7 +38,7 @@ Journal / metrics / logs   ←—   visible in the local dashboard
 | Page | What it shows |
 | --- | --- |
 | `/`                | **Execution card** (mode toggle, demo/live arming, Exit-All), trading session, broker status, account snapshot card, **Ticker Watch** placeholder, today's accepted/rejected counts, last signal, last rejection, P&L |
-| `/settings/broker` | account configuration: broker provider, Topstep / Tradovate credentials, selected-account dropdown, account snapshot polling. Execution controls live on the Dashboard. |
+| `/settings/broker` | account configuration: broker provider, Topstep credentials, selected-account dropdown, account snapshot polling. Execution controls live on the Dashboard. |
 | `/settings/risk`   | edit allow-list, contracts cap, daily loss, open-positions cap, longs/shorts toggles, dup cooldown · kill-switch toggle |
 | `/tradingview`     | current webhook secret (copyable) + regenerate button, Xiznit Universal ORB alert recipe, generic JSON template, curl test, allowed symbols |
 | `/journal`         | recent signals (accepted/rejected) + recent closed paper trades |
@@ -114,7 +112,6 @@ from your browser, or just open the dashboard.
 6. **Broker adapter** executes:
    - `paper` — simulates a fill at the alert's `price`, updates the position, records realized PnL (in price-points) when a fill closes / reduces the position.
    - `topstep` — rejects with `broker_not_implemented`. (Adapter loads so the app can boot, but `execute()` raises `NotImplementedError` — caught by the webhook handler and turned into a labeled rejection.)
-   - `tradovate` — same placeholder behavior.
 7. **Journal** writes one row per signal (accepted or rejected) to SQLite.
 8. **Dashboard** picks up the new row on the next page load.
 
@@ -141,14 +138,14 @@ limits, allow-list, longs/shorts toggles, duplicate cooldown.
 Restart-required: `APP_HOST`, `APP_PORT`, `BROKER_PROVIDER` (the broker
 adapter is built once at startup).
 
-**Broker credentials** (Topstep / Tradovate `USERNAME`, `PASSWORD`,
-`API_KEY`, etc.) are intentionally **not** editable from the UI yet —
-those still come from `.env` only.
+**Broker credentials** (Topstep `USERNAME`, `PASSWORD`, `API_KEY`, etc.)
+are intentionally **not** editable from the UI yet — those still come
+from `.env` only.
 
-**Execution adapters today.** Only `paper` is functional. `topstep` and
-`tradovate` load so the app can boot, but `execute()` raises
-`NotImplementedError` (turned into a labeled rejection by the webhook
-handler). `live` execution mode is rejected at the settings layer.
+**Execution adapters today.** Only `paper` is functional. `topstep`
+loads so the app can boot, but `execute()` raises `NotImplementedError`
+(turned into a labeled rejection by the webhook handler). `live`
+execution mode is rejected at the settings layer.
 
 All env defaults (see `.env.example` for the full list):
 
@@ -159,7 +156,7 @@ All env defaults (see `.env.example` for the full list):
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD`  | admin credentials for `/login` |
 | `SESSION_SECRET`                    | signing key for the session cookie |
 | `EXECUTION_MODE`                    | `paper` today; `demo` / `live` reserved for the future |
-| `BROKER_PROVIDER`                   | `paper` (default), `topstep`, `tradovate` |
+| `BROKER_PROVIDER`                   | `paper` (default), `topstep` |
 | `BROKER`                            | legacy alias for `BROKER_PROVIDER` |
 | `TRADINGVIEW_WEBHOOK_SECRET`        | shared secret in the alert body |
 | `ALLOWED_SYMBOLS`                   | comma-separated allow-list |
@@ -173,7 +170,6 @@ All env defaults (see `.env.example` for the full list):
 | `DUPLICATE_ORDER_COOLDOWN_SECONDS`  | reject re-sent `order_id`s inside this window |
 | `DATABASE_PATH`, `LOG_PATH`         | storage paths |
 | `TOPSTEP_*`                         | placeholders — not used until the adapter ships |
-| `TRADOVATE_*`                       | placeholders — not used until the adapter ships |
 
 ---
 
@@ -222,7 +218,7 @@ To make `127.0.0.1` reachable from TradingView's servers, expose it with **ngrok
 | `GET  /api/system`                    | host/port, paths, runtime status, useful local URLs |
 | `POST /webhooks/tradingview`          | the inbound alert endpoint |
 
-`POST /api/broker/test-connection` returns `200` with `ok: true` for paper. For topstep it returns `200` with `ok: false` and a documented `status` — `missing_credentials` when the username/API key isn't configured, or `scaffolded_not_connected` once credentials are saved. Tradovate keeps the older `not_implemented` envelope. Genuine server errors come back as `500`. The `GET /api/broker/*` query endpoints always return `200` with a JSON envelope — when the active provider hasn't implemented an operation, the envelope includes `"not_implemented": true` so the dashboard can render safely.
+`POST /api/broker/test-connection` returns `200` with `ok: true` for paper. For topstep it returns `200` with `ok: false` and a documented `status` — `missing_credentials` when the username/API key isn't configured, or `scaffolded_not_connected` once credentials are saved. Genuine server errors come back as `500`. The `GET /api/broker/*` query endpoints always return `200` with a JSON envelope — when the active provider hasn't implemented an operation, the envelope includes `"not_implemented": true` so the dashboard can render safely.
 
 ---
 
@@ -247,8 +243,8 @@ Buttons live on the **Dashboard** (under Open positions) and on
 **Broker** (`/settings/broker`, under "Paper controls"). Both prompt for
 confirmation before firing.
 
-If the active provider is `topstep` or `tradovate`, these endpoints return
-a safe `{"ok": false, "not_implemented": true, "status":
+If the active provider is `topstep`, these endpoints return a safe
+`{"ok": false, "not_implemented": true, "status":
 "not_available_for_provider"}` envelope — they only operate on the paper
 adapter.
 
@@ -358,7 +354,7 @@ startup (and no `ADMIN_PASSWORD_HASH` has been saved), the app logs a
 
 ## Safety notes
 
-- Live execution is **not** implemented. Topstep + Tradovate adapters raise `NotImplementedError` on `execute()`, and every read-only method (`get_accounts`, `get_positions`, `get_orders`, …) returns `not_implemented: true` instead of hitting a real API.
+- Live execution is **not** implemented. The Topstep adapter raises `NotImplementedError` on `execute()`, and every read-only method (`get_accounts`, `get_positions`, `get_orders`, …) returns `not_implemented: true` instead of hitting a real API.
 - Paper mode is the default and cannot place real orders.
 - Broker credentials live in `.env` only. The UI never echoes raw values back; it only reports whether each one is configured.
 - The kill switch is on by default — create `data/kill_switch.active` (or click the button on `/settings/risk`) to halt all execution. Delete the file (or click again) to resume.

@@ -44,18 +44,6 @@ def test_status_topstep_provider_does_not_crash(make_app):
     assert dash.status_code == 200
 
 
-def test_status_tradovate_provider_does_not_crash(make_app):
-    from fastapi.testclient import TestClient
-
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        status_body = c.get("/status").json()
-        dash = c.get("/")
-    assert status_body["broker_provider"] == "tradovate"
-    assert status_body["broker_connected"] is False
-    assert dash.status_code == 200
-
-
 def test_status_shows_topstep_provider(make_app):
     from fastapi.testclient import TestClient
 
@@ -63,15 +51,6 @@ def test_status_shows_topstep_provider(make_app):
     with TestClient(app) as c:
         body = c.get("/status").json()
     assert body["broker_provider"] == "topstep"
-
-
-def test_status_shows_tradovate_provider(make_app):
-    from fastapi.testclient import TestClient
-
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        body = c.get("/status").json()
-    assert body["broker_provider"] == "tradovate"
 
 
 def test_valid_alert_accepted(client):
@@ -236,15 +215,3 @@ def test_topstep_provider_does_not_place_real_order(make_app):
         assert positions == []
 
 
-def test_tradovate_provider_does_not_place_real_order(make_app):
-    from fastapi.testclient import TestClient
-
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        r = c.post("/webhooks/tradingview", json=make_alert(order_id="tradovate_sel"))
-    body = r.json()
-    assert body["accepted"] is False
-    assert body["decision"] == "rejected"
-    reason = body["rejection_reason"] or ""
-    assert "broker_not_implemented" in reason
-    assert "tradovate" in reason.lower()

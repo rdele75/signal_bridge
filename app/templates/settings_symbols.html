@@ -32,7 +32,6 @@
             <th>TradingView Symbol</th>
             <th>Paper Symbol</th>
             <th>Topstep Contract ID</th>
-            <th>Tradovate Symbol</th>
             <th class="col-actions">Actions</th>
           </tr>
         </thead>
@@ -42,7 +41,6 @@
             <td><input type="text" name="ticker" value="{{ ticker }}" placeholder="e.g. MNQ1!" /></td>
             <td><input type="text" name="paper" value="{{ row.paper }}" placeholder="paper symbol" /></td>
             <td><input type="text" name="topstep" value="{{ row.topstep }}" placeholder="CON.F.US.MNQ.M26" /></td>
-            <td><input type="text" name="tradovate" value="{{ row.tradovate }}" placeholder="MNQ" /></td>
             <td><button type="button" class="btn btn-remove">Remove</button></td>
           </tr>
           {% endfor %}
@@ -51,7 +49,6 @@
             <td><input type="text" name="ticker" value="" placeholder="e.g. MNQ1!" /></td>
             <td><input type="text" name="paper" value="" placeholder="paper symbol" /></td>
             <td><input type="text" name="topstep" value="" placeholder="CON.F.US.MNQ.M26" /></td>
-            <td><input type="text" name="tradovate" value="" placeholder="MNQ" /></td>
             <td><button type="button" class="btn btn-remove">Remove</button></td>
           </tr>
           {% endif %}
@@ -65,7 +62,7 @@
     </div>
     <p class="muted mt-3">
       TradingView symbol is required. Paper symbol defaults to the TradingView ticker when blank.
-      Topstep and Tradovate symbols may be blank — order builders will reject signals for symbols whose
+      Topstep symbol may be blank — order builders will reject signals for symbols whose
       target broker mapping is missing.
     </p>
   </form>
@@ -120,7 +117,6 @@
       '<td><input type="text" name="ticker" value="" placeholder="e.g. MNQ1!" /></td>' +
       '<td><input type="text" name="paper" value="" placeholder="paper symbol" /></td>' +
       '<td><input type="text" name="topstep" value="" placeholder="CON.F.US.MNQ.M26" /></td>' +
-      '<td><input type="text" name="tradovate" value="" placeholder="MNQ" /></td>' +
       '<td><button type="button" class="btn btn-remove">Remove</button></td>';
     rowsTbody.appendChild(tr);
     _wireRemove(tr);

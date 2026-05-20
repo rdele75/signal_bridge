@@ -181,7 +181,6 @@ keyframe animations.
 * Broker provider selection.
 * Topstep username / API key / account / env / base URL / WS URL.
 * Selected account dropdown (populated by **Fetch accounts**).
-* Tradovate placeholder fields.
 * Test connection / Topstep auth / Fetch accounts buttons.
 
 The execution-mode `<select>` is gone; the form preserves the

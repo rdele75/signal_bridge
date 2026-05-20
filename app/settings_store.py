@@ -138,7 +138,7 @@ RESTART_REQUIRED: frozenset[str] = frozenset(
 _TRUE_STRINGS = {"1", "true", "yes", "on"}
 _FALSE_STRINGS = {"0", "false", "no", "off"}
 
-ALLOWED_PROVIDERS: tuple[str, ...] = ("paper", "topstep", "tradovate")
+ALLOWED_PROVIDERS: tuple[str, ...] = ("paper", "topstep")
 ALLOWED_EXECUTION_MODES: tuple[str, ...] = ("paper", "demo", "live")
 ALLOWED_TOPSTEP_ENVS: tuple[str, ...] = ("demo", "live")
 

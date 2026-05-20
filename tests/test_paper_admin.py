@@ -4,7 +4,7 @@ Covers:
   * /api/paper/flatten, /api/paper/flatten/{symbol}, /api/paper/reset
   * auth required when ADMIN_AUTH_ENABLED=true
   * flatten/reset zero open positions but never wipe the signal journal
-  * topstep / tradovate provider returns a safe "not available" envelope
+  * topstep provider returns a safe "not available" envelope
   * dashboard + broker pages surface the flatten / reset controls
 """
 from __future__ import annotations
@@ -171,15 +171,6 @@ def test_reset_safe_message_for_topstep(make_app):
     body = r.json()
     assert r.status_code == 200
     assert body["ok"] is False
-    assert body["not_implemented"] is True
-
-
-def test_flatten_safe_message_for_tradovate(make_app):
-    app = make_app(provider="tradovate")
-    with TestClient(app) as c:
-        body = c.post("/api/paper/flatten").json()
-    assert body["ok"] is False
-    assert body["provider"] == "tradovate"
     assert body["not_implemented"] is True
 
 
