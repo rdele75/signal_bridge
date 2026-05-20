@@ -56,16 +56,21 @@ def test_api_status_broker_provider_present(client):
     assert body["broker_provider"] == "paper"
 
 
-def test_dashboard_renders_broker_account_card_for_topstep(make_app):
-    """Topstep with no credentials must still render the broker-account
-    card on the dashboard without crashing."""
+def test_dashboard_no_longer_renders_broker_account_snapshot_card(make_app):
+    """The bulky Broker account / Account Snapshot block was removed
+    from the dashboard. The at-a-glance broker provider/connection row
+    still shows the active provider — and the page must still render
+    cleanly for the Topstep adapter with no creds."""
     from fastapi.testclient import TestClient
     app = make_app(provider="topstep")
     with TestClient(app) as c:
         r = c.get("/")
     assert r.status_code == 200
     body = r.text
-    assert "Broker account" in body
+    # Big snapshot block + redundant label gone.
+    assert "Broker account · topstep" not in body
+    # The compact at-a-glance still mentions the broker provider.
+    assert "Broker provider" in body
     assert "topstep" in body
 
 

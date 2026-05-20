@@ -43,13 +43,12 @@
      written to logs. #}
   <div class="form-row">
     <label for="current_secret">Current webhook secret</label>
-    <div style="display: flex; gap: 6px; align-items: stretch;">
+    <div class="copy-row">
       <input type="text" id="current_secret" name="current_secret"
              class="dark-input"
              readonly autocomplete="off"
              value="{{ secret_value }}"
-             placeholder="(no secret set — generate or paste one below)"
-             style="flex: 1;" />
+             placeholder="(no secret set — generate or paste one below)" />
       <button type="button" class="btn" id="btn-copy-secret"
               data-copy-target="current_secret">Copy</button>
     </div>
@@ -244,7 +243,7 @@
 
   <div class="card">
     <h3>Field reference</h3>
-    <div class="table-wrap">
+    <div class="table-wrap table-scroll">
       <table class="mini">
         <thead><tr><th>Field</th><th>Required</th><th>Notes</th></tr></thead>
         <tbody>

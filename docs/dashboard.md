@@ -28,15 +28,23 @@ Save / Apply button, account line, and two secondary actions.
   dumps raw JSON, just a short human-readable status message.
 * **Account line** — `Account: <selected_account_id>` and the
   account name when known.
-* **Smoke Test** — visible in dry-run mode. Runs a dual-mode
-  Topstep smoke test against the selected account + the contract
-  mapping. **First click**: dry-run preview only (builds BUY entry
-  + SELL exit payloads, no broker order placed). **If demo or live
-  execution is already armed**, the button prompts for a second
-  confirmation phrase (`smoke`); typing it sends a real one-contract
-  MES1! enter/exit pair through `submit_market_order`. Cancel falls
-  back to the dry-run preview. Helper text reads:
+* **Smoke Test** — visible in dry-run mode. Runs a Topstep smoke
+  test against the selected account + the contract mapping.
+  Clicking this button **always** runs the dry-run preview only —
+  it builds a BUY entry + SELL exit payload pair and never calls
+  `/api/Order/place`. Helper text reads:
   *Runs a dry-run enter/exit check. No broker order is sent.*
+* **Execute smoke test…** — secondary button that appears only when
+  execution is already armed (demo or live). Opens a dedicated
+  confirmation modal that requires:
+  * Typing `smoke` exactly in the confirmation field.
+  * Checking the acknowledgement box:
+    *I understand this will place and exit 1 MES on the selected
+    Topstep account.*
+  When both gates pass, the browser POSTs `execute=true` with
+  `confirmation="smoke"`. The backend then re-runs every safety gate
+  (provider, account, mapping, kill switch, contract cap, armed
+  state) before submitting the BUY entry + SELL exit pair.
 * **Disengage** — single-click reset to dry-run. Disarms live +
   demo flags, returns the app to a safe state, and never disconnects
   broker credentials.
@@ -92,12 +100,33 @@ they were redundant with the dropdown + account line.
      pill returns to `Live Locked`, and the modal output shows the
      failed gates.
    * If enable succeeds, the card moves to `execution-live-armed`
-     (solid red border + subtle pulse) and the status pill becomes
-     `Live Armed`.
+     (solid red border + subtle pulse), the status text becomes
+     **Live armed** with a persistent green check, a one-shot green
+     success-flash shimmer plays around the border, and a toast
+     notification slides in from the bottom-right with the message
+     *Live execution armed*. The toast fades out after a couple of
+     seconds; the checkmark stays visible for as long as live remains
+     armed.
 
 The verify endpoint exists so the UI can render the engagement
 animation while the gate check is in flight, and so it can show a
 deterministic failure reason without ever flipping settings.
+
+### Live → dry-run transition
+
+Selecting `dry-run` (or clicking **Disengage**) while live is armed
+no longer snaps the card from red to green. Instead:
+
+1. The status text fades to *Disengaging live…*.
+2. The card adds `execution-live-disengaging`. The red border bars
+   retreat from the edges toward the centre and the red glow fades
+   over ~1.5 s.
+3. A toast slides in with *Live execution disengaged*.
+4. The card lands on `execution-dry-run` with the one-shot
+   `execution-dryrun-enter` cue, then settles into the slow
+   `execution-dry-run-pulse` breathing animation.
+5. The status text becomes *Dry-run* and the page reloads to pick
+   up the persisted state.
 
 ### CSS state classes
 
@@ -108,23 +137,39 @@ The card carries exactly one of:
 * `execution-live-locked`
 * `execution-live-engaging` (transient, JS-applied)
 * `execution-live-armed`
+* `execution-live-disengaging` (transient, JS-applied)
 * `execution-kill-switch-active`
 * `execution-disabled`
 
 Dry-run runs a deliberately slow safe-state breathing animation
-(`execution-dry-run-pulse`, ~5.6 s cycle) — gentle blue/green
+(`execution-dry-run-pulse`, ~6.5 s cycle) — gentle blue/green
 glow that signals "alive but idle" without competing with the
 live indicators. Live armed pulses faster (~1.6 s) so the two
 states are visually distinct at a glance.
 
 When the live engagement flow finishes successfully, the status
-text fades through two CSS classes:
+text fades through these CSS classes:
 
 * `execution-status-transitioning` — used by JS to fade the old
   text out before swapping the label.
 * `execution-live-armed-enter` — a one-shot animation that flashes
   a green checkmark + colour swing as the label settles into
   "Live armed" red.
+* `execution-status-check-visible` — persistent class added once
+  the entry animation finishes. Keeps the green checkmark next to
+  the status text for as long as live remains armed.
+* `execution-live-success-flash` — one-shot green shimmer/glow
+  overlay applied to the card immediately after engagement.
+
+The reverse path uses `execution-live-disengaging` (red bars
+retreat toward centre + fade) followed by `execution-dryrun-enter`
+(one-shot dry-run lead-in) before the steady
+`execution-dry-run-pulse` resumes.
+
+Toast notifications use `execution-toast`, `execution-toast-enter`,
+and `execution-toast-exit` for the slide/fade-in and slide/fade-out
+transitions. The toast container is fixed-positioned at the
+bottom-right corner so it never causes layout shift.
 
 `prefers-reduced-motion` users get the colour change without the
 keyframe animations.
@@ -138,13 +183,26 @@ keyframe animations.
 * Selected account dropdown (populated by **Fetch accounts**).
 * Tradovate placeholder fields.
 * Test connection / Topstep auth / Fetch accounts buttons.
-* **Account snapshot** — polling panel for positions/orders. This is
-  **not** a realtime price feed; the label was explicitly renamed.
 
 The execution-mode `<select>` is gone; the form preserves the
 current `EXECUTION_MODE` value via a hidden input so submitting the
 broker form never silently changes the mode. A small relocation
 notice points operators back to the Dashboard for execution.
+
+### Account snapshot UI removed
+
+The bulky **Account snapshot** / **Realtime account data** polling
+panel was removed from both the dashboard and the broker page. It
+was redundant with the per-account information surfaced elsewhere
+(Metrics → Past orders for order history; broker credentials on
+this page; at-a-glance broker provider on the dashboard).
+
+The backend endpoints are unchanged and remain available for
+tooling and tests:
+
+* `GET /api/realtime/state` — combined positions + orders snapshot.
+* `GET /api/broker/positions`.
+* `GET /api/broker/orders`.
 
 ## Endpoints
 
@@ -195,7 +253,10 @@ ProjectX market-data hub lands. It shows:
   later.*
 
 No broken controls, no dropdowns that imply a connection that does
-not exist yet.
+not exist yet. The card will gain a real symbol selector + last
+price once the ProjectX market hub is wired in — until then the
+placeholder copy is deliberately blunt so the operator never
+mistakes a stale value for a live feed.
 
 ## Safety guarantees preserved
 

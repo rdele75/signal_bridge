@@ -55,7 +55,10 @@ code {
   color: #d6dbea;
 }
 
-/* ----- App shell ----- */
+/* ----- App shell -----
+   Desktop: sidebar on the left, topbar on the right, main fills the
+   rest. The "mobile-header" area is only used at the mobile breakpoint
+   (see the responsive section near the bottom of this file). #}*/
 .app {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
@@ -202,15 +205,6 @@ code {
 @media (max-width: 1100px) {
   .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 720px) {
-  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
-  .app {
-    grid-template-columns: 1fr;
-    grid-template-areas: "topbar" "main";
-  }
-  .sidebar { display: none; }
-  .main { padding: 16px; }
 }
 
 /* ----- Cards ----- */
@@ -1036,22 +1030,49 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 }
 
 /* Dry-run: slow safe-state breathing. Deliberately gentle — the card
-   should look alive without ever feeling urgent. */
+   should look alive without ever feeling urgent. ~6.5s so it's clearly
+   slower than the 1.6s live-armed pulse. */
 .execution-dry-run {
-  border-color: rgba(52, 211, 153, 0.40);
-  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.08);
-  animation: execution-dry-run-pulse 5.6s ease-in-out infinite;
+  border-color: rgba(52, 211, 153, 0.45);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.10);
+  animation: execution-dry-run-pulse 6.5s ease-in-out infinite;
 }
 @keyframes execution-dry-run-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.06),
-      0 0 8px rgba(52, 211, 153, 0.03);
-    border-color: rgba(52, 211, 153, 0.32);
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.12),
+      0 0 12px rgba(52, 211, 153, 0.08);
+    border-color: rgba(52, 211, 153, 0.40);
   }
   50% {
-    box-shadow: 0 0 0 1.5px rgba(96, 165, 250, 0.14),
-      0 0 16px rgba(52, 211, 153, 0.10);
-    border-color: rgba(96, 165, 250, 0.40);
+    box-shadow: 0 0 0 1.5px rgba(96, 165, 250, 0.22),
+      0 0 22px rgba(52, 211, 153, 0.18);
+    border-color: rgba(96, 165, 250, 0.55);
+  }
+}
+/* Marker class JS adds after a transition into dry-run completes. The
+   shared ``execution-dry-run`` rule above is what actually animates;
+   ``execution-dryrun-active`` is just a hook the tests/style guide can
+   target if they need the post-transition steady state. */
+.execution-dryrun-active { /* paired with .execution-dry-run for steady state */ }
+/* One-shot dry-run enter cue when fading down from live. Plays once,
+   then the steady ``execution-dry-run-pulse`` rule takes over. */
+.execution-card.execution-dryrun-enter {
+  animation: execution-dryrun-enter 1.4s ease-out 1 both;
+}
+@keyframes execution-dryrun-enter {
+  0%   {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+    border-color: rgba(52, 211, 153, 0);
+  }
+  60%  {
+    box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.35),
+      0 0 24px rgba(52, 211, 153, 0.25);
+    border-color: rgba(52, 211, 153, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.12),
+      0 0 12px rgba(52, 211, 153, 0.08);
+    border-color: rgba(52, 211, 153, 0.40);
   }
 }
 
@@ -1114,14 +1135,137 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   100% { width: 100%; left: 0;   opacity: 1; }
 }
 
+/* ----- Live disengaging: mirror of live-engaging. Red bars retreat
+   from the edges toward the centre and fade as the card transitions
+   back to dry-run. JS removes the class once the fade settles. ----- */
+.execution-live-disengaging {
+  border-color: rgba(248, 113, 113, 0.45);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.22),
+    0 0 14px rgba(248, 113, 113, 0.12);
+  animation: execution-live-disengage-fade 1.6s ease-out forwards;
+}
+@keyframes execution-live-disengage-fade {
+  0% {
+    border-color: rgba(248, 113, 113, 0.85);
+    box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.35),
+      0 0 20px rgba(248, 113, 113, 0.22);
+  }
+  100% {
+    border-color: rgba(248, 113, 113, 0);
+    box-shadow: 0 0 0 1px rgba(248, 113, 113, 0),
+      0 0 0 rgba(248, 113, 113, 0);
+  }
+}
+.execution-live-disengaging::before,
+.execution-live-disengaging::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--bad);
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.55);
+  z-index: 2;
+  animation: execution-live-disengage-travel 1.5s ease-in-out forwards;
+}
+.execution-live-disengaging::before { top: 0; }
+.execution-live-disengaging::after  { bottom: 0; }
+@keyframes execution-live-disengage-travel {
+  0%   { width: 100%; left: 0;   opacity: 1; }
+  100% { width: 0;    left: 50%; opacity: 0; }
+}
+
+/* One-shot success flash around the card when live engagement
+   completes — subtle green shimmer/glow as the red border settles. */
+.execution-card.execution-live-success-flash::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--radius);
+  pointer-events: none;
+  z-index: 2;
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.55),
+    0 0 30px rgba(52, 211, 153, 0.40);
+  animation: execution-live-success-flash 1.2s ease-out 1 both;
+  opacity: 0;
+}
+@keyframes execution-live-success-flash {
+  0%   { opacity: 0; }
+  18%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Persistent checkmark on the status text — added once live is armed
+   and held there for the lifetime of the armed state. The pre-existing
+   ``.execution-live-armed-enter::before`` plays the entry animation;
+   this class keeps the check visible afterwards without re-animating. */
+.execution-status-text.execution-status-check-visible::before {
+  content: "✓";
+  font-size: 13px;
+  color: var(--good);
+  margin-right: 2px;
+  display: inline-block;
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ----- Toast notification ----- */
+.execution-toast {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  z-index: 1100;
+  background: var(--bg-1);
+  border: 1.5px solid var(--good);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  color: var(--good);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55),
+    0 0 18px rgba(52, 211, 153, 0.25);
+  opacity: 0;
+  transform: translateY(14px) scale(0.97);
+  pointer-events: none;
+  transition: opacity 0.32s ease, transform 0.32s ease;
+  max-width: min(360px, calc(100vw - 56px));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.execution-toast[hidden] { display: none; }
+.execution-toast.execution-toast-enter {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.execution-toast.execution-toast-exit {
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+}
+.execution-toast.toast-bad {
+  border-color: rgba(248, 113, 113, 0.6);
+  color: var(--bad);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55),
+    0 0 18px rgba(248, 113, 113, 0.25);
+}
+.execution-toast.toast-info {
+  border-color: rgba(96, 165, 250, 0.55);
+  color: var(--info);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55),
+    0 0 18px rgba(96, 165, 250, 0.22);
+}
+
 /* Honour prefers-reduced-motion — keep the colours but drop the
    keyframe animations. */
 @media (prefers-reduced-motion: reduce) {
   .execution-card,
   .execution-card::before,
   .execution-card::after,
-  .btn-spinner {
+  .btn-spinner,
+  .execution-toast {
     animation: none !important;
+    transition: none !important;
   }
 }
 
@@ -1233,3 +1377,532 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   color: #d6dbea;
   background: #07090d;
 }
+
+/* =====================================================================
+   Mobile header + drawer
+   ===================================================================== */
+
+/* The mobile header is the top strip with the hamburger button. On
+   desktop the sidebar is always visible so this strip is hidden. */
+.mobile-header {
+  display: none;
+  grid-area: mobile-header;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 6;
+}
+.mobile-header-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--fg);
+  font-size: 14px;
+}
+.mobile-header-brand .logo {
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  display: inline-grid; place-items: center;
+  color: white; font-weight: 700; font-size: 12px;
+  box-shadow: 0 0 10px rgba(124, 140, 255, 0.25);
+}
+
+.mobile-drawer-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  color: var(--fg);
+  cursor: pointer;
+  padding: 0;
+}
+.mobile-drawer-toggle:hover { background: var(--bg-hover); }
+.mobile-drawer-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.mobile-drawer-toggle .hamburger {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 18px;
+  height: 14px;
+}
+.mobile-drawer-toggle .hamburger span {
+  display: block;
+  height: 2px;
+  width: 100%;
+  background: currentColor;
+  border-radius: 2px;
+}
+
+.mobile-drawer-close {
+  display: none;
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border-2);
+  color: var(--fg-dim);
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.mobile-drawer-close:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.mobile-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 16, 0.55);
+  z-index: 50;
+  display: none;
+}
+
+/* =====================================================================
+   Responsive helper classes (usable from templates without writing
+   per-element media queries every time)
+   ===================================================================== */
+
+.mobile-stack { display: flex; flex-wrap: wrap; gap: 10px; }
+.mobile-stack > * { flex: 1 1 auto; min-width: 0; }
+
+.responsive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.table-scroll table.mini,
+.table-scroll table.data {
+  min-width: 600px;
+}
+
+.mobile-full { width: 100%; }
+
+.mobile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Visibility helpers for "render twice, hide one" responsive tables. */
+.show-on-mobile { display: none; }
+.hide-on-mobile { display: block; }
+@media (max-width: 768px) {
+  .show-on-mobile { display: block; }
+  .hide-on-mobile { display: none; }
+}
+
+/* Mobile-friendly card-list rows. Used by Past Orders + symbol-mapping
+   responsive renders. Hidden on desktop; revealed under the breakpoint. */
+.mobile-card-list { display: none; }
+.mobile-card-list .mobile-card-row {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.mobile-card-list .mobile-card-row dl {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.mobile-card-list .mobile-card-row dt {
+  color: var(--fg-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  align-self: center;
+}
+.mobile-card-list .mobile-card-row dd {
+  margin: 0;
+  color: var(--fg);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Contract search row on /settings/symbols. Inline on desktop, stacks
+   under the mobile breakpoint. */
+.contract-search-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.contract-search-row .contract-search-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.contract-search-row .contract-search-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding-bottom: 10px;
+  font-size: 13px;
+  color: var(--fg);
+}
+@media (max-width: 768px) {
+  .contract-search-row { flex-direction: column; align-items: stretch; }
+  .contract-search-row .contract-search-input { width: 100%; }
+  .contract-search-row .contract-search-live { padding-bottom: 0; }
+  .contract-search-row .btn { width: 100%; }
+}
+
+/* Topstep account-list row (rendered by the broker page JS). Single
+   row on desktop, stacks on mobile so labels and the "use" button
+   stay readable. */
+.topstep-account-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.topstep-account-label {
+  flex: 1 1 220px;
+  min-width: 0;
+  word-break: break-word;
+}
+@media (max-width: 768px) {
+  .topstep-account-row { flex-direction: column; align-items: stretch; }
+  .topstep-account-row .btn { width: 100%; }
+}
+
+/* Generic copyable secret/URL row — keeps the button beside the input
+   on desktop and stacks them on mobile so the URL is fully readable. */
+.copy-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.copy-row > input,
+.copy-row > .dark-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* =====================================================================
+   Tablet breakpoint
+   ===================================================================== */
+
+@media (max-width: 1024px) {
+  :root { --sidebar-w: 200px; }
+}
+
+/* =====================================================================
+   Mobile breakpoint — phones + small tablets in portrait
+   ===================================================================== */
+
+@media (max-width: 768px) {
+  html, body { max-width: 100vw; overflow-x: hidden; }
+
+  /* App shell becomes a single column with the mobile header on top. */
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas:
+      "mobile-header"
+      "topbar"
+      "main";
+    min-height: 100vh;
+  }
+
+  .mobile-header { display: flex; }
+
+  /* Sidebar slides in as a drawer. Hidden off-canvas until
+     `body.sidebar-open` flips it in. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(82vw, 320px);
+    max-width: 320px;
+    height: 100vh;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.55);
+    overflow-y: auto;
+  }
+  body.sidebar-open .sidebar,
+  .sidebar.is-open {
+    transform: translateX(0);
+  }
+  .sidebar-brand {
+    position: relative;
+    padding-top: calc(18px + env(safe-area-inset-top, 0px));
+  }
+  .mobile-drawer-close { display: inline-flex; }
+
+  body.sidebar-open .mobile-drawer-overlay { display: block; }
+  .mobile-drawer-overlay:not([hidden]) { display: block; }
+
+  /* Top status strip: shrink and keep within the viewport. */
+  .topbar {
+    padding: 8px 12px;
+    gap: 8px;
+    min-height: 48px;
+    flex-wrap: wrap;
+  }
+  .topbar .crumbs { font-size: 12px; }
+  .topbar .crumbs .page-title { font-size: 13px; }
+  .topbar .status-strip { gap: 6px; flex-wrap: wrap; }
+  .ks-toggle {
+    margin-left: 0;
+    font-size: 11px;
+    padding: 6px 12px 6px 10px;
+    min-height: 36px;
+  }
+
+  /* Main area: full width with comfortable touch padding. */
+  .main {
+    padding: 14px 14px 32px;
+    padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+    max-width: 100%;
+  }
+  .main h1 { font-size: 18px; }
+  .main .subtitle { font-size: 12.5px; margin-bottom: 16px; }
+
+  /* All grids stack on mobile. */
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .grid { gap: 10px; }
+
+  /* Cards: cap width and stop runaway content from forcing horizontal
+     scrolling on the whole page. */
+  .card,
+  .card.padded {
+    max-width: 100%;
+    padding: 14px 14px 12px;
+  }
+  .card-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .card-value { font-size: 18px; }
+  .card-value.lg { font-size: 22px; }
+  .card-value.sm { font-size: 14.5px; }
+
+  /* Section spacing. */
+  .section { margin-bottom: 16px; }
+  .section-head { flex-wrap: wrap; gap: 4px; }
+
+  /* Long text / URLs / secrets must wrap rather than push the page. */
+  code,
+  .mono,
+  dl.kv dd,
+  pre.code,
+  pre.output,
+  .terminal-body .line {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  dl.kv {
+    grid-template-columns: 100px 1fr;
+  }
+  dl.kv dt, dl.kv dd { padding: 6px 4px; font-size: 12px; }
+
+  pre.code,
+  pre.output {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    font-size: 11.5px;
+  }
+  .code-frame .copy-hint { top: 6px; right: 8px; font-size: 9.5px; }
+
+  /* Tables: keep horizontal scroll inside the wrapper, not the page. */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+  table.mini, table.data { font-size: 12px; }
+  table.mini th, table.data th { padding: 8px 10px; }
+  table.mini td, table.data td { padding: 8px 10px; }
+
+  /* Forms: full-width controls, readable labels, real touch targets. */
+  .form .form-row { margin-bottom: 14px; }
+  .form input[type="text"],
+  .form input[type="number"],
+  .form input[type="password"],
+  .form input[type="email"],
+  .form input[type="search"],
+  .form select,
+  .form textarea,
+  select,
+  input[type="text"],
+  input[type="number"],
+  input[type="password"],
+  input[type="email"],
+  input[type="search"],
+  textarea,
+  .dark-input {
+    width: 100%;
+    font-size: 16px; /* keeps iOS Safari from zooming on focus */
+    padding: 10px 12px;
+    min-height: 44px;
+  }
+  .form .form-row.toggles { gap: 12px; flex-direction: column; align-items: flex-start; }
+
+  /* Buttons: thumb-friendly. */
+  .btn {
+    padding: 10px 14px;
+    font-size: 13.5px;
+    min-height: 44px;
+    margin: 0;
+  }
+  .btn-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .btn-row .btn { flex: 1 1 auto; }
+
+  /* Execution card. */
+  .execution-card-head { flex-wrap: wrap; row-gap: 4px; }
+  .execution-status-text {
+    margin-left: 0;
+    width: 100%;
+    font-size: 11.5px;
+  }
+  .execution-mode-form {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .execution-mode-form select {
+    width: 100%;
+    min-width: 0;
+  }
+  .execution-mode-form .btn { width: 100%; }
+  .execution-account {
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+  .execution-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .execution-actions .btn { width: 100%; }
+  .execution-kill-switch-indicator {
+    margin-left: 0;
+    text-align: center;
+  }
+  .execution-feedback { font-size: 12.5px; }
+
+  /* Modals: fit the viewport, allow internal scroll, leave reachable
+     close buttons. */
+  .execution-modal { padding: 14px; }
+  .execution-modal-panel {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100vh - 28px);
+    overflow-y: auto;
+    padding: 18px 16px;
+  }
+  .execution-modal-actions {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+  .execution-modal-actions .btn { width: 100%; }
+  .execution-modal-form input[type="text"] {
+    width: 100%;
+    font-size: 16px;
+  }
+
+  /* Toasts: keep within the viewport and out of the bottom safe area.
+     Bottom placement is fine on mobile since the execution controls
+     scroll into view above it. */
+  .execution-toast {
+    left: 14px;
+    right: 14px;
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    max-width: none;
+    white-space: normal;
+    text-overflow: clip;
+    padding: 12px 14px;
+    text-align: center;
+  }
+
+  /* Topbar app/mode/broker chips: stay compact. */
+  .topbar .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+  }
+
+  /* Banners: tighter padding, smaller text. */
+  .banner { padding: 8px 10px; font-size: 12.5px; }
+
+  /* Sidebar foot: keep readable touch targets for sign-out. */
+  .sidebar-foot .logout-form button { padding: 10px; font-size: 12.5px; min-height: 40px; }
+
+  /* Profit graph keeps a sensible height on phones. */
+  .profit-graph svg { height: 130px; }
+  .profit-graph-meta { font-size: 11px; gap: 10px; flex-wrap: wrap; }
+
+  /* TradingView copy-row stacks input + button so the URL stays fully
+     readable, button below. */
+  .copy-row { flex-direction: column; align-items: stretch; }
+  .copy-row > .btn { width: 100%; }
+}
+
+/* =====================================================================
+   Narrow phones (≤480px) — tighter packing
+   ===================================================================== */
+
+@media (max-width: 480px) {
+  .main { padding: 12px 12px 28px; }
+  .card, .card.padded { padding: 12px 12px 10px; }
+  .main h1 { font-size: 17px; }
+  .card-value { font-size: 16.5px; }
+  .card-value.lg { font-size: 20px; }
+  .topbar { padding: 8px 10px; }
+  .topbar .crumbs { display: none; } /* page title is on the mobile header */
+  .mobile-header { padding-left: 12px; padding-right: 12px; }
+  .ks-toggle { font-size: 10.5px; padding: 5px 10px 5px 9px; }
+  .login-card { padding: 22px 18px 18px; }
+  .sidebar { width: 86vw; }
+  dl.kv { grid-template-columns: 1fr; }
+  dl.kv dt { padding-bottom: 0; }
+  dl.kv dd { padding-top: 2px; }
+  .mobile-card-list .mobile-card-row dl { grid-template-columns: 96px 1fr; }
+}
+
+/* =====================================================================
+   Honour prefers-reduced-motion for the drawer too
+   ===================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+}
+

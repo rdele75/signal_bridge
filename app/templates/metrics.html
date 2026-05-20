@@ -91,7 +91,7 @@
        the lookback window without a page reload. The server-rendered
        block below shows the current snapshot so the page is useful
        even before the JS runs (and for tests that assert raw HTML). #}
-    <div class="btn-row" style="margin-bottom: 8px;">
+    <div class="btn-row mobile-actions" style="margin-bottom: 8px;">
       <label for="past-orders-lookback" style="margin-right: 6px;">Lookback:</label>
       <select id="past-orders-lookback" data-default="{{ order_history.lookback_days }}">
         <option value="1">1 day</option>
@@ -109,7 +109,7 @@
     </script>
     <div id="past-orders-body">
       {% if m.past_orders.rows %}
-        <div class="table-wrap">
+        <div class="table-wrap table-scroll hide-on-mobile">
           <table class="mini">
             <thead>
               <tr>
@@ -143,6 +143,27 @@
             </tbody>
           </table>
         </div>
+        <div class="mobile-card-list show-on-mobile">
+          {% for o in m.past_orders.rows %}
+            <div class="mobile-card-row">
+              <dl>
+                <dt>Time</dt><dd><code>{{ o.time or '—' }}</code></dd>
+                <dt>Broker</dt><dd>{{ o.broker or '—' }}</dd>
+                <dt>Symbol</dt><dd><strong>{{ o.symbol or '—' }}</strong></dd>
+                <dt>Side</dt><dd>{{ o.action or '—' }}</dd>
+                <dt>Size</dt><dd>{{ o.size if o.size is not none else '—' }}</dd>
+                <dt>Status</dt><dd>{% if o.status %}<code>{{ o.status }}</code>{% else %}—{% endif %}</dd>
+                <dt>Order ID</dt><dd>{% if o.order_id %}<code>{{ o.order_id }}</code>{% else %}—{% endif %}</dd>
+                <dt>Source</dt>
+                <dd>
+                  {% if o.strategy %}{{ o.strategy }}
+                  {% elif o.source %}{{ o.source }}
+                  {% else %}—{% endif %}
+                </dd>
+              </dl>
+            </div>
+          {% endfor %}
+        </div>
       {% elif m.past_orders.status == 'topstep_not_available' %}
         <div class="empty"><strong>n/a</strong>Topstep order history is not available yet.</div>
       {% else %}
@@ -150,7 +171,7 @@
       {% endif %}
     </div>
   {% elif m.past_orders.rows %}
-    <div class="table-wrap">
+    <div class="table-wrap table-scroll hide-on-mobile">
       <table class="mini">
         <thead>
           <tr>
@@ -188,6 +209,27 @@
         </tbody>
       </table>
     </div>
+    <div class="mobile-card-list show-on-mobile">
+      {% for o in m.past_orders.rows %}
+        <div class="mobile-card-row">
+          <dl>
+            <dt>Time</dt><dd><code>{{ o.time or '—' }}</code></dd>
+            <dt>Broker</dt><dd>{{ o.broker or '—' }}</dd>
+            <dt>Symbol</dt><dd><strong>{{ o.symbol or '—' }}</strong></dd>
+            <dt>Side</dt><dd>{{ o.action or '—' }}</dd>
+            <dt>Size</dt><dd>{{ o.size if o.size is not none else '—' }}</dd>
+            <dt>Status</dt><dd>{% if o.status %}<code>{{ o.status }}</code>{% else %}—{% endif %}</dd>
+            <dt>Order ID</dt><dd>{% if o.order_id %}<code>{{ o.order_id }}</code>{% else %}—{% endif %}</dd>
+            <dt>Source</dt>
+            <dd>
+              {% if o.strategy %}{{ o.strategy }}
+              {% elif o.source %}{{ o.source }}
+              {% else %}—{% endif %}
+            </dd>
+          </dl>
+        </div>
+      {% endfor %}
+    </div>
     {% if m.past_orders.status == 'fallback_journal' %}
       <p class="muted" style="margin: 6px 0 0;">
         Broker order history unavailable — showing local journal rows.
@@ -214,7 +256,7 @@
         + 'No Topstep orders found for this lookback window.</div>';
       return;
     }
-    const head = '<div class="table-wrap"><table class="mini"><thead><tr>'
+    const head = '<div class="table-wrap table-scroll hide-on-mobile"><table class="mini"><thead><tr>'
       + '<th>Time</th><th>Symbol/Contract</th><th>Side</th><th class="num">Size</th>'
       + '<th>Type</th><th>Status</th><th class="num">Limit</th><th class="num">Stop</th>'
       + '<th class="num">Filled</th><th>Order ID</th><th>Tag</th>'
@@ -235,7 +277,22 @@
         + '<td>' + (o.customTag || '—') + '</td>'
         + '</tr>';
     }).join('');
-    body.innerHTML = head + rowsHtml + '</tbody></table></div>';
+    const cards = rows.map((o) => {
+      const time = o.creationTimestamp || o.updateTimestamp || '—';
+      return '<div class="mobile-card-row"><dl>'
+        + '<dt>Time</dt><dd><code>' + time + '</code></dd>'
+        + '<dt>Contract</dt><dd><strong>' + (o.contractId || '—') + '</strong></dd>'
+        + '<dt>Side</dt><dd>' + (o.side_label || (o.side != null ? String(o.side) : '—')) + '</dd>'
+        + '<dt>Size</dt><dd>' + (o.size != null ? o.size : '—') + '</dd>'
+        + '<dt>Type</dt><dd>' + (o.type != null ? o.type : '—') + '</dd>'
+        + '<dt>Status</dt><dd>' + (o.status != null ? '<code>' + o.status + '</code>' : '—') + '</dd>'
+        + '<dt>Filled</dt><dd>' + (o.filledPrice != null ? o.filledPrice : '—') + '</dd>'
+        + '<dt>Order ID</dt><dd>' + (o.orderId ? '<code>' + o.orderId + '</code>' : '—') + '</dd>'
+        + '<dt>Tag</dt><dd>' + (o.customTag || '—') + '</dd>'
+        + '</dl></div>';
+    }).join('');
+    body.innerHTML = head + rowsHtml + '</tbody></table></div>'
+      + '<div class="mobile-card-list show-on-mobile">' + cards + '</div>';
   }
 
   async function _fetchOrderHistory() {
@@ -282,7 +339,7 @@
   <div class="card">
     <h3>Rejection reasons</h3>
     {% if m.rejection_reasons %}
-      <div class="table-wrap">
+      <div class="table-wrap table-scroll">
         <table class="mini">
           <thead><tr><th>Reason</th><th class="num">Count</th></tr></thead>
           <tbody>
@@ -303,7 +360,7 @@
   <div class="card">
     <h3>Trades by symbol</h3>
     {% if m.trades_by_symbol %}
-      <div class="table-wrap">
+      <div class="table-wrap table-scroll">
         <table class="mini">
           <thead><tr><th>Symbol</th><th class="num">Accepted</th><th class="num">Rejected</th><th class="num">Total</th></tr></thead>
           <tbody>

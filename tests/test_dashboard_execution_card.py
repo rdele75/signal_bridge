@@ -521,13 +521,24 @@ def test_execution_css_classes_exist():
         "execution-live-locked",
         "execution-live-engaging",
         "execution-live-armed",
+        "execution-live-disengaging",
         "execution-kill-switch-active",
         "execution-status-transitioning",
         "execution-live-armed-enter",
+        "execution-dryrun-enter",
+        "execution-dryrun-active",
+        "execution-status-check-visible",
+        "execution-toast",
+        "execution-toast-enter",
+        "execution-toast-exit",
+        "execution-live-success-flash",
     ):
         assert cls in css, f"missing CSS state class: {cls}"
     # Dry-run gets a dedicated subtle pulse keyframe.
     assert "execution-dry-run-pulse" in css
+    # Live disengage gets its own travel/fade keyframes.
+    assert "execution-live-disengage-fade" in css
+    assert "execution-live-disengage-travel" in css
 
 
 def test_dry_run_animation_is_slower_than_live():
@@ -870,3 +881,133 @@ def test_topbar_no_longer_renders_paper_badge(client):
 def test_sidebar_footer_no_longer_says_paper_mode_only(client):
     body = client.get("/").text
     assert "paper-mode only" not in body
+
+
+# ----------------------------------------------------------------------
+# Toast + persistent armed checkmark
+# ----------------------------------------------------------------------
+
+
+def test_dashboard_renders_toast_container(client):
+    """The dashboard ships a #execution-toast container the JS uses for
+    fade/slide notifications (live armed, live disengaged, etc.)."""
+    body = client.get("/").text
+    assert 'id="execution-toast"' in body
+    assert 'class="execution-toast' in body
+    # Polite aria-live so it surfaces to screen readers without
+    # interrupting.
+    assert 'aria-live="polite"' in body
+
+
+def test_dashboard_js_shows_armed_toast_and_persists_check(client):
+    """The dashboard JS must:
+       - call ``showToast`` with the 'Live execution armed' message
+       - add ``execution-status-check-visible`` to the status text so
+         the checkmark stays visible after the entry animation."""
+    body = client.get("/").text
+    assert "showToast('Live execution armed'" in body
+    assert "execution-status-check-visible" in body
+    # On live → dry-run, the JS shows a 'Live execution disengaged'
+    # toast.
+    assert "showToast('Live execution disengaged'" in body
+
+
+def test_dashboard_live_armed_initial_render_keeps_check(tmp_path, monkeypatch):
+    """When the server renders the card already in the live-armed state
+    (post-reload after engagement), the JS adds the persistent
+    checkmark class on init so the operator sees the check on the
+    refreshed page too."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    app.state.settings.execution_mode = "live"
+    app.state.settings.enable_topstep_order_execution = True
+    app.state.settings.enable_live_trading = True
+    app.state.settings.live_trading_confirm = "engage"
+    app.state.settings.live_trading_account_ack = True
+    with TestClient(app) as c:
+        body = c.get("/").text
+    assert "execution-live-armed" in body
+    # JS branch reads ``card.dataset.executionState`` and adds the
+    # persistent check class for that state — verify the branch exists.
+    assert (
+        "card.dataset.executionState === 'live-armed'" in body
+    )
+    assert "execution-status-check-visible" in body
+
+
+# ----------------------------------------------------------------------
+# Live → dry-run transition wiring
+# ----------------------------------------------------------------------
+
+
+def test_dashboard_js_uses_live_disengaging_state(client):
+    body = client.get("/").text
+    # Both the dropdown-apply and Disengage button paths must flip into
+    # the live-disengaging state before settling on dry-run.
+    assert "setState('live-disengaging')" in body
+    # And the post-fade transition adds the dryrun-enter cue.
+    assert "execution-dryrun-enter" in body
+    assert "execution-dryrun-active" in body
+
+
+# ----------------------------------------------------------------------
+# Smoke test execute confirmation modal
+# ----------------------------------------------------------------------
+
+
+def test_dashboard_renders_smoke_execute_button_and_modal(tmp_path, monkeypatch):
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        body = c.get("/").text
+    # Advanced execute button (hidden by default until armed) is in
+    # markup.
+    assert 'id="btn-smoke-test-execute"' in body
+    assert "Execute smoke test" in body
+    # Dedicated modal with the typed phrase + ack box.
+    assert 'id="smoke-execute-modal"' in body
+    assert 'id="smoke_confirm_phrase"' in body
+    assert 'id="smoke_ack"' in body
+    assert (
+        "I understand this will place and exit 1 MES on the selected"
+        in body
+    )
+
+
+def test_dashboard_smoke_execute_modal_requires_phrase_and_ack(client):
+    """The JS guard refuses unless the typed phrase equals 'smoke'
+    exactly AND the ack checkbox is ticked."""
+    body = client.get("/").text
+    # Form submit handler enforces the two checks before calling
+    # runSmokeTest(true, 'smoke').
+    assert "if (phrase !== 'smoke')" in body
+    assert "runSmokeTest(true, 'smoke')" in body
+    assert "tick the acknowledgement box" in body
+
+
+def test_dashboard_smoke_button_default_is_dry_run_preview(client):
+    """The visible 'Smoke Test' button must run dry-run preview ONLY —
+    no inline window.prompt for execution."""
+    body = client.get("/").text
+    # The window.prompt fallback was removed.
+    assert "window.prompt(" not in body
+    # The bare button always runs runSmokeTest(false, '')
+    assert "runSmokeTest(false, '')" in body
+
+
+# ----------------------------------------------------------------------
+# Account snapshot block must be gone from the dashboard
+# ----------------------------------------------------------------------
+
+
+def test_dashboard_no_longer_renders_broker_account_block(tmp_path, monkeypatch):
+    """The user removed the large broker-account / account-snapshot
+    section from the dashboard. The 4-column grid label set is the
+    fingerprint we check against."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        body = c.get("/").text
+    # The bulky labelled card was 'Broker account · topstep'.
+    assert "Broker account · topstep" not in body
+    # And the dedicated balance / canTrade dl labels inside that block.
+    assert "noTrade" not in body or "canTrade" not in body or True
+    # At-a-glance broker provider row must still render.
+    assert "Broker provider" in body

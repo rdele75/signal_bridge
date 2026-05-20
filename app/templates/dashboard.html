@@ -56,7 +56,7 @@
         {% endif %}
       </div>
 
-      <div class="execution-actions">
+      <div class="execution-actions mobile-actions">
         <button type="button" id="btn-disable-exec" class="btn">
           Disengage
         </button>
@@ -66,6 +66,10 @@
         <button type="button" id="btn-smoke-test" class="btn"
                 {% if execution_mode != 'paper' %}hidden{% endif %}>
           Smoke Test
+        </button>
+        <button type="button" id="btn-smoke-test-execute" class="btn btn-danger"
+                hidden>
+          Execute smoke test…
         </button>
         {% if kill_switch_enabled %}
           <span class="execution-kill-switch-indicator
@@ -150,6 +154,63 @@
   </div>
 </div>
 
+{# ---- Smoke-test execute confirmation modal.
+       Shown when the operator clicks "Execute smoke test…". Requires
+       typing "smoke" exactly + checking the acknowledgement box before
+       the dangerous BUY/SELL pair can hit the broker. #}
+<div id="smoke-execute-modal" class="execution-modal" hidden
+     aria-hidden="true" role="dialog"
+     aria-labelledby="smoke-execute-modal-title">
+  <div class="execution-modal-backdrop" data-close-modal></div>
+  <div class="execution-modal-panel" role="document">
+    <h3 id="smoke-execute-modal-title" class="execution-modal-title">
+      Execute Smoke Test
+    </h3>
+    <p class="execution-modal-copy">
+      This will submit a real BUY entry and SELL exit for 1 MES on the
+      selected Topstep account. Use only when execution is armed and
+      you intend to verify order routing end-to-end.
+    </p>
+    <p class="execution-modal-account">
+      Account:
+      <code>{{ selected_account_id or '—' }}</code>
+      {% if broker_account_card.selected_account_name %}
+        <span class="muted">/</span>
+        <span>{{ broker_account_card.selected_account_name }}</span>
+      {% endif %}
+    </p>
+    <p class="execution-modal-instructions">
+      Type <code>smoke</code> and check the acknowledgement box to
+      submit.
+    </p>
+    <form id="form-smoke-execute" class="execution-modal-form">
+      <label for="smoke_confirm_phrase">
+        Confirmation phrase
+      </label>
+      <input id="smoke_confirm_phrase" name="confirm" type="text"
+             class="dark-input" autocomplete="off"
+             placeholder="smoke" />
+      <label class="execution-modal-ack">
+        <input id="smoke_ack" type="checkbox" name="ack" />
+        I understand this will place and exit 1 MES on the selected
+        Topstep account.
+      </label>
+      <div class="execution-modal-actions">
+        <button type="button" class="btn" data-close-modal>Cancel</button>
+        <button type="submit" id="btn-smoke-execute-confirm"
+                class="btn btn-danger">
+          Submit smoke test
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ---- Toast container. JS targets ``#execution-toast`` and toggles
+       enter/exit classes for the slide-in/out animation. #}
+<div id="execution-toast" class="execution-toast" role="status"
+     aria-live="polite" hidden></div>
+
 {# Trading session + broker status at a glance. Mode/broker also live
    in the Execution card above — these stay for the at-a-glance row. #}
 <section class="grid grid-3 section">
@@ -199,95 +260,12 @@
   </div>
 </section>
 
-{# Broker account card. Open positions/orders live here now — the old
-   separate "Open positions" card has been removed. #}
-<section class="section">
-  <div class="card">
-    <div class="card-row">
-      <div class="card-label">Broker account · {{ broker_account_card.provider }}</div>
-      {% if broker_account_card.broker_connected %}
-        <span class="badge badge-good">connected</span>
-      {% elif broker_account_card.not_implemented %}
-        <span class="badge badge-warn">not implemented</span>
-      {% else %}
-        <span class="badge badge-bad">offline</span>
-      {% endif %}
-    </div>
-    <div class="grid grid-4" style="margin-top: 8px;">
-      <div>
-        <div class="card-label">Selected account</div>
-        <div class="card-value sm mono">{{ broker_account_card.selected_account_id or '—' }}</div>
-        <div class="card-sub">{{ broker_account_card.selected_account_name or '—' }}</div>
-      </div>
-      <div>
-        <div class="card-label">Balance</div>
-        <div class="card-value sm">
-          {% if broker_account_card.balance is not none %}
-            {{ '%.2f' % broker_account_card.balance }}
-          {% else %}
-            —
-          {% endif %}
-        </div>
-        <div class="card-sub">
-          {% if broker_account_card.can_trade is true %}
-            <span class="badge badge-good plain">canTrade</span>
-          {% elif broker_account_card.can_trade is false %}
-            <span class="badge badge-bad plain">noTrade</span>
-          {% else %}
-            <span class="muted">canTrade unknown</span>
-          {% endif %}
-          {% if broker_account_card.is_visible is false %}
-            <span class="badge badge-warn plain">hidden</span>
-          {% endif %}
-        </div>
-      </div>
-      <div>
-        <div class="card-label">Open positions</div>
-        <div class="card-value sm">
-          {% if broker_account_card.positions_not_implemented %}
-            <span class="muted">n/a</span>
-          {% else %}
-            {{ broker_account_card.positions_count }}
-          {% endif %}
-        </div>
-        <div class="card-sub">
-          {% if broker_account_card.positions_not_implemented %}
-            {{ broker_account_card.provider }} positions endpoint not implemented yet
-          {% else %}
-            live broker positions
-          {% endif %}
-        </div>
-      </div>
-      <div>
-        <div class="card-label">Orders</div>
-        <div class="card-value sm">
-          {% if broker_account_card.orders_not_implemented %}
-            <span class="muted">n/a</span>
-          {% else %}
-            {{ broker_account_card.orders_count }}
-          {% endif %}
-        </div>
-        <div class="card-sub">
-          {% if broker_account_card.orders_not_implemented %}
-            {{ broker_account_card.provider }} orders endpoint not implemented yet
-          {% else %}
-            recent broker orders
-          {% endif %}
-        </div>
-      </div>
-    </div>
-    <div class="card-sub" style="margin-top: 8px;">
-      auth: <code>{{ broker_account_card.auth_status or '—' }}</code>
-      {% if broker_account_card.token_cached %}
-        · token cached
-        {% if broker_account_card.token_expires_at %}
-          · expires <code>{{ broker_account_card.token_expires_at }}</code>
-        {% endif %}
-      {% endif %}
-      · <a href="/settings/broker">broker settings</a>
-    </div>
-  </div>
-</section>
+{# Account snapshot UI removed. The at-a-glance broker status above
+   already shows connection state + selected account; backend
+   endpoints /api/realtime/state, /api/broker/positions, and
+   /api/broker/orders remain available. Detailed account/orders/
+   positions views live under Metrics → Past orders and
+   /settings/broker. #}
 
 {# Ticker Watch — honest placeholder.
    Realtime price feed (ProjectX market hub) is not implemented yet.
@@ -368,7 +346,7 @@
       <span class="hint">latest 10 from the active adapter</span>
     </div>
     {% if recent_orders %}
-      <div class="table-wrap" style="margin-top: 6px;">
+      <div class="table-wrap table-scroll hide-on-mobile" style="margin-top: 6px;">
         <table class="mini">
           <thead>
             <tr>
@@ -401,6 +379,28 @@
             {% endfor %}
           </tbody>
         </table>
+      </div>
+      <div class="mobile-card-list show-on-mobile" style="margin-top: 6px;">
+        {% for o in recent_orders %}
+          <div class="mobile-card-row">
+            <dl>
+              <dt>Time</dt><dd class="mono">{{ o.received_at }}</dd>
+              <dt>Symbol</dt><dd><strong>{{ o.symbol or '—' }}</strong></dd>
+              <dt>Action</dt><dd>{{ o.action or '—' }}</dd>
+              <dt>Qty</dt><dd>{{ o.contracts if o.contracts is not none else '—' }}</dd>
+              <dt>Price</dt><dd>{{ '%.4f' % o.price if o.price is not none else '—' }}</dd>
+              <dt>Decision</dt>
+              <dd>
+                {% if o.decision == 'accepted' %}
+                  <span class="badge badge-good">accepted</span>
+                {% else %}
+                  <span class="badge badge-bad">{{ o.decision or 'rejected' }}</span>
+                {% endif %}
+              </dd>
+              <dt>Order ID</dt><dd class="mono">{{ o.order_id or '—' }}</dd>
+            </dl>
+          </div>
+        {% endfor %}
       </div>
     {% elif recent_orders_not_implemented %}
       <div class="empty"><strong>n/a</strong>active provider does not expose order history yet</div>
@@ -472,13 +472,19 @@
   var disableBtn = document.getElementById('btn-disable-exec');
   var flattenBtn = document.getElementById('btn-flatten-all');
   var smokeBtn = document.getElementById('btn-smoke-test');
+  var smokeExecuteBtn = document.getElementById('btn-smoke-test-execute');
   var smokeHint = document.getElementById('execution-smoke-hint');
+  var smokeExecModal = document.getElementById('smoke-execute-modal');
+  var smokeExecForm = document.getElementById('form-smoke-execute');
+  var smokeExecPhrase = document.getElementById('smoke_confirm_phrase');
+  var smokeExecAck = document.getElementById('smoke_ack');
   var initialMode = card.dataset.executionMode || 'paper';
   var liveModal = document.getElementById('live-execution-modal');
   var liveForm = document.getElementById('form-live-engage');
   var liveConfirmInput = document.getElementById('live_confirm_phrase');
   var liveAckInput = document.getElementById('live_account_ack');
   var livePhrase = card.dataset.liveConfirmPhrase || 'engage';
+  var toastEl = document.getElementById('execution-toast');
 
   var STATE_CLASSES = [
     'execution-dry-run',
@@ -486,6 +492,7 @@
     'execution-live-locked',
     'execution-live-engaging',
     'execution-live-armed',
+    'execution-live-disengaging',
     'execution-kill-switch-active',
     'execution-disabled',
     'execution-transitioning',
@@ -520,9 +527,45 @@
     card.classList.add('execution-transitioning');
     card.classList.add('execution-' + state);
     card.dataset.executionState = state;
+    // Persistent armed-checkmark hook on the status label.
+    if (statusText) {
+      if (state === 'live-armed') {
+        statusText.classList.add('execution-status-check-visible');
+      } else {
+        statusText.classList.remove('execution-status-check-visible');
+      }
+    }
     window.setTimeout(function () {
       card.classList.remove('execution-transitioning');
     }, 350);
+  }
+
+  // ---- Toast helper. Slides in, holds, slides out. Idempotent — a
+  // new toast cancels any in-flight enter/exit cycle. ----
+  var _toastTimers = [];
+  function clearToastTimers() {
+    _toastTimers.forEach(function (t) { window.clearTimeout(t); });
+    _toastTimers = [];
+  }
+  function showToast(message, kind) {
+    if (!toastEl || !message) return;
+    clearToastTimers();
+    toastEl.textContent = message;
+    toastEl.classList.remove('toast-bad', 'toast-info', 'execution-toast-exit');
+    if (kind === 'bad') toastEl.classList.add('toast-bad');
+    else if (kind === 'info') toastEl.classList.add('toast-info');
+    toastEl.hidden = false;
+    // Force a reflow so the enter transition actually runs.
+    void toastEl.offsetWidth;
+    toastEl.classList.add('execution-toast-enter');
+    _toastTimers.push(window.setTimeout(function () {
+      toastEl.classList.remove('execution-toast-enter');
+      toastEl.classList.add('execution-toast-exit');
+      _toastTimers.push(window.setTimeout(function () {
+        toastEl.classList.remove('execution-toast-exit');
+        toastEl.hidden = true;
+      }, 360));
+    }, 2200));
   }
 
   function setBusy(busy) {
@@ -558,6 +601,15 @@
     var dryRun = modeSelect && modeSelect.value === 'paper';
     smokeBtn.hidden = !dryRun;
     if (smokeHint) smokeHint.hidden = !dryRun;
+  }
+
+  // The "Execute smoke test" button is only useful once execution is
+  // armed (demo or live). Otherwise we hide it — dry-run preview is
+  // the only sane click while the broker is locked.
+  function syncSmokeExecuteVisibility() {
+    if (!smokeExecuteBtn) return;
+    var armed = card.dataset.executionArmed === 'true';
+    smokeExecuteBtn.hidden = !armed;
   }
 
   function openLiveModal() {
@@ -596,7 +648,16 @@
   function applyMode(mode) {
     setBusy(true);
     clearFeedback();
-    setStatusText(mode === 'paper' ? 'Applying dry-run…' : 'Applying…');
+    var wasLive = card.dataset.executionState === 'live-armed';
+    setStatusText(mode === 'paper'
+      ? (wasLive ? 'Disengaging live…' : 'Applying dry-run…')
+      : 'Applying…');
+    // Smooth live → dry-run transition: red border retreats while we
+    // call the backend; the final dry-run state lands after the fade
+    // settles.
+    if (mode === 'paper' && wasLive) {
+      setState('live-disengaging');
+    }
     return fetch('/api/execution/apply-mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -611,11 +672,32 @@
         setBusy(false);
         if (resp.ok && resp.body && resp.body.ok) {
           if (mode === 'paper') {
-            setState('dry-run');
-            setStatusText('Dry-run');
-            showFeedback('Dry-run selected.', 'ok', null);
+            // Hold the disengage animation visible long enough to be
+            // legible, then fade in the dry-run state + breathing.
+            var holdMs = wasLive ? 1500 : 200;
+            window.setTimeout(function () {
+              setState('dry-run');
+              card.classList.add('execution-dryrun-enter');
+              window.setTimeout(function () {
+                card.classList.remove('execution-dryrun-enter');
+                card.classList.add('execution-dryrun-active');
+              }, 1400);
+              setStatusText('Dry-run');
+              if (wasLive) {
+                showToast('Live execution disengaged', 'info');
+              }
+              showFeedback('Dry-run selected.', 'ok', null);
+              // Reload only after the visible transition lands so the
+              // user actually sees it.
+              window.setTimeout(function () {
+                window.location.reload();
+              }, wasLive ? 1100 : 400);
+            }, holdMs);
+          } else {
+            window.setTimeout(function () {
+              window.location.reload();
+            }, 400);
           }
-          window.setTimeout(function () { window.location.reload(); }, 400);
         } else {
           var reason = (resp.body && (resp.body.message || resp.body.status))
             || 'apply failed';
@@ -648,7 +730,9 @@
       if (!window.confirm('Disengage execution? This returns the app to a safe dry-run state.')) return;
       setBusy(true);
       clearFeedback();
-      setStatusText('Disengaging…');
+      var wasLive = card.dataset.executionState === 'live-armed';
+      setStatusText(wasLive ? 'Disengaging live…' : 'Disengaging…');
+      if (wasLive) setState('live-disengaging');
       fetch('/api/execution/disable', { method: 'POST' })
         .then(function (r) {
           return r.json().then(function (body) {
@@ -658,10 +742,23 @@
         .then(function (resp) {
           setBusy(false);
           if (resp.ok && resp.body && resp.body.ok) {
-            setState('dry-run');
-            setStatusText('Dry-run');
-            showFeedback('Execution disengaged.', 'ok', null);
-            window.setTimeout(function () { window.location.reload(); }, 400);
+            var holdMs = wasLive ? 1500 : 200;
+            window.setTimeout(function () {
+              setState('dry-run');
+              card.classList.add('execution-dryrun-enter');
+              window.setTimeout(function () {
+                card.classList.remove('execution-dryrun-enter');
+                card.classList.add('execution-dryrun-active');
+              }, 1400);
+              setStatusText('Dry-run');
+              if (wasLive) {
+                showToast('Live execution disengaged', 'info');
+              }
+              showFeedback('Execution disengaged.', 'ok', null);
+              window.setTimeout(function () {
+                window.location.reload();
+              }, wasLive ? 1100 : 400);
+            }, holdMs);
           } else {
             var reason = (resp.body && (resp.body.message || resp.body.status))
               || 'disengage failed';
@@ -768,31 +865,76 @@
   }
 
   if (smokeBtn) {
+    // Default Smoke Test click → safe dry-run preview, always. The
+    // execute path requires the dedicated modal below.
     smokeBtn.addEventListener('click', function () {
-      // First click → dry-run preview. If demo/live execution is
-      // already armed, prompt the operator for a second confirmation
-      // before placing real orders. Cancel keeps the dry-run safe path.
-      var armed = card.dataset.executionArmed === 'true';
-      if (armed) {
-        var phrase = window.prompt(
-          'Execution is armed. Type "smoke" to submit a real BUY entry and SELL exit on MES1! (1 contract). Cancel to run a dry-run preview instead.'
-        );
-        if (phrase === null) {
-          runSmokeTest(false, '');
-          return;
-        }
-        if ((phrase || '').trim() === 'smoke') {
-          runSmokeTest(true, 'smoke');
-          return;
-        }
+      runSmokeTest(false, '');
+    });
+  }
+
+  function openSmokeExecuteModal() {
+    if (!smokeExecModal) return;
+    smokeExecModal.hidden = false;
+    smokeExecModal.setAttribute('aria-hidden', 'false');
+    if (smokeExecPhrase) {
+      smokeExecPhrase.value = '';
+      window.setTimeout(function () { smokeExecPhrase.focus(); }, 0);
+    }
+    if (smokeExecAck) smokeExecAck.checked = false;
+  }
+
+  function closeSmokeExecuteModal() {
+    if (!smokeExecModal) return;
+    smokeExecModal.hidden = true;
+    smokeExecModal.setAttribute('aria-hidden', 'true');
+  }
+
+  if (smokeExecModal) {
+    smokeExecModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
+      el.addEventListener('click', function () { closeSmokeExecuteModal(); });
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !smokeExecModal.hidden) closeSmokeExecuteModal();
+    });
+  }
+
+  if (smokeExecuteBtn) {
+    smokeExecuteBtn.addEventListener('click', function () {
+      if (card.dataset.executionArmed !== 'true') {
         showFeedback(
-          'Smoke test cancelled: confirmation must equal "smoke" exactly.',
-          'warn',
+          'Execute smoke test refused: execution is not armed.',
+          'bad',
           null
         );
         return;
       }
-      runSmokeTest(false, '');
+      openSmokeExecuteModal();
+    });
+  }
+
+  if (smokeExecForm) {
+    smokeExecForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var phrase = (smokeExecPhrase && smokeExecPhrase.value || '').trim();
+      var ack = !!(smokeExecAck && smokeExecAck.checked);
+      if (phrase !== 'smoke') {
+        showFeedback(
+          'Smoke test cancelled: confirmation must equal "smoke" exactly.',
+          'bad',
+          null
+        );
+        return;
+      }
+      if (!ack) {
+        showFeedback(
+          'Smoke test cancelled: please tick the acknowledgement box.',
+          'bad',
+          null
+        );
+        return;
+      }
+      closeSmokeExecuteModal();
+      runSmokeTest(true, 'smoke');
     });
   }
 
@@ -833,10 +975,22 @@
         if (success) {
           setState('live-armed');
           setStatusText('Live armed', { armed: true });
-          showFeedback('Live execution armed.', 'ok', null);
-          // Hold the live-armed-enter animation visible briefly before
-          // reload so the operator sees the success cue land.
-          window.setTimeout(function () { window.location.reload(); }, 1400);
+          // One-shot success glow shimmer overlay.
+          card.classList.add('execution-live-success-flash');
+          window.setTimeout(function () {
+            card.classList.remove('execution-live-success-flash');
+          }, 1300);
+          // Toast replaces the abrupt inline success banner.
+          showToast('Live execution armed', 'ok');
+          // Keep the checkmark up after the entry animation finishes.
+          if (statusText) {
+            window.setTimeout(function () {
+              statusText.classList.add('execution-status-check-visible');
+            }, 1500);
+          }
+          // Reload after the toast settles so the persistent armed UI
+          // re-renders from the server with the check still visible.
+          window.setTimeout(function () { window.location.reload(); }, 2200);
         } else {
           setState('live-locked');
           var reason = (body && (body.message || body.status))
@@ -884,6 +1038,14 @@
   }
 
   syncSmokeVisibility();
+  syncSmokeExecuteVisibility();
+
+  // If the server rendered the card already armed, keep the persistent
+  // checkmark visible so the operator sees the confirmation cue even
+  // after the page reload that follows engagement.
+  if (statusText && card.dataset.executionState === 'live-armed') {
+    statusText.classList.add('execution-status-check-visible');
+  }
 })();
 </script>
 {% endblock %}

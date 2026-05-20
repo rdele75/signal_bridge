@@ -369,28 +369,28 @@ def test_metrics_past_orders_empty_state_for_topstep(tmp_path, monkeypatch):
 # ----------------------------------------------------------------------
 
 
-def test_broker_page_renders_account_snapshot_panel(tmp_path, monkeypatch):
-    """The polling panel still ships, but is labelled as an account
-    snapshot rather than a realtime price/account-data feed. Realtime
-    ticker price movement is a separate placeholder on the Dashboard."""
+def test_broker_page_no_longer_renders_account_snapshot_panel(
+    tmp_path, monkeypatch
+):
+    """The bulky Account snapshot / Realtime account data block was
+    removed from /settings/broker — the user did not want a snapshot
+    panel here. Backend /api/realtime/state still exists for tooling."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         r = c.get("/settings/broker")
     assert r.status_code == 200
     html = r.text
-    # New label.
-    assert "Account snapshot" in html
-    # Old misleading label is gone.
+    assert "Account snapshot" not in html
     assert "Realtime account data" not in html
-    # The "WebSocket SignalR: not enabled yet" disclaimer must remain
-    # until the SignalR client lands.
-    assert "WebSocket SignalR" in html
-    assert "not enabled yet" in html
-    # Buttons + auto-refresh checkbox still wired.
-    assert "btn-realtime-refresh" in html
-    assert "chk-realtime-autopoll" in html
-    # The shared state endpoint is still referenced.
-    assert "/api/realtime/state" in html
+    # Polling controls / containers must be gone.
+    assert "btn-realtime-refresh" not in html
+    assert "chk-realtime-autopoll" not in html
+    assert 'id="account-snapshot-panel"' not in html
+    # The backend endpoint stays available for tools/tests though — make
+    # sure removing the UI didn't accidentally remove the route.
+    with TestClient(app) as c2:
+        rt = c2.get("/api/realtime/state")
+    assert rt.status_code == 200
 
 
 # ----------------------------------------------------------------------

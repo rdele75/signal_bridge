@@ -262,50 +262,9 @@
   </details>
 </section>
 
-{# ---- Account snapshot — positions/orders poller. Intentionally NOT
-       a realtime price feed; that placeholder lives on the Dashboard
-       under "Ticker Watch". ---- #}
-<section class="card section" id="account-snapshot-panel">
-  <div class="section-head">
-    <h3>Account snapshot</h3>
-    <span class="hint" id="realtime-status">loading…</span>
-  </div>
-  <p class="muted" style="margin: 0 0 8px;">
-    Polls broker positions/orders every {{ realtime.poll_seconds }}s.
-    This is account state, <strong>not</strong> realtime market price —
-    ticker price movement is a separate feature on the Dashboard.
-    <strong>WebSocket SignalR:</strong> not enabled yet.
-  </p>
-  <div class="btn-row">
-    <button id="btn-realtime-refresh" class="btn" type="button">Refresh</button>
-    <label style="margin-left: 10px;">
-      <input id="chk-realtime-autopoll" type="checkbox"
-             data-default="{{ 'true' if realtime.enabled else 'false' }}"
-             data-poll-seconds="{{ realtime.poll_seconds }}" />
-      auto-refresh every {{ realtime.poll_seconds }}s
-    </label>
-  </div>
-  <div class="grid grid-2" style="margin-top: 10px;">
-    <div>
-      <h4 style="margin: 0 0 6px;">Positions</h4>
-      <div id="realtime-positions">
-        <div class="empty"><strong>…</strong>fetching…</div>
-      </div>
-    </div>
-    <div>
-      <h4 style="margin: 0 0 6px;">Open orders</h4>
-      <div id="realtime-orders">
-        <div class="empty"><strong>…</strong>fetching…</div>
-      </div>
-    </div>
-  </div>
-  <script id="realtime-config" type="application/json">
-    {
-      "poll_seconds": {{ realtime.poll_seconds }},
-      "enabled": {{ 'true' if realtime.enabled else 'false' }}
-    }
-  </script>
-</section>
+{# Account snapshot panel removed — bulky UI was not what the operator
+   needs. Backend endpoints /api/realtime/state, /api/broker/positions,
+   and /api/broker/orders are still available for tooling/tests. #}
 
 {# ---- Test connection ---- #}
 <section class="card section">
@@ -318,7 +277,7 @@
     Topstep runs a real <code>/api/Auth/loginKey</code> + <code>/api/Account/search</code> against ProjectX —
     no orders are placed.
   </p>
-  <div class="btn-row">
+  <div class="btn-row mobile-actions">
     <button id="btn-test" class="btn btn-primary">Test {{ active_broker_provider }} connection</button>
     <button id="btn-topstep-auth" class="btn">Test Topstep auth</button>
     <button id="btn-topstep-accounts" class="btn">Fetch accounts</button>
@@ -434,9 +393,9 @@ function _renderAccountsList(body) {
   wrap.innerHTML = '<h4 style="margin: 0 0 6px;">Active Topstep accounts</h4>';
   accounts.forEach((a) => {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border,#333);';
+    row.className = 'topstep-account-row';
     const label = document.createElement('span');
-    label.style.flex = '1';
+    label.className = 'topstep-account-label';
     const bal = (a.balance !== null && a.balance !== undefined) ? a.balance : '—';
     const ct = a.can_trade === true ? 'canTrade' : (a.can_trade === false ? 'noTrade' : '');
     label.innerHTML = '<code>' + (a.id || '?') + '</code> · ' + (a.name || '(unnamed)')
@@ -484,100 +443,5 @@ if (_btnAccts) _btnAccts.addEventListener('click', async () => {
   if (body) _renderAccountsList(body);
 });
 
-// -- Account snapshot panel (polling) --
-(function () {
-  const cfgEl = document.getElementById('realtime-config');
-  if (!cfgEl) return;
-  const cfg = JSON.parse(cfgEl.textContent);
-  const pollMs = Math.max(1, parseInt(cfg.poll_seconds, 10) || 5) * 1000;
-  const status = document.getElementById('realtime-status');
-  const posBody = document.getElementById('realtime-positions');
-  const ordBody = document.getElementById('realtime-orders');
-  const btn = document.getElementById('btn-realtime-refresh');
-  const auto = document.getElementById('chk-realtime-autopoll');
-  if (auto) auto.checked = !!cfg.enabled;
-  let timer = null;
-
-  function _rowsTable(rows, columns) {
-    if (!rows || !rows.length) {
-      return '<div class="empty"><strong>none</strong>nothing to show.</div>';
-    }
-    const head = '<div class="table-wrap"><table class="mini"><thead><tr>'
-      + columns.map((c) => '<th>' + c.label + '</th>').join('')
-      + '</tr></thead><tbody>';
-    const body = rows.map((r) => '<tr>'
-      + columns.map((c) => {
-          const value = r[c.key];
-          return '<td>' + (value == null ? '—' : String(value)) + '</td>';
-        }).join('')
-      + '</tr>').join('');
-    return head + body + '</tbody></table></div>';
-  }
-
-  function _render(state) {
-    if (state.positions.not_implemented) {
-      posBody.innerHTML = '<div class="empty"><strong>n/a</strong>'
-        + (state.positions.message || 'positions not implemented for this broker.')
-        + '</div>';
-    } else if (!state.positions.ok) {
-      posBody.innerHTML = '<div class="empty"><strong>error</strong>'
-        + (state.positions.message || 'positions fetch failed.')
-        + '</div>';
-    } else {
-      posBody.innerHTML = _rowsTable(state.positions.rows, [
-        { key: 'id', label: 'ID' },
-        { key: 'contractId', label: 'Contract' },
-        { key: 'size', label: 'Size' },
-        { key: 'averagePrice', label: 'Avg price' },
-      ]);
-    }
-    if (state.orders.not_implemented) {
-      ordBody.innerHTML = '<div class="empty"><strong>n/a</strong>'
-        + (state.orders.message || 'orders not implemented for this broker.')
-        + '</div>';
-    } else if (!state.orders.ok) {
-      ordBody.innerHTML = '<div class="empty"><strong>error</strong>'
-        + (state.orders.message || 'orders fetch failed.')
-        + '</div>';
-    } else {
-      ordBody.innerHTML = _rowsTable(state.orders.rows, [
-        { key: 'id', label: 'ID' },
-        { key: 'contractId', label: 'Contract' },
-        { key: 'side', label: 'Side' },
-        { key: 'size', label: 'Size' },
-        { key: 'status', label: 'Status' },
-      ]);
-    }
-    if (status) {
-      const stamp = state.refreshed_at
-        ? new Date(state.refreshed_at).toLocaleTimeString()
-        : '—';
-      status.textContent = 'Last refreshed at ' + stamp
-        + ' · mode: ' + state.realtime_mode;
-    }
-  }
-
-  async function _refresh() {
-    try {
-      const r = await fetch('/api/realtime/state');
-      const body = await r.json();
-      _render(body);
-    } catch (err) {
-      if (status) status.textContent = 'refresh failed: ' + err;
-    }
-  }
-
-  function _restartTimer() {
-    if (timer) { window.clearInterval(timer); timer = null; }
-    if (auto && auto.checked) {
-      timer = window.setInterval(_refresh, pollMs);
-    }
-  }
-
-  if (btn) btn.addEventListener('click', _refresh);
-  if (auto) auto.addEventListener('change', _restartTimer);
-  _refresh();
-  _restartTimer();
-})();
 </script>
 {% endblock %}

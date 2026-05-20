@@ -25,7 +25,7 @@
     <span class="hint">edit, add, or remove. Save to write <code>{{ symbols_path }}</code>.</span>
   </div>
   <form method="post" action="/settings/symbols" class="form" id="symbols-form">
-    <div class="table-wrap">
+    <div class="table-wrap table-scroll">
       <table class="data" id="symbols-table">
         <thead>
           <tr>
@@ -80,18 +80,16 @@
     Search ProjectX for the active contract id (e.g. <code>NQ</code> or <code>ES</code>) and paste it into the
     Topstep column above. Requires Topstep credentials configured under Broker settings.
   </p>
-  <div class="form-row" style="display: flex; gap: 8px; align-items: end; flex-wrap: wrap;">
-    <div style="flex: 1; min-width: 200px;">
+  <div class="form-row contract-search-row">
+    <div class="contract-search-input">
       <label for="contract-search">Search text</label>
       <input id="contract-search" type="text" placeholder="MNQ, MES, NQ, ES..." />
     </div>
-    <div style="display: flex; align-items: center; gap: 6px; padding-bottom: 10px;">
+    <label class="contract-search-live">
       <input id="contract-live" type="checkbox" />
-      <label for="contract-live" style="margin: 0;">live=true</label>
-    </div>
-    <div style="padding-bottom: 6px;">
-      <button type="button" class="btn btn-primary" id="btn-contract-search">Search Topstep Contracts</button>
-    </div>
+      <span>live=true</span>
+    </label>
+    <button type="button" class="btn btn-primary" id="btn-contract-search">Search Topstep Contracts</button>
   </div>
   <div id="contract-results" style="margin-top: 12px;"></div>
 </section>
@@ -151,7 +149,7 @@
       return;
     }
     var wrap = document.createElement('div');
-    wrap.className = 'table-wrap';
+    wrap.className = 'table-wrap table-scroll';
     var html = '<table class="data"><thead><tr>'
       + '<th>Contract ID</th><th>Name</th><th>Description</th>'
       + '<th>Tick Size</th><th>Tick Value</th><th>Active</th><th>Symbol ID</th>'
