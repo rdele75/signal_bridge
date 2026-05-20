@@ -856,32 +856,38 @@ details.collapsible > summary {
 }
 details.collapsible > summary::-webkit-details-marker { display: none; }
 details.collapsible > summary {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 6px 4px 6px 4px;
+  padding: 6px 28px 6px 4px;
   border-radius: var(--radius-sm);
 }
 details.collapsible > summary:hover {
   background: rgba(124,140,255,0.06);
 }
 /* Visible chevron indicator. Right-pointing when collapsed, down-
-   pointing when expanded — matches the sidebar nav-group affordance. */
+   pointing when expanded — matches the sidebar nav-group affordance.
+   Pinned to the top-right via absolute positioning so the chevron
+   stays put when the section hint wraps to a second line on narrow
+   viewports. */
 details.collapsible > summary::after {
   content: "▸";
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--accent);
   font-size: 14px;
   font-weight: 700;
-  margin-left: 8px;
   flex-shrink: 0;
   transition: transform 0.15s ease;
-  transform: rotate(0deg);
   display: inline-block;
+  line-height: 1;
 }
 details.collapsible[open] > summary::after {
   content: "▾";
-  transform: rotate(0deg);
 }
 details.collapsible > summary:hover h3 { color: var(--accent); }
 .collapsible-body {
