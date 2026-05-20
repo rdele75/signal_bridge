@@ -2569,6 +2569,116 @@ def create_app() -> FastAPI:
         return _safe_broker_call("get_positions")
 
     @app.get(
+        "/api/broker/positions/reconcile",
+        dependencies=[Depends(require_admin_api)],
+    )
+    def api_broker_positions_reconcile() -> JSONResponse:
+        """Report differences between broker and journal positions.
+
+        Read-only: never auto-corrects. The operator decides what to do
+        when the two disagree (typical causes: manual close in the
+        broker UI, broker EOD auto-flatten, or — for the Topstep
+        adapter today — the journal never wrote a position row for a
+        topstep submission).
+
+        Dedupe is by the raw symbol key, so a TradingView ticker in
+        the journal (``MES1!``) and a ProjectX contract id from the
+        broker (``CON.F.US.MES.M26``) appear in separate buckets even
+        when they refer to the same instrument. That's intentional —
+        the goal is to surface mismatches for human review, not
+        silently reconcile them.
+        """
+        broker_resp: dict[str, Any] = _safe_broker_call("get_positions")
+        journal_rows = journal.list_open_positions()
+
+        # Build symbol → qty maps for both sides. Quantity uses ``size``
+        # for the broker side (ProjectX schema) with fallbacks for
+        # other shapes; the journal uses ``quantity``.
+        broker_positions: list[dict[str, Any]] = []
+        broker_qty: dict[str, int] = {}
+        if (
+            broker_resp.get("ok") is True
+            and isinstance(broker_resp.get("positions"), list)
+        ):
+            for pos in broker_resp["positions"]:
+                if not isinstance(pos, dict):
+                    continue
+                key = ""
+                for k in ("symbol", "contractId", "contract_id"):
+                    if pos.get(k):
+                        key = str(pos[k])
+                        break
+                if not key:
+                    continue
+                qty_raw = (
+                    pos.get("quantity")
+                    if pos.get("quantity") is not None
+                    else pos.get("size")
+                )
+                try:
+                    qty = int(qty_raw) if qty_raw is not None else 0
+                except (TypeError, ValueError):
+                    qty = 0
+                if qty == 0:
+                    continue
+                broker_positions.append({"symbol": key, "quantity": qty})
+                broker_qty[key] = qty
+
+        journal_positions: list[dict[str, Any]] = []
+        journal_qty: dict[str, int] = {}
+        for row in journal_rows:
+            sym = row.get("symbol")
+            qty = int(row.get("quantity") or 0)
+            if not sym or qty == 0:
+                continue
+            journal_positions.append({"symbol": str(sym), "quantity": qty})
+            journal_qty[str(sym)] = qty
+
+        differences: list[dict[str, Any]] = []
+        for sym in sorted(set(broker_qty) | set(journal_qty)):
+            b = broker_qty.get(sym)
+            j = journal_qty.get(sym)
+            if b is None:
+                differences.append(
+                    {
+                        "symbol": sym,
+                        "kind": "not_in_broker",
+                        "journal_quantity": j,
+                    }
+                )
+            elif j is None:
+                differences.append(
+                    {
+                        "symbol": sym,
+                        "kind": "not_in_journal",
+                        "broker_quantity": b,
+                    }
+                )
+            elif b != j:
+                differences.append(
+                    {
+                        "symbol": sym,
+                        "kind": "qty_mismatch",
+                        "broker_quantity": b,
+                        "journal_quantity": j,
+                    }
+                )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "provider": broker.provider,
+                "broker_reachable": bool(broker_resp.get("ok")),
+                "broker_status": broker_resp.get("status"),
+                "broker_positions": broker_positions,
+                "journal_positions": journal_positions,
+                "differences": differences,
+                "in_sync": not differences,
+            },
+        )
+
+    @app.get(
         "/api/broker/orders", dependencies=[Depends(require_admin_api)]
     )
     def api_broker_orders() -> dict[str, Any]:
