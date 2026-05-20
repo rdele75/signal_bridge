@@ -95,6 +95,58 @@ def test_webhook_handler_short_circuit_accepts_with_valid_secret(client):
     assert body["decision"] == "webhook_test"
 
 
+def test_webhook_test_short_circuit_with_minimal_payload(client):
+    """The synthetic test payload omits symbol/action/contracts. The
+    short-circuit must fire BEFORE schema validation so a minimal
+    payload still gets accepted (regression for the bug operator
+    hit where the schema check rejected the minimal payload as
+    malformed)."""
+    r = client.post(
+        "/webhooks/tradingview",
+        json={"webhook_test": True, "secret": SECRET},
+        # No symbol, no action, no contracts — schema would reject.
+    )
+    body = r.json()
+    assert body["accepted"] is True
+    assert body["decision"] == "webhook_test"
+    assert body.get("rejection_reason") is None
+
+
+def test_webhook_test_short_circuit_does_not_bypass_secret(client):
+    """The test flag is a probe, not an auth bypass. A wrong secret
+    must still return invalid_secret, never webhook_test."""
+    r = client.post(
+        "/webhooks/tradingview",
+        json={"webhook_test": True, "secret": "wrong-value-99"},
+    )
+    body = r.json()
+    assert body["accepted"] is False
+    assert body["rejection_reason"] == "invalid_secret"
+
+
+def test_webhook_test_short_circuit_ignores_extra_fields(client):
+    """Even with extra trade-related fields, webhook_test=true still
+    short-circuits — no broker call, no journal write."""
+    pre = client.app.state.journal.list_recent_signals(limit=50)
+    r = client.post(
+        "/webhooks/tradingview",
+        json={
+            "webhook_test": True,
+            "secret": SECRET,
+            "symbol": "MES1!",
+            "action": "BUY",
+            "contracts": 1,
+        },
+    )
+    body = r.json()
+    assert body["accepted"] is True
+    assert body["decision"] == "webhook_test"
+    post = client.app.state.journal.list_recent_signals(limit=50)
+    assert len(post) == len(pre), (
+        "webhook_test must not write to journal even with extra fields"
+    )
+
+
 def test_tradingview_page_renders_test_webhook_button(client):
     body = client.get("/tradingview").text
     assert 'id="btn-test-webhook"' in body

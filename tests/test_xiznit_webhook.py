@@ -258,13 +258,19 @@ def test_xiznit_update_sl_without_contracts_or_price_accepted(client):
 
 
 def test_xiznit_missing_secret_rejected(client):
+    """A request with no body secret AND no query/header secret is
+    rejected as invalid_secret. The bugfix pass unified the
+    missing-secret / wrong-secret paths into a single
+    ``invalid_secret`` rejection since both have the same operator
+    meaning (auth failed) and the centralised secret check at the
+    top of handle() doesn't differentiate."""
     r = client.post(
         f"{WEBHOOK}?symbol=MES1!",
         json={"action": "buy", "qty": 1, "entry": 5000.0, "order_id": "ns1"},
     )
     body = r.json()
     assert body["accepted"] is False
-    assert body["rejection_reason"] == "missing_secret"
+    assert body["rejection_reason"] == "invalid_secret"
 
 
 def test_xiznit_invalid_secret_rejected(client):

@@ -123,23 +123,26 @@ class WebhookHandler:
                 rejection_reason="malformed_payload",
             )
 
-        # Special case: ``webhook_test=true`` short-circuits before
-        # the risk engine, broker, or journal touch the request. Lets
-        # the operator probe webhook reachability + signature handling
-        # from the TradingView page without accidentally placing
-        # orders. Requires a valid secret; otherwise the request is
-        # rejected the same way a real alert would be.
-        if raw_payload.get("webhook_test") is True:
-            provided = str(
-                raw_payload.get("secret") or request_secret or ""
-            )
-            expected = self.settings.webhook_secret or ""
-            if expected and hmac.compare_digest(provided, expected):
-                log.info("webhook test short-circuit accepted")
-                return WebhookResponse(
-                    accepted=True,
-                    decision="webhook_test",
-                    rejection_reason=None,
+        # 2. Constant-time secret check, lifted to the top so the
+        # webhook_test short-circuit and the downstream generic /
+        # xiznit flows all share a single validation path. Body
+        # ``secret`` wins; query / header ``request_secret`` is the
+        # fallback (xiznit native alerts can't carry a body secret).
+        provided_secret = str(
+            raw_payload.get("secret") or request_secret or ""
+        )
+        expected_secret = self.settings.webhook_secret or ""
+        secret_ok = bool(expected_secret) and hmac.compare_digest(
+            provided_secret, expected_secret
+        )
+        if not secret_ok:
+            # webhook_test failures don't journal — they're probes,
+            # not signals — but every other path still records the
+            # rejection so the operator can see auth misconfig in
+            # the log surface.
+            if raw_payload.get("webhook_test") is not True:
+                self._record_rejection(
+                    raw=raw_payload, reason="invalid_secret"
                 )
             return WebhookResponse(
                 accepted=False,
@@ -147,6 +150,18 @@ class WebhookHandler:
                 rejection_reason="invalid_secret",
             )
 
+        # 3. ``webhook_test=true`` short-circuit. Secret already
+        # validated above; this returns immediately so no schema
+        # validation, risk-engine, broker, or journal write happens.
+        if raw_payload.get("webhook_test") is True:
+            log.info("webhook test short-circuit accepted")
+            return WebhookResponse(
+                accepted=True,
+                decision="webhook_test",
+                rejection_reason=None,
+            )
+
+        # 4. Dispatch to schema validation + flow-specific handling.
         payload_type = detect_payload_type(raw_payload)
         if payload_type == "generic_signalbridge":
             return self._handle_generic(raw_payload)
@@ -169,7 +184,9 @@ class WebhookHandler:
     # ------------------------------------------------------------------
 
     def _handle_generic(self, raw_payload: dict[str, Any]) -> WebhookResponse:
-        # 2. Required fields must be present and non-empty.
+        # Required fields must be present and non-empty. ``secret`` was
+        # already verified at the top of ``handle()`` — this catches
+        # other missing fields like symbol/action.
         for field in REQUIRED_FIELDS:
             if field not in raw_payload or raw_payload.get(field) in (None, ""):
                 reason = f"missing_required_field: {field}"
@@ -178,7 +195,7 @@ class WebhookHandler:
                     accepted=False, decision="rejected", rejection_reason=reason
                 )
 
-        # 3. Parse via Pydantic. Errors -> malformed.
+        # Parse via Pydantic. Errors -> malformed.
         try:
             alert = TradingViewAlert.model_validate(raw_payload)
         except Exception as exc:  # pragma: no cover - defensive
@@ -186,13 +203,6 @@ class WebhookHandler:
             self._record_rejection(raw=raw_payload, reason=reason)
             return WebhookResponse(
                 accepted=False, decision="rejected", rejection_reason=reason
-            )
-
-        # 4. Constant-time secret check.
-        if not hmac.compare_digest(alert.secret, self.settings.webhook_secret):
-            self._record_rejection(raw=raw_payload, reason="invalid_secret")
-            return WebhookResponse(
-                accepted=False, decision="rejected", rejection_reason="invalid_secret"
             )
 
         # 5. Normalize action.
@@ -289,30 +299,9 @@ class WebhookHandler:
         request_secret: Optional[str],
         query_symbol: Optional[str],
     ) -> WebhookResponse:
-        # The Xiznit strategy controls the JSON body, so the secret has
-        # to come from the request envelope (query string or header).
-        # Body ``secret`` (rare in this shape) still takes precedence so
-        # tests/curl can drive the path without restating URL params.
-        body_secret = raw_payload.get("secret")
-        candidate_secret = (
-            body_secret
-            if isinstance(body_secret, str) and body_secret
-            else request_secret
-        )
-        if not isinstance(candidate_secret, str) or not candidate_secret:
-            self._record_rejection(raw=raw_payload, reason="missing_secret")
-            return WebhookResponse(
-                accepted=False,
-                decision="rejected",
-                rejection_reason="missing_secret",
-            )
-        if not hmac.compare_digest(candidate_secret, self.settings.webhook_secret):
-            self._record_rejection(raw=raw_payload, reason="invalid_secret")
-            return WebhookResponse(
-                accepted=False,
-                decision="rejected",
-                rejection_reason="invalid_secret",
-            )
+        # Secret already validated at the top of ``handle()`` — body
+        # ``secret`` (if present) or ``request_secret`` from the query
+        # string / header. Anything reaching this point is authenticated.
 
         parsed = parse_xiznit_payload(raw_payload, fallback_symbol=query_symbol)
 
