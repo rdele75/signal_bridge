@@ -236,16 +236,6 @@
 
 <section class="grid grid-2 section">
   <div class="card">
-    <h3>Allowed symbols</h3>
-    <p class="muted mb-1">Alerts with any other <code>symbol</code> are rejected.</p>
-    {% if allowed_symbols %}
-      <ul class="chips">{% for s in allowed_symbols %}<li>{{ s }}</li>{% endfor %}</ul>
-    {% else %}
-      <div class="empty"><strong>empty</strong>add symbols on the Risk page</div>
-    {% endif %}
-  </div>
-
-  <div class="card">
     <h3>Field reference</h3>
     <div class="table-wrap table-scroll">
       <table class="mini">
