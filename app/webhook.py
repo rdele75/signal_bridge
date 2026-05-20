@@ -123,6 +123,30 @@ class WebhookHandler:
                 rejection_reason="malformed_payload",
             )
 
+        # Special case: ``webhook_test=true`` short-circuits before
+        # the risk engine, broker, or journal touch the request. Lets
+        # the operator probe webhook reachability + signature handling
+        # from the TradingView page without accidentally placing
+        # orders. Requires a valid secret; otherwise the request is
+        # rejected the same way a real alert would be.
+        if raw_payload.get("webhook_test") is True:
+            provided = str(
+                raw_payload.get("secret") or request_secret or ""
+            )
+            expected = self.settings.webhook_secret or ""
+            if expected and hmac.compare_digest(provided, expected):
+                log.info("webhook test short-circuit accepted")
+                return WebhookResponse(
+                    accepted=True,
+                    decision="webhook_test",
+                    rejection_reason=None,
+                )
+            return WebhookResponse(
+                accepted=False,
+                decision="rejected",
+                rejection_reason="invalid_secret",
+            )
+
         payload_type = detect_payload_type(raw_payload)
         if payload_type == "generic_signalbridge":
             return self._handle_generic(raw_payload)

@@ -1247,6 +1247,18 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 }
 .flatten-leg-row code { font-size: 12.5px; }
 
+/* TradingView Test webhook inline result. */
+.webhook-test-result {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.webhook-test-detail { margin-top: 6px; font-size: 12px; }
+.webhook-test-detail summary { cursor: pointer; user-select: none; }
+
 /* Apply-button spinner. Visible only when ``.btn-spinner`` is not
    ``hidden``. */
 .btn-spinner {

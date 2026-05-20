@@ -2910,6 +2910,69 @@ def create_app() -> FastAPI:
     )
     app.state.webhook_rate_limiter = webhook_rate_limiter
 
+    @app.post(
+        "/api/tradingview/test-webhook",
+        dependencies=[Depends(require_admin_api)],
+    )
+    def api_tradingview_test_webhook() -> JSONResponse:
+        """Probe the local /webhooks/tradingview surface end-to-end.
+
+        Builds a synthetic ``webhook_test=true`` payload with the
+        currently-configured secret and dispatches it through the
+        same WebhookHandler the real webhook uses. The handler's
+        short-circuit verifies the secret and returns immediately
+        without touching the risk engine, broker, or journal — so
+        the operator can confirm reachability + signature handling
+        without firing a real order.
+
+        Returns a structured envelope the UI can render inline.
+        """
+        secret = (settings.webhook_secret or "").strip()
+        if not secret or secret == "change_me_to_a_long_random_secret":
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "http_status": 0,
+                    "response_body": "",
+                    "message": (
+                        "TRADINGVIEW_WEBHOOK_SECRET is not configured — "
+                        "set a secret before testing the webhook."
+                    ),
+                },
+            )
+        payload = {
+            "webhook_test": True,
+            "secret": secret,
+            "order_id": "webhook-test-",
+        }
+        response = handler.handle(payload)
+        body_dict = response.model_dump(mode="json")
+        if response.accepted and response.decision == "webhook_test":
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": True,
+                    "http_status": 200,
+                    "response_body": json.dumps(body_dict),
+                    "message": (
+                        "Webhook is reachable and accepting valid signatures."
+                    ),
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": False,
+                "http_status": 200,
+                "response_body": json.dumps(body_dict),
+                "message": (
+                    "Webhook test rejected: "
+                    f"{response.rejection_reason or response.decision}"
+                ),
+            },
+        )
+
     @app.post("/webhooks/tradingview")
     async def tradingview_webhook(request: Request):
         if not webhook_rate_limiter.allow():

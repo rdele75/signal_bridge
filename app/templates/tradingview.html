@@ -86,6 +86,28 @@
   </form>
 </section>
 
+{# ---- Test webhook reachability + signature handling. The test
+       POST goes through the same WebhookHandler the real webhook
+       uses; the handler short-circuits on ``webhook_test=true`` so
+       no orders are placed, no risk-engine call happens, and
+       nothing is written to the journal. #}
+<section class="card section">
+  <div class="section-head">
+    <h3>Test webhook</h3>
+    <span class="hint">probes signature handling — no orders placed</span>
+  </div>
+  <p class="muted mb-2">
+    Sends a synthetic <code>webhook_test=true</code> payload through the
+    local webhook handler with the configured secret. Confirms the
+    endpoint is reachable and that signatures validate without
+    routing anything to a broker.
+  </p>
+  <div class="btn-row">
+    <button type="button" id="btn-test-webhook" class="btn">Test webhook connection</button>
+  </div>
+  <div id="test-webhook-result" class="webhook-test-result" hidden></div>
+</section>
+
 <section class="card section">
   <details class="collapsible">
     <summary class="section-head collapsible-toggle">
@@ -159,6 +181,49 @@
 </div>
 
 <script>
+// Test webhook button — sends webhook_test=true through the local
+// /api/tradingview/test-webhook endpoint, which forwards into the
+// real WebhookHandler short-circuit. Result lands inline below the
+// button. Never places orders.
+(function () {
+  var testBtn = document.getElementById('btn-test-webhook');
+  var resultEl = document.getElementById('test-webhook-result');
+  if (!testBtn || !resultEl) return;
+  function escapeHTML(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  testBtn.addEventListener('click', function () {
+    testBtn.disabled = true;
+    resultEl.hidden = false;
+    resultEl.innerHTML = '<p class="muted">probing…</p>';
+    fetch('/api/tradingview/test-webhook', {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (body) {
+        var icon = body && body.ok ? '✓' : '✗';
+        var badge = body && body.ok ? 'badge-good' : 'badge-bad';
+        var html = '<p><span class="badge ' + badge + ' plain">' + icon
+          + '</span> ' + escapeHTML((body && body.message) || 'unknown') + '</p>';
+        if (body && body.response_body) {
+          html += '<details class="webhook-test-detail">'
+            + '<summary>raw response</summary>'
+            + '<pre class="output">' + escapeHTML(body.response_body) + '</pre>'
+            + '</details>';
+        }
+        resultEl.innerHTML = html;
+      })
+      .catch(function (err) {
+        resultEl.innerHTML =
+          '<p class="banner warn">request failed: ' + escapeHTML(String(err)) + '</p>';
+      })
+      .then(function () { testBtn.disabled = false; });
+  });
+})();
+
 (function () {
   var btn = document.getElementById('btn-copy-secret');
   if (!btn) return;
