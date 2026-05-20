@@ -96,7 +96,11 @@ def test_dashboard_execution_card_has_no_redundant_top_right_cluster(client):
 def test_dashboard_execution_card_has_flatten_and_disable_buttons(client):
     body = client.get("/").text
     assert 'id="btn-flatten-all"' in body
-    assert "Exit All / Flatten" in body
+    # Single canonical label across providers — the "(paper only)"
+    # variant from the previous build is gone now that flatten works
+    # on Topstep too.
+    assert "Flatten All Positions" in body
+    assert "(paper only)" not in body
     # Disable Execution was renamed to "Disengage".
     assert 'id="btn-disable-exec"' in body
     assert "Disengage" in body
@@ -273,9 +277,10 @@ def test_flatten_all_paper_flattens_positions(client):
     assert body.get("provider") == "paper"
 
 
-def test_flatten_all_topstep_returns_not_implemented(tmp_path, monkeypatch):
-    """Topstep flatten-all MUST return not_implemented and not submit
-    any live exit orders."""
+def test_flatten_all_topstep_no_ops_in_demo_mode(tmp_path, monkeypatch):
+    """The default Topstep app fixture is unarmed (demo). Flatten-all
+    must return the not_in_live_mode envelope and must NOT issue any
+    closeContract requests against the live account."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         r = c.post("/api/broker/flatten-all")
@@ -283,19 +288,18 @@ def test_flatten_all_topstep_returns_not_implemented(tmp_path, monkeypatch):
     body = r.json()
     assert body["ok"] is False
     assert body["provider"] == "topstep"
-    assert body["not_implemented"] is True
-    assert body["status"] == "not_implemented"
+    assert body["status"] == "not_in_live_mode"
+    assert body["legs"] == []
 
 
-def test_flatten_all_topstep_message_points_at_topstepx_app(tmp_path, monkeypatch):
-    """H4: the not_implemented message must explicitly tell the operator
-    to exit positions in the TopstepX app — the Disengage button doesn't
-    close anything, so a vague 'not implemented' is dangerous."""
+def test_flatten_all_topstep_demo_message_points_at_topstepx(tmp_path, monkeypatch):
+    """Demo-mode flatten envelope still tells the operator to use
+    TopstepX directly for demo positions."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         body = c.post("/api/broker/flatten-all").json()
     msg = body.get("message", "")
-    assert "TopstepX app" in msg, msg
+    assert "TopstepX" in msg, msg
 
 
 # ----------------------------------------------------------------------
@@ -303,36 +307,41 @@ def test_flatten_all_topstep_message_points_at_topstepx_app(tmp_path, monkeypatc
 # ----------------------------------------------------------------------
 
 
-def test_dashboard_flatten_button_paper_enabled_and_default_label(client):
-    """Paper fixture → button label and enabled state unchanged."""
+def test_dashboard_flatten_button_paper_uses_canonical_label(client):
+    """Paper fixture → button uses the new canonical label and the
+    legacy variants are gone."""
     body = client.get("/").text
-    assert "Exit All / Flatten" in body
+    assert "Flatten All Positions" in body
+    assert "Exit All / Flatten" not in body
     assert "Flatten (paper only)" not in body
     assert "execution-flatten-topstep-note" not in body
 
 
-def test_dashboard_flatten_button_topstep_disabled_with_paper_only_label(
+def test_dashboard_flatten_button_topstep_enabled_with_canonical_label(
     tmp_path, monkeypatch
 ):
-    """Topstep fixture → button is disabled and labelled honestly. An
-    inline notice explains where to actually flatten."""
+    """Topstep fixture → flatten now works against the live broker, so
+    the button is enabled and shares the paper label. The legacy
+    'paper only' label and the inline TopstepX banner must be gone."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         body = c.get("/").text
-    assert "Flatten (paper only)" in body
-    assert "Exit All / Flatten" not in body
-    # The disabled attribute and tooltip live on the same <button>.
+    assert "Flatten All Positions" in body
+    assert "Flatten (paper only)" not in body
+    # Same button tag must NOT carry the legacy disabled attribute or
+    # TopstepX-pointing tooltip.
     flatten_button_start = body.find('id="btn-flatten-all"')
     assert flatten_button_start != -1
-    # Slice to the end of the opening tag so we only inspect attributes
-    # on the <button> element itself.
     tag_end = body.find(">", flatten_button_start)
     button_open_tag = body[flatten_button_start:tag_end]
-    assert "disabled" in button_open_tag, button_open_tag
-    assert "TopstepX" in button_open_tag, button_open_tag
-    # The inline notice that points at the TopstepX app.
-    assert "execution-flatten-topstep-note" in body
-    assert "TopstepX" in body
+    assert "disabled" not in button_open_tag, button_open_tag
+    assert "not yet implemented" not in button_open_tag
+    # The pre-flatten banner that told the operator to exit in
+    # TopstepX is gone.
+    assert "execution-flatten-topstep-note" not in body
+    assert "No emergency flatten available for Topstep" not in body
+    # Disengage explainer stays — kill switch / disengage still only
+    # stops NEW orders.
     assert "Disengage" in body
 
 

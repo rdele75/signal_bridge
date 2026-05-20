@@ -2875,25 +2875,18 @@ def create_app() -> FastAPI:
         """Provider-aware flatten / exit-all.
 
         Paper: flattens all in-memory positions via the existing paper
-        flatten path. Topstep (and any other live-facing provider): we do
-        NOT submit live exit orders from this endpoint — a real safe
-        flatten requires per-position market submissions with proper
-        gating that hasn't been implemented yet. So Topstep returns the
-        standard ``not_implemented`` envelope without touching the
-        funded account.
+        flatten path. Topstep: routes through the real
+        ``flatten_position()`` which closes each open position via
+        ``/api/Position/closeContract`` and reports a per-leg envelope.
+        Other providers: structured not-implemented envelope.
         """
         if broker.provider == "paper":
             return JSONResponse(
                 status_code=200, content=broker.flatten_all_positions()
             )
         if broker.provider == "topstep":
-            message = (
-                "Topstep flatten is not implemented yet — exit positions "
-                "in the TopstepX app/web directly."
-            )
-        else:
-            message = (
-                f"{broker.provider} flatten-all is not implemented yet"
+            return JSONResponse(
+                status_code=200, content=broker.flatten_position()
             )
         return JSONResponse(
             status_code=200,
@@ -2902,7 +2895,9 @@ def create_app() -> FastAPI:
                 "provider": broker.provider,
                 "status": "not_implemented",
                 "not_implemented": True,
-                "message": message,
+                "message": (
+                    f"{broker.provider} flatten-all is not implemented yet"
+                ),
             },
         )
 

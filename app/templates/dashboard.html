@@ -77,16 +77,9 @@
                 {% if not (demo_execution.is_armed or live_execution.is_armed) %}hidden{% endif %}>
           Disengage
         </button>
-        {% if broker_provider == 'topstep' %}
-        <button type="button" id="btn-flatten-all" class="btn" disabled
-                title="Topstep flatten not yet implemented — close positions directly in TopstepX">
-          Flatten (paper only)
-        </button>
-        {% else %}
         <button type="button" id="btn-flatten-all" class="btn">
-          Exit All / Flatten
+          Flatten All Positions
         </button>
-        {% endif %}
         <button type="button" id="btn-smoke-test" class="btn"
                 {% if execution_mode != 'paper' %}hidden{% endif %}>
           Smoke Test
@@ -111,14 +104,6 @@
       <p class="muted execution-disengage-note">
         Disengage stops new orders; does not close existing positions.
       </p>
-
-      {% if broker_provider == 'topstep' %}
-      <p class="muted banner warn execution-flatten-topstep-note">
-        <strong>No emergency flatten available for Topstep yet.</strong>
-        To exit positions, use the TopstepX app or website directly. The
-        Disengage button stops NEW orders from being sent.
-      </p>
-      {% endif %}
 
       <p class="execution-smoke-hint"
          {% if execution_mode != 'paper' %}hidden{% endif %}
@@ -247,6 +232,37 @@
         </button>
       </div>
     </form>
+  </div>
+</div>
+
+{# ---- Soft-confirm flatten modal.
+       Opens when the operator clicks "Flatten All Positions". Fetches
+       open positions, shows a summary, and only fires the flatten POST
+       on a deliberate click of "Yes, flatten now". No phrase typing —
+       confidence is built from showing exactly what will close. #}
+<div id="flatten-modal" class="execution-modal" hidden
+     aria-hidden="true" role="dialog"
+     aria-labelledby="flatten-modal-title">
+  <div class="execution-modal-backdrop" data-close-modal></div>
+  <div class="execution-modal-panel" role="document">
+    <h3 id="flatten-modal-title" class="execution-modal-title">
+      Flatten All Positions
+    </h3>
+    <p class="execution-modal-copy">
+      This will submit a closing market order for every open position
+      on the selected broker account. Each close is independent —
+      partial failures are reported per leg.
+    </p>
+    <div id="flatten-modal-positions" class="execution-modal-positions">
+      <p class="muted">loading open positions…</p>
+    </div>
+    <div class="execution-modal-actions">
+      <button type="button" class="btn" data-close-modal>Cancel</button>
+      <button type="button" id="btn-flatten-confirm"
+              class="btn btn-danger" disabled>
+        Yes, flatten now
+      </button>
+    </div>
   </div>
 </div>
 
@@ -534,6 +550,9 @@
   var feedbackRaw = document.getElementById('execution-feedback-raw');
   var disableBtn = document.getElementById('btn-disable-exec');
   var flattenBtn = document.getElementById('btn-flatten-all');
+  var flattenModal = document.getElementById('flatten-modal');
+  var flattenConfirmBtn = document.getElementById('btn-flatten-confirm');
+  var flattenPositionsEl = document.getElementById('flatten-modal-positions');
   var smokeBtn = document.getElementById('btn-smoke-test');
   var smokeExecuteBtn = document.getElementById('btn-smoke-test-execute');
   var smokeHint = document.getElementById('execution-smoke-hint');
@@ -1107,12 +1126,103 @@
     }
 
     flattenBtn.addEventListener('click', function () {
-      if (!window.confirm('Flatten/Exit all positions on the active broker?')) return;
+      openFlattenModal();
+    });
+  }
+
+  function escapeHTML(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function renderFlattenPositions(positions) {
+    if (!flattenPositionsEl) return 0;
+    var rows = (positions || []).filter(function (p) { return p && p.size; });
+    if (rows.length === 0) {
+      flattenPositionsEl.innerHTML =
+        '<p class="muted">no open positions to flatten</p>';
+      return 0;
+    }
+    var total = 0;
+    var html = '<ul class="execution-modal-position-list">';
+    rows.forEach(function (p) {
+      var label = p.symbol || p.contractId || p.contract_id || '(unknown)';
+      var size = parseInt(p.size, 10) || 0;
+      total += Math.abs(size);
+      var dir = '';
+      if (p.type === 1) dir = 'LONG';
+      else if (p.type === 2) dir = 'SHORT';
+      html += '<li><code>' + escapeHTML(label) + '</code> · '
+        + escapeHTML(String(size)) + ' contract' + (size === 1 ? '' : 's')
+        + (dir ? ' · ' + dir : '') + '</li>';
+    });
+    html += '</ul>';
+    html += '<p class="muted">total: '
+      + total + ' contract' + (total === 1 ? '' : 's')
+      + ' across ' + rows.length + ' position' + (rows.length === 1 ? '' : 's')
+      + '</p>';
+    flattenPositionsEl.innerHTML = html;
+    return rows.length;
+  }
+
+  function openFlattenModal() {
+    if (!flattenModal) return;
+    flattenModal.hidden = false;
+    flattenModal.setAttribute('aria-hidden', 'false');
+    if (flattenConfirmBtn) flattenConfirmBtn.disabled = true;
+    if (flattenPositionsEl) {
+      flattenPositionsEl.innerHTML =
+        '<p class="muted">loading open positions…</p>';
+    }
+    fetch('/api/broker/positions', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (body) {
+        var count = 0;
+        if (body && body.ok && Array.isArray(body.positions)) {
+          count = renderFlattenPositions(body.positions);
+        } else if (flattenPositionsEl) {
+          flattenPositionsEl.innerHTML =
+            '<p class="banner warn">' +
+            escapeHTML((body && (body.message || body.status))
+              || 'could not load positions') +
+            '</p>';
+        }
+        if (flattenConfirmBtn) flattenConfirmBtn.disabled = (count === 0);
+      })
+      .catch(function (err) {
+        if (flattenPositionsEl) {
+          flattenPositionsEl.innerHTML =
+            '<p class="banner warn">' + escapeHTML(String(err)) + '</p>';
+        }
+        if (flattenConfirmBtn) flattenConfirmBtn.disabled = true;
+      });
+  }
+
+  function closeFlattenModal() {
+    if (!flattenModal) return;
+    flattenModal.hidden = true;
+    flattenModal.setAttribute('aria-hidden', 'true');
+  }
+
+  if (flattenModal) {
+    flattenModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
+      el.addEventListener('click', function () { closeFlattenModal(); });
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !flattenModal.hidden) closeFlattenModal();
+    });
+  }
+
+  if (flattenConfirmBtn) {
+    flattenConfirmBtn.addEventListener('click', function () {
+      flattenConfirmBtn.disabled = true;
       clearFeedback();
       showFeedback('Flattening…', 'info', null);
       fetch('/api/broker/flatten-all', { method: 'POST' })
         .then(function (r) { return r.json(); })
         .then(function (body) {
+          closeFlattenModal();
           if (body && body.ok) {
             showFeedback('Flatten complete.', 'ok', body);
           } else if (body && body.not_implemented) {
@@ -1130,6 +1240,7 @@
           }
         })
         .catch(function (err) {
+          closeFlattenModal();
           showFeedback('Flatten failed: ' + err, 'bad', null);
         });
     });
