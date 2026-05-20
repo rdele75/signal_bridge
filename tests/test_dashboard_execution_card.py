@@ -282,6 +282,63 @@ def test_flatten_all_topstep_returns_not_implemented(tmp_path, monkeypatch):
     assert body["status"] == "not_implemented"
 
 
+def test_flatten_all_topstep_message_points_at_topstepx_app(tmp_path, monkeypatch):
+    """H4: the not_implemented message must explicitly tell the operator
+    to exit positions in the TopstepX app — the Disengage button doesn't
+    close anything, so a vague 'not implemented' is dangerous."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        body = c.post("/api/broker/flatten-all").json()
+    msg = body.get("message", "")
+    assert "TopstepX app" in msg, msg
+
+
+# ----------------------------------------------------------------------
+# H4 — dashboard flatten-button honesty
+# ----------------------------------------------------------------------
+
+
+def test_dashboard_flatten_button_paper_enabled_and_default_label(client):
+    """Paper fixture → button label and enabled state unchanged."""
+    body = client.get("/").text
+    assert "Exit All / Flatten" in body
+    assert "Flatten (paper only)" not in body
+    assert "execution-flatten-topstep-note" not in body
+
+
+def test_dashboard_flatten_button_topstep_disabled_with_paper_only_label(
+    tmp_path, monkeypatch
+):
+    """Topstep fixture → button is disabled and labelled honestly. An
+    inline notice explains where to actually flatten."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        body = c.get("/").text
+    assert "Flatten (paper only)" in body
+    assert "Exit All / Flatten" not in body
+    # The disabled attribute and tooltip live on the same <button>.
+    flatten_button_start = body.find('id="btn-flatten-all"')
+    assert flatten_button_start != -1
+    # Slice to the end of the opening tag so we only inspect attributes
+    # on the <button> element itself.
+    tag_end = body.find(">", flatten_button_start)
+    button_open_tag = body[flatten_button_start:tag_end]
+    assert "disabled" in button_open_tag, button_open_tag
+    assert "TopstepX" in button_open_tag, button_open_tag
+    # The inline notice that points at the TopstepX app.
+    assert "execution-flatten-topstep-note" in body
+    assert "TopstepX" in body
+    assert "Disengage" in body
+
+
+def test_dashboard_disengage_note_present_always(client):
+    """The .muted explainer under the action row clarifies that
+    Disengage only stops new orders — runs on paper and topstep both."""
+    body = client.get("/").text
+    assert "Disengage stops new orders" in body
+    assert "does not close existing positions" in body
+
+
 def test_flatten_all_requires_admin_when_auth_enabled(tmp_path, monkeypatch):
     """Endpoint must enforce admin auth — bare anonymous POST is 401."""
     app = _build_app(
