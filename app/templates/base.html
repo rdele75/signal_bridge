@@ -136,17 +136,44 @@
 </div>
 
 <script>
-// Shared topbar kill-switch toggle. Uses existing API endpoints.
+// Shared topbar kill-switch toggle. Updates the button in place from the
+// POST response body — no page reload, no white flash. Other pages that
+// surface kill-switch state (the dashboard execution card, the /settings/
+// risk page) listen for a "signalbridge:kill-switch-change" event so they
+// can refresh their own indicators without re-fetching /api/status.
 (function () {
   var btn = document.getElementById('header-killswitch');
   if (!btn) return;
+  function applyState(active) {
+    btn.dataset.state = active ? 'active' : 'off';
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.classList.toggle('ks-on', !!active);
+    btn.classList.toggle('ks-off', !active);
+    btn.title = 'Kill switch — click to ' + (active ? 'deactivate' : 'activate');
+    // Keep an "icon dot + label" structure so the inner ks-dot survives.
+    var dot = btn.querySelector('.ks-dot');
+    btn.textContent = '';
+    if (dot) btn.appendChild(dot);
+    btn.appendChild(document.createTextNode(
+      ' kill switch ' + (active ? 'active' : 'off')
+    ));
+    document.dispatchEvent(new CustomEvent('signalbridge:kill-switch-change', {
+      detail: { active: !!active }
+    }));
+  }
   btn.addEventListener('click', function () {
     var path = btn.dataset.state === 'active'
       ? '/api/kill-switch/disable'
       : '/api/kill-switch/enable';
     btn.disabled = true;
     fetch(path, { method: 'POST' })
-      .then(function () { window.location.reload(); })
+      .then(function (r) { return r.json(); })
+      .then(function (body) {
+        btn.disabled = false;
+        if (body && typeof body.kill_switch_active === 'boolean') {
+          applyState(body.kill_switch_active);
+        }
+      })
       .catch(function (e) {
         btn.disabled = false;
         console.error('kill switch toggle failed', e);
