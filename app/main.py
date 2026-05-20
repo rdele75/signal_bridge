@@ -33,6 +33,7 @@ from .auth import (
     warn_if_default_secrets,
 )
 from .config import Settings, get_settings
+from .rate_limiter import TokenBucket
 from .dashboard import (
     broker_status_payload,
     dashboard_summary,
@@ -2882,8 +2883,55 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.post("/webhooks/tradingview", response_model=WebhookResponse)
-    async def tradingview_webhook(request: Request) -> WebhookResponse:
+    # M5 — per-process token bucket guarding the webhook. A misconfigured
+    # TradingView alert template (or anyone with the secret) firing
+    # tightly could otherwise saturate the broker / daily-loss limit.
+    webhook_rate_limiter = TokenBucket(
+        rate_per_second=settings.webhook_rate_limit_per_second,
+        burst=settings.webhook_rate_burst,
+    )
+    app.state.webhook_rate_limiter = webhook_rate_limiter
+
+    @app.post("/webhooks/tradingview")
+    async def tradingview_webhook(request: Request):
+        if not webhook_rate_limiter.allow():
+            log.warning(
+                "webhook rate-limited (limit=%s/s burst=%s)",
+                settings.webhook_rate_limit_per_second,
+                settings.webhook_rate_burst,
+            )
+            # Journal the refusal so the operator can see it. We don't
+            # have a parsed payload yet — stub the row with what we know.
+            journal.record_signal(
+                source=None,
+                strategy=None,
+                symbol=None,
+                action=None,
+                contracts=None,
+                price=None,
+                order_id=None,
+                raw_payload={"_rate_limited": True},
+                decision="rejected",
+                rejection_reason="rate_limited",
+                execution_mode=broker.execution_mode,
+                execution_result=None,
+                broker_provider=broker.provider,
+                broker_symbol=None,
+                timeframe=None,
+            )
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "accepted": False,
+                    "decision": "rejected",
+                    "rejection_reason": "rate_limited",
+                    "message": (
+                        "webhook rate limit exceeded — slow down or raise "
+                        "WEBHOOK_RATE_LIMIT_PER_SECOND / WEBHOOK_RATE_BURST"
+                    ),
+                },
+            )
+
         try:
             payload = await request.json()
         except Exception:

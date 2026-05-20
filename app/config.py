@@ -256,6 +256,20 @@ class Settings(BaseModel):
         default_factory=lambda: _int("DUPLICATE_ORDER_COOLDOWN_SECONDS", 60)
     )
 
+    # Webhook rate limit (M5). A token-bucket admission filter on
+    # /webhooks/tradingview to keep a misconfigured TradingView alert
+    # template (firing 100/s in a tight loop) from hammering the broker
+    # and saturating the daily-loss limit. Tokens refill at
+    # WEBHOOK_RATE_LIMIT_PER_SECOND; the bucket holds up to
+    # WEBHOOK_RATE_BURST. Refused requests return 429 and are journaled
+    # as ``rate_limited`` rejections so the operator sees them.
+    webhook_rate_limit_per_second: float = Field(
+        default_factory=lambda: _float("WEBHOOK_RATE_LIMIT_PER_SECOND", 10.0)
+    )
+    webhook_rate_burst: int = Field(
+        default_factory=lambda: _int("WEBHOOK_RATE_BURST", 30)
+    )
+
     # Timezone that defines the trading-day boundary for daily-PnL
     # buckets and "today" counts. Default ``UTC`` matches the storage
     # layout. Operators trading ES/NQ futures typically set this to
