@@ -209,30 +209,6 @@
   </details>
 </section>
 
-<section class="card section">
-  <details class="collapsible">
-    <summary class="section-head collapsible-toggle">
-      <h3>Local curl test</h3>
-      <span class="hint">click to expand</span>
-    </summary>
-    <div class="collapsible-body">
-      <p class="muted mb-2">Verify the bridge accepts and routes a synthetic signal without touching TradingView.</p>
-      <div class="code-frame">
-        <span class="copy-hint">bash</span>
-        <pre class="code">curl -X POST {{ webhook_url }} \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "secret": "<your TRADINGVIEW_WEBHOOK_SECRET>",
-    "symbol": "MES1!",
-    "action": "buy",
-    "contracts": "1",
-    "price": "5000.25",
-    "order_id": "manual-test-001"
-  }'</pre>
-      </div>
-    </div>
-  </details>
-</section>
 
 
 <div class="banner">
