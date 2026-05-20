@@ -2183,9 +2183,11 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   transition: opacity 0.18s ease;
 }
 .masked-value:hover .masked-reveal-icon { opacity: 1; }
-.masked-value.is-revealed { cursor: default; user-select: text; }
+/* When revealed: keep the pointer cursor so the eye icon visibly
+   stays interactive — clicking again hides the value. Text is
+   selectable in either state. */
+.masked-value.is-revealed { user-select: text; }
 .masked-value.is-revealed .masked-display { letter-spacing: 0; }
-.masked-value.is-revealed .masked-reveal-icon { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .masked-value .masked-reveal-icon { transition: none; }
 }

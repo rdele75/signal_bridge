@@ -316,17 +316,33 @@
   });
 })();
 
-// Click any .masked-value element to reveal the full string. Stays
-// revealed for the page lifetime; refresh to re-mask. Used for
-// account ids / names that are screen-shareable context.
+// Click any .masked-value element to toggle reveal/hide of the full
+// string. Standard "password eye icon" behaviour — click reveals,
+// click again hides. The suffix-chars count is duplicated from the
+// mask_value() macro in _macros.html (default 4); if the macro
+// changes its default, mirror it here.
 document.addEventListener('click', function (ev) {
   var t = ev.target.closest('.masked-value');
-  if (!t || t.classList.contains('is-revealed')) return;
+  if (!t) return;
   var full = t.getAttribute('data-full');
   if (!full) return;
   var display = t.querySelector('.masked-display');
-  if (display) display.textContent = full;
-  t.classList.add('is-revealed');
+  if (!display) return;
+  if (t.classList.contains('is-revealed')) {
+    var suffixChars = 4;
+    var masked;
+    if (full.length > suffixChars) {
+      masked = '•'.repeat(full.length - suffixChars)
+        + full.slice(-suffixChars);
+    } else {
+      masked = '•'.repeat(full.length);
+    }
+    display.textContent = masked;
+    t.classList.remove('is-revealed');
+  } else {
+    display.textContent = full;
+    t.classList.add('is-revealed');
+  }
 });
 </script>
 </body>
