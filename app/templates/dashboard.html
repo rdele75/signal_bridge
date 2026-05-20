@@ -1081,9 +1081,17 @@
               statusText.classList.add('execution-status-check-visible');
             }, 1500);
           }
-          // Reload after the toast settles so the persistent armed UI
-          // re-renders from the server with the check still visible.
-          window.setTimeout(function () { window.location.reload(); }, 2200);
+          // Card is armed: reflect it on the dataset so the smoke-
+          // execute button surfaces and any other "armed" gates pass.
+          card.dataset.executionArmed = 'true';
+          syncSmokeExecuteVisibility();
+          // Sync the surrounding UI (summary badges + mode select) from
+          // the server's truth instead of reloading. The success-flash
+          // overlay finishes its 1.2s animation around the same time;
+          // the armed pulse keyframe loop continues uninterrupted
+          // because setState('live-armed') has already applied the
+          // class and the class isn't removed by the sync.
+          window.setTimeout(function () { fetchStatus(); }, 2200);
         } else {
           setState('live-locked');
           var reason = (body && (body.message || body.status))
