@@ -87,6 +87,11 @@
                        {% if kill_switch_active %}active{% endif %}">
             kill switch {{ 'active' if kill_switch_active else 'off' }}
           </span>
+        {% else %}
+          <span class="execution-kill-switch-indicator badge-warn"
+                title="ENABLE_KILL_SWITCH=false in config — the emergency-stop button will not block trades. Set ENABLE_KILL_SWITCH=true and restart to re-enable.">
+            kill switch disabled (config)
+          </span>
         {% endif %}
       </div>
 

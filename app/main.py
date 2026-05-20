@@ -289,6 +289,18 @@ def create_app() -> FastAPI:
         settings.database_abs_path.parent / "kill_switch.active",
         enabled=settings.enable_kill_switch,
     )
+    # M2 — surface ENABLE_KILL_SWITCH=false at boot. is_active() always
+    # returns False in this state, which means the dashboard kill-switch
+    # toggle and the live-trading kill-switch gate both silently no-op.
+    # The dashboard pill is rendered as "disabled (config)" elsewhere;
+    # this warning makes the startup logs explicit too.
+    if not settings.enable_kill_switch:
+        log.warning(
+            "ENABLE_KILL_SWITCH=false — kill switch disabled by config. "
+            "Emergency-stop button will not block trades and the live "
+            "kill-switch gate trivially passes. Set ENABLE_KILL_SWITCH=true "
+            "to re-enable."
+        )
     # Broker built first so the risk engine can consult it during
     # max_open_positions evaluation (H3).
     broker = build_broker(settings, journal, settings_store=settings_store)
