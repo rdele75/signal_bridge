@@ -1080,22 +1080,10 @@ def test_post_settings_broker_rejects_live_topstep_env(client):
     assert "flash_kind=error" in r.headers["location"]
 
 
-def test_post_settings_broker_rejects_bad_base_url(client):
-    r = client.post(
-        "/settings/broker",
-        data={
-            "broker_provider": "paper",
-            "execution_mode": "paper",
-            "topstep_username": "trader42",
-            "topstep_account_id": "PRACTICE-9001",
-            "topstep_env": "demo",
-            "topstep_base_url": "not-a-url",
-            "topstep_ws_url": "https://rtc.topstepx.com",
-        },
-        follow_redirects=False,
-    )
-    assert r.status_code == 303
-    assert "flash_kind=error" in r.headers["location"]
+# NOTE: test_post_settings_broker_rejects_bad_base_url removed during
+# the polish pass — the broker form no longer carries topstep_base_url
+# / topstep_ws_url inputs, so the URL is .env-only and there's nothing
+# to validate at this layer.
 
 
 # ----------------------------------------------------------------------

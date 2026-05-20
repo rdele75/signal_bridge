@@ -3162,22 +3162,20 @@ def create_app() -> FastAPI:
         topstep_username: str = Form(""),
         topstep_api_key: str = Form(_TOPSTEP_API_KEY_UNCHANGED),
         topstep_env: str = Form("demo"),
-        topstep_base_url: str = Form("https://api.topstepx.com"),
-        topstep_ws_url: str = Form("https://rtc.topstepx.com"),
     ):
-        # The form's TOPSTEP_ACCOUNT_ID input was removed in the polish
-        # pass — the dropdown owns the selection. For the topstep
-        # provider we keep TOPSTEP_ACCOUNT_ID in sync with the dropdown
-        # value so anything reading the env var on the next boot picks
-        # up the same account.
+        # The form's TOPSTEP_ACCOUNT_ID, TOPSTEP_BASE_URL, and
+        # TOPSTEP_WS_URL inputs were removed in the polish pass — the
+        # dropdown owns account selection, and the URLs are env-level
+        # boot config that the operator doesn't manage from this page.
+        # For topstep we mirror SELECTED_ACCOUNT_ID into
+        # TOPSTEP_ACCOUNT_ID so anything reading the env var on the
+        # next boot picks up the same account.
         updates: list[tuple[str, Any]] = [
             ("BROKER_PROVIDER", broker_provider),
             ("EXECUTION_MODE", execution_mode),
             ("SELECTED_ACCOUNT_ID", selected_account_id),
             ("TOPSTEP_USERNAME", topstep_username),
             ("TOPSTEP_ENV", topstep_env),
-            ("TOPSTEP_BASE_URL", topstep_base_url),
-            ("TOPSTEP_WS_URL", topstep_ws_url),
         ]
         if str(broker_provider or "").strip().lower() == "topstep":
             updates.append(("TOPSTEP_ACCOUNT_ID", selected_account_id))

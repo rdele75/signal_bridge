@@ -221,22 +221,20 @@ def test_broker_page_selection_form_has_no_execution_mode_select(client):
 
 def test_broker_page_keeps_topstep_credentials(client):
     body = client.get("/settings/broker").text
-    # Topstep credential fields stay on the broker form. topstep_env
-    # was removed from the UI (settings layer still reads it from .env
-    # at boot) — see the ui-revisions commit "remove TOPSTEP_ENV
-    # display from settings UI". The standalone topstep_account_id
-    # input was also removed in the polish pass — the dropdown owns
-    # selection, and TOPSTEP_ACCOUNT_ID stays a valid env-level
-    # setting for pre-selection at boot.
+    # Topstep credential fields stay on the broker form. topstep_env,
+    # topstep_account_id, topstep_base_url, and topstep_ws_url were
+    # removed from the UI in the polish pass — the settings layer
+    # still reads them from .env at boot, and TOPSTEP_ACCOUNT_ID is
+    # owned by the account dropdown.
+    for field in ("topstep_username", "topstep_api_key"):
+        assert f'name="{field}"' in body, field
     for field in (
-        "topstep_username",
-        "topstep_api_key",
+        "topstep_env",
+        "topstep_account_id",
         "topstep_base_url",
         "topstep_ws_url",
     ):
-        assert f'name="{field}"' in body, field
-    assert 'name="topstep_env"' not in body
-    assert 'name="topstep_account_id"' not in body
+        assert f'name="{field}"' not in body, field
 
 
 def test_broker_page_keeps_account_dropdown(client):
