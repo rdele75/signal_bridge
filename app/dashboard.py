@@ -202,6 +202,14 @@ def dashboard_summary(
         "allowed_timeframes_csv": ",".join(settings.allowed_timeframes),
         "open_positions": open_positions,
         "open_position_count": len(open_positions),
+        # Broker-side position count drives the Flatten button's
+        # disabled state. Flatten acts on broker positions, not the
+        # journal (the two can disagree on Topstep where positions
+        # may be opened/closed outside SignalBridge).
+        "broker_open_position_count": sum(
+            1 for p in broker_positions
+            if isinstance(p, dict) and p.get("size")
+        ),
         "trades_today": accepted_today,
         "accepted_today": accepted_today,
         "rejected_today": rejected_today,

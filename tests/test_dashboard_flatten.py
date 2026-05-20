@@ -57,18 +57,91 @@ def test_flatten_button_renders_canonical_label_on_paper(client):
     assert "Exit All / Flatten" not in body
 
 
-def test_flatten_button_is_enabled_on_topstep(tmp_path, monkeypatch):
-    """No more disabled attribute or TopstepX-pointing tooltip on the
-    button — flatten is real now."""
+def test_flatten_button_is_disabled_when_no_open_positions(
+    tmp_path, monkeypatch,
+):
+    """With no broker positions open, the Flatten button must render
+    disabled with the explanatory tooltip — clicking does nothing,
+    no modal opens, no endpoint call fires. The default test
+    fixture has no broker positions, which exercises this path."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         body = c.get("/").text
     start = body.find('id="btn-flatten-all"')
     assert start != -1
     tag = body[start:body.find(">", start)]
+    assert "disabled" in tag, tag
+    assert "No open positions to flatten" in tag
+
+
+def test_flatten_button_is_enabled_when_broker_has_positions(
+    tmp_path, monkeypatch,
+):
+    """With a broker position open, the button must render WITHOUT
+    the disabled attribute. We mock _post_json so the topstep
+    adapter sees an open MES position via /api/Position/searchOpen.
+    """
+    monkeypatch.setenv("TOPSTEP_USERNAME", "trader42")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "5001")
+    monkeypatch.setenv("SELECTED_ACCOUNT_ID", "5001")
+    sm_path = tmp_path / "missing_symbols.json"
+    sm_path.write_text(json.dumps({"MES1!": {"topstep": "CON.F.US.MES.M26"}}))
+    monkeypatch.setenv("SYMBOLS_MAP_PATH", str(sm_path))
+
+    def _fake_post(self, path, payload, *, auth=False):
+        if path == "/api/Auth/loginKey":
+            return 200, {
+                "success": True, "token": "JWT.MOCK",
+                "errorCode": 0, "errorMessage": None,
+            }
+        if path == "/api/Account/search":
+            return 200, {
+                "success": True, "errorCode": 0,
+                "errorMessage": None,
+                "accounts": [{
+                    "id": 5001, "name": "Funded",
+                    "balance": 100000.0,
+                    "canTrade": True, "isVisible": True,
+                }],
+            }
+        if path == "/api/Position/searchOpen":
+            return 200, {
+                "success": True, "errorCode": 0, "errorMessage": None,
+                "positions": [
+                    {"id": 1, "accountId": 5001,
+                     "contractId": "CON.F.US.MES.M26",
+                     "type": 1, "size": 1},
+                ],
+            }
+        if path == "/api/Order/searchOpen":
+            return 200, {
+                "success": True, "errorCode": 0, "errorMessage": None,
+                "orders": [],
+            }
+        return 200, {"success": False, "errorCode": -1}
+
+    app = _build_app(tmp_path, monkeypatch, provider="topstep")
+    from app.execution.topstep import TopstepBroker as _Topstep
+    monkeypatch.setattr(_Topstep, "_post_json", _fake_post)
+
+    with TestClient(app) as c:
+        body = c.get("/").text
+    start = body.find('id="btn-flatten-all"')
+    assert start != -1
+    tag = body[start:body.find(">", start)]
     assert "disabled" not in tag, tag
-    assert "not yet implemented" not in tag
-    assert "TopstepX" not in tag
+    assert "No open positions to flatten" not in tag
+
+
+def test_flatten_button_dynamic_disable_helper_exists(client):
+    """The JS exposes setFlattenButtonEnabled() so the post-flatten
+    success path can disable the button without a full reload. The
+    helper must be wired up in the rendered dashboard."""
+    body = client.get("/").text
+    assert "setFlattenButtonEnabled" in body
+    # Successful flatten flips the button to disabled.
+    assert "setFlattenButtonEnabled(false)" in body
 
 
 def test_legacy_topstep_flatten_banner_is_gone(tmp_path, monkeypatch):

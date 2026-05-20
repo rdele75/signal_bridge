@@ -325,24 +325,26 @@ def test_dashboard_flatten_button_paper_uses_canonical_label(client):
     assert "execution-flatten-topstep-note" not in body
 
 
-def test_dashboard_flatten_button_topstep_enabled_with_canonical_label(
+def test_dashboard_flatten_button_topstep_uses_canonical_label(
     tmp_path, monkeypatch
 ):
-    """Topstep fixture → flatten now works against the live broker, so
-    the button is enabled and shares the paper label. The legacy
-    'paper only' label and the inline TopstepX banner must be gone."""
+    """Topstep fixture → flatten button uses the canonical label;
+    the legacy 'paper only' label and the TopstepX banner are gone.
+
+    The button's disabled state is now position-aware (no positions
+    → disabled with tooltip, has positions → enabled); that
+    behaviour is covered separately in tests/test_dashboard_flatten.py.
+    This test just pins down the label / banner / not-yet-implemented
+    invariants."""
     app = _build_topstep_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
         body = c.get("/").text
     assert "Flatten All Positions" in body
     assert "Flatten (paper only)" not in body
-    # Same button tag must NOT carry the legacy disabled attribute or
-    # TopstepX-pointing tooltip.
     flatten_button_start = body.find('id="btn-flatten-all"')
     assert flatten_button_start != -1
     tag_end = body.find(">", flatten_button_start)
     button_open_tag = body[flatten_button_start:tag_end]
-    assert "disabled" not in button_open_tag, button_open_tag
     assert "not yet implemented" not in button_open_tag
     # The pre-flatten banner that told the operator to exit in
     # TopstepX is gone.

@@ -62,7 +62,8 @@
                 {% if not (demo_execution.is_armed or live_execution.is_armed) %}hidden{% endif %}>
           Disengage
         </button>
-        <button type="button" id="btn-flatten-all" class="btn">
+        <button type="button" id="btn-flatten-all" class="btn"
+                {% if not broker_open_position_count %}disabled title="No open positions to flatten"{% endif %}>
           Flatten All Positions
         </button>
         <button type="button" id="btn-smoke-test" class="btn">
@@ -1167,6 +1168,21 @@
     flattenResultsCloseBtn.addEventListener('click', hideFlattenResults);
   }
 
+  // Disable + tooltip the Flatten button when positions go to zero
+  // (or back-enable it when they return). The initial state is set
+  // server-side via Jinja; this handles dynamic updates after the
+  // operator performs a flatten or executes a smoke test.
+  function setFlattenButtonEnabled(hasPositions) {
+    if (!flattenBtn) return;
+    if (hasPositions) {
+      flattenBtn.disabled = false;
+      flattenBtn.removeAttribute('title');
+    } else {
+      flattenBtn.disabled = true;
+      flattenBtn.setAttribute('title', 'No open positions to flatten');
+    }
+  }
+
   if (flattenConfirmBtn) {
     flattenConfirmBtn.addEventListener('click', function () {
       flattenConfirmBtn.disabled = true;
@@ -1184,6 +1200,13 @@
               body
             );
             return;
+          }
+          // Any successful close zeroes (some or all) positions —
+          // disable the button until a fresh status reflects a new
+          // open position. If status==partial / failed we leave it
+          // enabled so the operator can retry.
+          if (body && body.status === 'flattened') {
+            setFlattenButtonEnabled(false);
           }
           showFlattenResults(body || {});
         })
