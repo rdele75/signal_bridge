@@ -118,6 +118,18 @@
         <summary>raw response</summary>
         <pre id="execution-feedback-raw" class="output execution-feedback-raw"></pre>
       </details>
+
+      {# Per-leg flatten outcome. Populated by the JS after a confirmed
+         flatten POST. One row per attempted close (success or
+         failure), with an aggregate summary at the top. Auto-dismisses
+         after 8s or on outside click; X button dismisses immediately. #}
+      <div id="flatten-results-panel" class="flatten-results-panel"
+           hidden role="status" aria-live="polite">
+        <button type="button" class="flatten-results-close"
+                id="flatten-results-close" aria-label="dismiss">×</button>
+        <div id="flatten-results-summary" class="flatten-results-summary"></div>
+        <ul id="flatten-results-legs" class="flatten-results-legs"></ul>
+      </div>
     </div>
   </div>
 </section>
@@ -1214,6 +1226,105 @@
     });
   }
 
+  var flattenResultsPanel = document.getElementById('flatten-results-panel');
+  var flattenResultsSummary = document.getElementById('flatten-results-summary');
+  var flattenResultsLegs = document.getElementById('flatten-results-legs');
+  var flattenResultsCloseBtn = document.getElementById('flatten-results-close');
+  var flattenResultsTimer = null;
+  var flattenResultsOutsideHandler = null;
+
+  function clearFlattenResultsTimers() {
+    if (flattenResultsTimer) {
+      window.clearTimeout(flattenResultsTimer);
+      flattenResultsTimer = null;
+    }
+    if (flattenResultsOutsideHandler) {
+      document.removeEventListener('click', flattenResultsOutsideHandler, true);
+      flattenResultsOutsideHandler = null;
+    }
+  }
+
+  function hideFlattenResults() {
+    clearFlattenResultsTimers();
+    if (flattenResultsPanel) flattenResultsPanel.hidden = true;
+  }
+
+  function legRow(leg) {
+    var icon = leg.ok ? '✓' : '✗';
+    var badge = leg.ok ? 'badge-good' : 'badge-bad';
+    var size = (leg.size == null) ? '' :
+      (' — ' + leg.size + ' contract' + (leg.size === 1 ? '' : 's'));
+    var sym = leg.symbol || leg.contract_id || '(unknown)';
+    var verb = leg.ok ? 'closed' : 'failed';
+    var detail = '';
+    if (leg.ok && leg.order_id) {
+      detail = ' (orderId ' + escapeHTML(String(leg.order_id)) + ')';
+    } else if (!leg.ok && leg.message) {
+      detail = ': ' + escapeHTML(leg.message);
+    }
+    return (
+      '<li class="flatten-leg-row">' +
+      '<span class="badge ' + badge + ' plain">' + icon + '</span>' +
+      ' <code>' + escapeHTML(sym) + '</code>' + escapeHTML(size) +
+      ' — ' + verb + detail +
+      '</li>'
+    );
+  }
+
+  function showFlattenResults(body) {
+    if (!flattenResultsPanel) return;
+    clearFlattenResultsTimers();
+    var legs = (body && Array.isArray(body.legs)) ? body.legs : [];
+    var status = body && body.status;
+    var message = (body && body.message) || '';
+    var infoOnly = (
+      status === 'not_in_live_mode' || status === 'no_open_positions'
+    );
+    var summaryClass;
+    if (status === 'flattened') {
+      summaryClass = 'badge-good';
+    } else if (status === 'partial' || status === 'failed') {
+      summaryClass = 'badge-bad';
+    } else if (infoOnly) {
+      summaryClass = 'badge-info';
+    } else {
+      summaryClass = 'badge-warn';
+    }
+    var summaryHtml = (
+      '<span class="badge ' + summaryClass + ' plain">'
+      + escapeHTML(status || 'unknown') + '</span> '
+      + escapeHTML(message)
+    );
+    if (flattenResultsSummary) flattenResultsSummary.innerHTML = summaryHtml;
+    if (flattenResultsLegs) {
+      if (infoOnly || legs.length === 0) {
+        flattenResultsLegs.innerHTML = '';
+      } else {
+        flattenResultsLegs.innerHTML = legs.map(legRow).join('');
+      }
+    }
+    flattenResultsPanel.hidden = false;
+    flattenResultsTimer = window.setTimeout(hideFlattenResults, 8000);
+    // Outside click also dismisses. Capture-phase so the listener
+    // catches the original target before the toggling code runs.
+    flattenResultsOutsideHandler = function (ev) {
+      if (!flattenResultsPanel.contains(ev.target)) hideFlattenResults();
+    };
+    // Defer attaching the outside-click handler so the click that
+    // opened the panel doesn't immediately close it.
+    window.setTimeout(function () {
+      if (flattenResultsOutsideHandler) {
+        document.addEventListener(
+          'click', flattenResultsOutsideHandler, true
+        );
+      }
+    }, 0);
+  }
+
+  if (flattenResultsCloseBtn) {
+    flattenResultsCloseBtn.addEventListener('click', hideFlattenResults);
+  }
+
   if (flattenConfirmBtn) {
     flattenConfirmBtn.addEventListener('click', function () {
       flattenConfirmBtn.disabled = true;
@@ -1223,21 +1334,16 @@
         .then(function (r) { return r.json(); })
         .then(function (body) {
           closeFlattenModal();
-          if (body && body.ok) {
-            showFeedback('Flatten complete.', 'ok', body);
-          } else if (body && body.not_implemented) {
+          clearFeedback();
+          if (body && body.not_implemented) {
             showFeedback(
               (body.provider || 'broker') + ': flatten not implemented yet.',
               'warn',
               body
             );
-          } else {
-            showFeedback(
-              'Flatten refused: ' + (body && (body.message || body.status) || 'unknown'),
-              'bad',
-              body
-            );
+            return;
           }
+          showFlattenResults(body || {});
         })
         .catch(function (err) {
           closeFlattenModal();
