@@ -188,11 +188,11 @@
     <span class="hint">manual override</span>
   </div>
   <p style="margin: 0 0 10px;">Status:
-    {% if kill_switch_active %}
-      <span class="badge badge-bad">active — all signals blocked</span>
-    {% else %}
-      <span class="badge badge-good">off — signals can flow</span>
-    {% endif %}
+    <span id="ks-status-badge"
+          class="badge {{ 'badge-bad' if kill_switch_active else 'badge-good' }}">
+      {{ 'active — all signals blocked' if kill_switch_active
+         else 'off — signals can flow' }}
+    </span>
   </p>
   <div class="btn-row">
     <button id="btn-ks-enable" class="btn btn-danger">Activate kill switch</button>
@@ -220,16 +220,42 @@
   apply();
 })();
 
+// Apply kill-switch state to the badge + buttons without reloading. The
+// raw JSON output stays visible in the <pre> for debugging.
+function _applyKsState(active) {
+  const badge = document.getElementById('ks-status-badge');
+  if (badge) {
+    badge.classList.toggle('badge-bad', !!active);
+    badge.classList.toggle('badge-good', !active);
+    badge.textContent = active
+      ? 'active — all signals blocked'
+      : 'off — signals can flow';
+  }
+  const btnEnable = document.getElementById('btn-ks-enable');
+  const btnDisable = document.getElementById('btn-ks-disable');
+  if (btnEnable) btnEnable.disabled = !!active;
+  if (btnDisable) btnDisable.disabled = !active;
+}
+
 async function call(path) {
   const out = document.getElementById('ks-out');
   out.textContent = 'working…';
   try {
     const r = await fetch(path, { method: 'POST' });
-    out.textContent = JSON.stringify(await r.json(), null, 2);
-    setTimeout(() => location.reload(), 600);
+    const body = await r.json();
+    out.textContent = JSON.stringify(body, null, 2);
+    if (body && typeof body.kill_switch_active === 'boolean') {
+      _applyKsState(body.kill_switch_active);
+    }
   } catch (e) { out.textContent = 'failed: ' + e; }
 }
 document.getElementById('btn-ks-enable').addEventListener('click', () => call('/api/kill-switch/enable'));
 document.getElementById('btn-ks-disable').addEventListener('click', () => call('/api/kill-switch/disable'));
+
+// The topbar kill-switch button (base.html) dispatches this when it
+// toggles. Mirror the change so this page's badge stays in sync.
+document.addEventListener('signalbridge:kill-switch-change', (ev) => {
+  if (ev && ev.detail) _applyKsState(!!ev.detail.active);
+});
 </script>
 {% endblock %}
