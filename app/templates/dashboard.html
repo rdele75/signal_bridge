@@ -953,7 +953,8 @@
               if (wasLive) {
                 showToast('Live execution disengaged', 'info');
               }
-              showFeedback('Execution Test selected.', 'ok', null);
+              // No success toast — the card's state change is the
+              // signal. Only failure paths still raise showFeedback.
               card.dataset.executionArmed = 'false';
               syncSmokeExecuteVisibility();
               // Sync the rest of the UI from the server's truth after
@@ -1024,7 +1025,8 @@
               if (wasLive) {
                 showToast('Live execution disengaged', 'info');
               }
-              showFeedback('Execution disengaged.', 'ok', null);
+              // No success toast — the card's state change is the
+              // signal. Only failure paths still raise showFeedback.
               // Card transitioned to dry-run; arm flag is now false and
               // the smoke-execute button should hide.
               card.dataset.executionArmed = 'false';
