@@ -291,5 +291,55 @@
     }
   });
 })();
+
+// Inject a Copy button into every .code-frame on the page so operators
+// can copy webhook URLs, alert message templates, the JSON example,
+// and the curl command without selecting text by hand. The type label
+// (url / message / json / bash) stays as a top-left tag.
+(function () {
+  var frames = document.querySelectorAll('.code-frame');
+  frames.forEach(function (frame) {
+    if (frame.querySelector('.code-frame-copy')) return;
+    var pre = frame.querySelector('pre.code');
+    if (!pre) return;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'code-frame-copy';
+    btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code block to clipboard');
+    btn.addEventListener('click', function () {
+      var text = pre.textContent || '';
+      if (!text) return;
+      var done = function () {
+        btn.textContent = 'Copied';
+        btn.classList.add('is-copied');
+        window.setTimeout(function () {
+          btn.textContent = 'Copy';
+          btn.classList.remove('is-copied');
+        }, 1200);
+      };
+      var fail = function () {
+        btn.textContent = 'Copy failed';
+        window.setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done).catch(fail);
+      } else {
+        // execCommand fallback for HTTP / older browsers.
+        var range = document.createRange();
+        range.selectNodeContents(pre);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        try {
+          if (document.execCommand('copy')) done();
+          else fail();
+        } catch (e) { fail(); }
+        sel.removeAllRanges();
+      }
+    });
+    frame.appendChild(btn);
+  });
+})();
 </script>
 {% endblock %}

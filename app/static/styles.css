@@ -547,10 +547,50 @@ pre.code {
 .code-frame {
   position: relative;
 }
+/* Type label (url / json / bash / etc.) sits in the top-LEFT now so
+   the top-right is free for the Copy button injected by the JS in
+   tradingview.html. */
 .code-frame .copy-hint {
-  position: absolute; top: 8px; right: 10px;
+  position: absolute; top: 8px; left: 12px;
   font-size: 10.5px; color: var(--fg-mute);
   text-transform: uppercase; letter-spacing: 0.08em;
+  pointer-events: none;
+}
+.code-frame .code-frame-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.code-frame:hover .code-frame-copy,
+.code-frame .code-frame-copy:focus-visible {
+  opacity: 1;
+}
+.code-frame .code-frame-copy:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.code-frame .code-frame-copy.is-copied {
+  opacity: 1;
+  color: var(--good);
+  border-color: rgba(52, 211, 153, 0.45);
+}
+/* Make room for both labels at the top of the <pre> so they don't
+   overlap the first line of content. */
+.code-frame pre.code {
+  padding-top: 28px;
 }
 
 /* ----- Terminal-style logs ----- */
