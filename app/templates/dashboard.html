@@ -229,11 +229,10 @@
   <div class="card">
     <div class="card-label">App status</div>
     <div class="card-value">
-      {% if kill_switch_active %}
-        <span class="badge badge-bad">halted</span>
-      {% else %}
-        <span class="badge badge-good">running</span>
-      {% endif %}
+      <span id="summary-app-status"
+            class="badge {{ 'badge-bad' if kill_switch_active else 'badge-good' }}">
+        {{ 'halted' if kill_switch_active else 'running' }}
+      </span>
     </div>
     <div class="card-sub">kill switch {{ 'enabled' if kill_switch_enabled else 'disabled' }}</div>
   </div>
@@ -241,17 +240,16 @@
   <div class="card">
     <div class="card-label">Broker provider</div>
     <div class="card-value">
-      {% if broker_provider == 'paper' %}
-        <span class="badge badge-paper plain">{{ broker_provider }}</span>
-      {% else %}
-        <span class="badge badge-warn plain">{{ broker_provider }}</span>
-      {% endif %}
+      <span id="summary-broker-provider"
+            class="badge {{ 'badge-paper' if broker_provider == 'paper' else 'badge-warn' }} plain">
+        {{ broker_provider }}
+      </span>
       {% if broker_connected %}
-        <span class="badge badge-good">connected</span>
+        <span id="summary-broker-conn" class="badge badge-good">connected</span>
       {% elif broker_not_implemented %}
-        <span class="badge badge-warn">not implemented</span>
+        <span id="summary-broker-conn" class="badge badge-warn">not implemented</span>
       {% else %}
-        <span class="badge badge-bad">offline</span>
+        <span id="summary-broker-conn" class="badge badge-bad">offline</span>
       {% endif %}
     </div>
     <div class="card-sub">
@@ -497,6 +495,94 @@
     'execution-disabled',
     'execution-transitioning',
   ];
+
+  // Sync the cosmetic surfaces driven by /api/status without touching
+  // the freshly-animated execution-state classes. The caller is
+  // responsible for setState() / setStatusText() — this just updates
+  // the data attrs the rest of the script reads, the mode select, the
+  // summary badges below the card, and the in-card kill-switch hint.
+  // We deliberately do NOT update the execution-account block: the
+  // selected account only changes on the broker page, and that flow
+  // refreshes the card via a full server roundtrip on its own.
+  function refreshFromStatus(payload) {
+    if (!payload) return;
+    if (typeof payload.execution_mode === 'string') {
+      card.dataset.executionMode = payload.execution_mode;
+      if (modeSelect) {
+        modeSelect.value = payload.execution_mode;
+        initialMode = payload.execution_mode;
+      }
+      syncSmokeVisibility();
+    }
+    if (typeof payload.broker_provider === 'string') {
+      card.dataset.brokerProvider = payload.broker_provider;
+      var provBadge = document.getElementById('summary-broker-provider');
+      if (provBadge) {
+        provBadge.classList.toggle('badge-paper', payload.broker_provider === 'paper');
+        provBadge.classList.toggle('badge-warn', payload.broker_provider !== 'paper');
+        provBadge.textContent = payload.broker_provider;
+      }
+    }
+    card.dataset.selectedAccountId = payload.selected_account_id || '';
+    var appBadge = document.getElementById('summary-app-status');
+    if (appBadge) {
+      appBadge.classList.toggle('badge-bad', !!payload.kill_switch_active);
+      appBadge.classList.toggle('badge-good', !payload.kill_switch_active);
+      appBadge.textContent = payload.kill_switch_active ? 'halted' : 'running';
+    }
+    var connBadge = document.getElementById('summary-broker-conn');
+    if (connBadge) {
+      connBadge.classList.remove('badge-good', 'badge-warn', 'badge-bad');
+      if (payload.broker_connected) {
+        connBadge.classList.add('badge-good');
+        connBadge.textContent = 'connected';
+      } else {
+        // /api/status doesn't separate "offline" from "not implemented".
+        // Preserve "not implemented" when the prior render set it, since
+        // a non-connected broker that the dashboard knows is scaffolded
+        // shouldn't suddenly read "offline".
+        var wasNotImplemented = connBadge.textContent.trim() === 'not implemented';
+        if (wasNotImplemented) {
+          connBadge.classList.add('badge-warn');
+          connBadge.textContent = 'not implemented';
+        } else {
+          connBadge.classList.add('badge-bad');
+          connBadge.textContent = 'offline';
+        }
+      }
+    }
+    var ksInd = card.querySelector('.execution-kill-switch-indicator');
+    if (ksInd) {
+      ksInd.classList.toggle('active', !!payload.kill_switch_active);
+      ksInd.textContent = 'kill switch ' +
+        (payload.kill_switch_active ? 'active' : 'off');
+    }
+  }
+
+  function fetchStatus() {
+    return fetch('/api/status', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) { refreshFromStatus(body); return body; })
+      .catch(function () { return null; });
+  }
+
+  // Mirror header kill-switch toggles without forcing a refetch — the
+  // base.html toggle already knows the truth from its POST response.
+  document.addEventListener('signalbridge:kill-switch-change', function (ev) {
+    if (!ev || !ev.detail) return;
+    var active = !!ev.detail.active;
+    var appBadge = document.getElementById('summary-app-status');
+    if (appBadge) {
+      appBadge.classList.toggle('badge-bad', active);
+      appBadge.classList.toggle('badge-good', !active);
+      appBadge.textContent = active ? 'halted' : 'running';
+    }
+    var ksInd = card.querySelector('.execution-kill-switch-indicator');
+    if (ksInd) {
+      ksInd.classList.toggle('active', active);
+      ksInd.textContent = 'kill switch ' + (active ? 'active' : 'off');
+    }
+  });
 
   var _statusFadeTimer = null;
   function setStatusText(label, opts) {
@@ -755,9 +841,14 @@
                 showToast('Live execution disengaged', 'info');
               }
               showFeedback('Execution disengaged.', 'ok', null);
-              window.setTimeout(function () {
-                window.location.reload();
-              }, wasLive ? 1100 : 400);
+              // Card transitioned to dry-run; arm flag is now false and
+              // the smoke-execute button should hide.
+              card.dataset.executionArmed = 'false';
+              syncSmokeExecuteVisibility();
+              // Sync the rest of the UI from the server's truth without
+              // reloading — keeps the dry-run-enter animation visible.
+              window.setTimeout(function () { fetchStatus(); },
+                wasLive ? 1100 : 400);
             }, holdMs);
           } else {
             var reason = (resp.body && (resp.body.message || resp.body.status))
