@@ -256,6 +256,15 @@ class Settings(BaseModel):
         default_factory=lambda: _int("DUPLICATE_ORDER_COOLDOWN_SECONDS", 60)
     )
 
+    # Timezone that defines the trading-day boundary for daily-PnL
+    # buckets and "today" counts. Default ``UTC`` matches the storage
+    # layout. Operators trading ES/NQ futures typically set this to
+    # ``America/New_York`` so the day rollover lines up with the local
+    # session instead of 00:00 UTC (= mid-session ET).
+    trading_day_timezone: str = Field(
+        default_factory=lambda: os.getenv("TRADING_DAY_TIMEZONE", "UTC")
+    )
+
     # Reject signals whose chart timeframe isn't in the allowlist.
     enable_timeframe_lock: bool = Field(
         default_factory=lambda: _bool("ENABLE_TIMEFRAME_LOCK", False)

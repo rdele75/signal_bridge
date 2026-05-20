@@ -279,7 +279,10 @@ def create_app() -> FastAPI:
         settings.resolved_provider,
     )
 
-    journal = Journal(settings.database_abs_path)
+    journal = Journal(
+        settings.database_abs_path,
+        trading_day_timezone=settings.trading_day_timezone,
+    )
     settings_store = SettingsStore(settings.database_abs_path)
     settings_store.initialize_settings_from_env(settings)
     kill_switch = KillSwitch(

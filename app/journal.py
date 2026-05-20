@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+log = logging.getLogger("signalbridge.journal")
 
 
 _SCHEMA = """
@@ -67,12 +71,64 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _resolve_tz(name: Optional[str]) -> tzinfo:
+    """Best-effort tz resolution. Falls back to UTC on missing tzdata or
+    a bad name so the journal never refuses to compute a date bucket."""
+    if not name or name.upper() == "UTC":
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, KeyError) as exc:
+        log.warning(
+            "TRADING_DAY_TIMEZONE=%r could not be resolved (%s) — "
+            "falling back to UTC for daily-PnL bucketing",
+            name,
+            exc.__class__.__name__,
+        )
+        return timezone.utc
+
+
 class Journal:
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        trading_day_timezone: str = "UTC",
+    ) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        # The trading-day timezone controls the boundary for daily-PnL
+        # buckets and "today" counts. UTC by default; operators trading
+        # ES/NQ futures typically set this to ``America/New_York`` so
+        # the day-rollover lines up with the local trading session
+        # instead of 00:00 UTC (= 19:00 EST / 20:00 EDT, mid-session).
+        self._trading_day_tz_name = trading_day_timezone or "UTC"
+        self._trading_day_tz = _resolve_tz(self._trading_day_tz_name)
         self._init_schema()
+
+    @property
+    def trading_day_timezone(self) -> str:
+        """Name of the configured trading-day timezone (for diagnostics)."""
+        return self._trading_day_tz_name
+
+    def _today_iso(self) -> str:
+        """``YYYY-MM-DD`` for *now* in the configured trading-day tz."""
+        return datetime.now(self._trading_day_tz).date().isoformat()
+
+    def _today_utc_window(self) -> tuple[str, str]:
+        """Return ``(start_utc_iso, end_utc_iso)`` covering the current
+        trading day in the configured tz. Used to filter UTC-stored
+        ``received_at`` timestamps against an operator-local day."""
+        today_local = datetime.now(self._trading_day_tz).date()
+        start_local = datetime.combine(
+            today_local, datetime.min.time(), tzinfo=self._trading_day_tz
+        )
+        end_local = start_local + timedelta(days=1)
+        return (
+            start_local.astimezone(timezone.utc).isoformat(),
+            end_local.astimezone(timezone.utc).isoformat(),
+        )
 
     @contextmanager
     def _conn(self):
@@ -221,7 +277,7 @@ class Journal:
 
     def get_daily_pnl(self, trade_date: Optional[str] = None) -> float:
         if trade_date is None:
-            trade_date = datetime.now(timezone.utc).date().isoformat()
+            trade_date = self._today_iso()
         with self._lock, self._conn() as conn:
             cur = conn.execute(
                 "SELECT realized_pnl FROM daily_pnl WHERE trade_date = ?",
@@ -232,7 +288,7 @@ class Journal:
 
     def add_daily_pnl(self, amount: float, trade_date: Optional[str] = None) -> None:
         if trade_date is None:
-            trade_date = datetime.now(timezone.utc).date().isoformat()
+            trade_date = self._today_iso()
         with self._lock, self._conn() as conn:
             conn.execute(
                 """
@@ -340,11 +396,14 @@ class Journal:
             return dict(row) if row else None
 
     def count_today(self, *, decision: Optional[str] = None) -> int:
+        # ``received_at`` is stored in UTC. Use the operator-local
+        # trading-day window so this count matches the daily-PnL bucket.
+        start_utc, end_utc = self._today_utc_window()
         with self._lock, self._conn() as conn:
-            params: list[Any] = []
+            params: list[Any] = [start_utc, end_utc]
             sql = (
                 "SELECT COUNT(*) AS c FROM signals "
-                "WHERE date(received_at) = date('now')"
+                "WHERE received_at >= ? AND received_at < ?"
             )
             if decision is not None:
                 sql += " AND decision = ?"
