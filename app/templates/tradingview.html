@@ -151,35 +151,6 @@
 </section>
 
 
-<section class="card section">
-  <details class="collapsible">
-    <summary class="section-head collapsible-toggle">
-      <h3>Generic / manual alert JSON template</h3>
-      <span class="hint">click to expand</span>
-    </summary>
-    <div class="collapsible-body">
-      <p class="muted mb-2">
-        <strong>Not the Xiznit strategy template.</strong> Paste this into the
-        TradingView alert's <em>Message</em> field for hand-written alerts. Replace
-        <code>&lt;your TRADINGVIEW_WEBHOOK_SECRET&gt;</code> with the actual secret saved above.
-      </p>
-      <div class="code-frame">
-        <span class="copy-hint">json</span>
-        <pre class="code">{{ alert_template }}</pre>
-      </div>
-      <p class="muted mt-3">
-        <strong>Note:</strong> For strategy / indicator alerts, <code>{{ '{{interval}}' }}</code>
-        sends the chart timeframe (e.g. <code>1</code>, <code>5</code>, <code>60</code>,
-        <code>D</code>). TradingView may return <code>1</code> for some price-only or
-        Range chart alerts — keep that in mind if you enable the timeframe lock on the
-        <a href="/settings/risk">Risk page</a>.
-      </p>
-    </div>
-  </details>
-</section>
-
-
-
 <div class="banner">
   <span class="t">Going public:</span> when you're ready to receive real TradingView alerts,
   run <code>ngrok http {{ port }}</code> (or <code>cloudflared tunnel</code>) and use that

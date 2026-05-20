@@ -242,13 +242,11 @@ def test_webhook_lock_enabled_csv_allows_multiple(client):
     assert "timeframe_not_allowed" in body["rejection_reason"]
 
 
-def test_tradingview_page_template_includes_interval_placeholder(client):
-    import html
-
-    body = html.unescape(client.get("/tradingview").text)
-    # The template renders the JSON sample with this exact pair (after
-    # HTML-unescaping the quotes Jinja2 emits as &#34;).
-    assert '"timeframe": "{{interval}}"' in body
+# NOTE: test_tradingview_page_template_includes_interval_placeholder
+# removed during the polish pass — the Generic / manual alert JSON
+# template was deleted, so there is no longer an inline timeframe
+# placeholder on the tradingview page. The Xiznit template lives in
+# a separate Pine script and isn't rendered through this endpoint.
 
 
 def test_risk_page_renders_timeframe_lock_fields(client):

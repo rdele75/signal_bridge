@@ -3600,26 +3600,6 @@ def create_app() -> FastAPI:
         secret = settings.webhook_secret or ""
         secret_set = bool(secret) and secret != "change_me_to_a_long_random_secret"
         secret_preview = webhook_secret_preview(secret)
-        alert_template = json.dumps(
-            {
-                "secret": "<your TRADINGVIEW_WEBHOOK_SECRET>",
-                "source": "tradingview",
-                "strategy": "orb_200ema_confluence",
-                "symbol": "{{ticker}}",
-                "exchange": "{{exchange}}",
-                "action": "{{strategy.order.action}}",
-                "contracts": "{{strategy.order.contracts}}",
-                "price": "{{strategy.order.price}}",
-                "position_size": "{{strategy.position_size}}",
-                "market_position": "{{strategy.market_position}}",
-                "order_id": "{{strategy.order.id}}",
-                "comment": "{{strategy.order.comment}}",
-                "timeframe": "{{interval}}",
-                "bar_time": "{{time}}",
-                "fire_time": "{{timenow}}",
-            },
-            indent=2,
-        )
         # Build the public Xiznit-style webhook URLs the operator needs
         # to paste into TradingView. The dashboard already requires an
         # admin session, so embedding the full secret here is OK — the
@@ -3651,7 +3631,6 @@ def create_app() -> FastAPI:
                 "secret_set": secret_set,
                 "secret_value": secret if secret_set else "",
                 "secret_preview": secret_preview,
-                "alert_template": alert_template,
                 "allowed_symbols": list(settings.allowed_symbols),
                 "xiznit_url_local": xiznit_url_local,
                 "xiznit_url_tunnel": xiznit_url_tunnel,

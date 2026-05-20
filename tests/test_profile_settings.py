@@ -142,13 +142,14 @@ def test_tradingview_page_xiznit_url_uses_query_secret_and_ticker(client):
     )
 
 
-def test_tradingview_page_marks_generic_template_as_generic(client):
+def test_tradingview_page_no_longer_has_generic_template_block(client):
+    """The Generic / manual alert JSON template block was removed in
+    the polish pass — the Xiznit strategy template is the only
+    documented copy-paste source now."""
     body = client.get("/tradingview").text
-    # The JSON template block is now explicitly *generic* — not the
-    # Xiznit strategy template.
-    assert "Generic / manual alert" in body or "Generic/manual alert" in body
-    # And the page calls out that it's not the Xiznit one.
-    assert "Not the Xiznit" in body
+    assert "Generic / manual alert" not in body
+    assert "Generic/manual alert" not in body
+    assert "Not the Xiznit" not in body
 
 
 # ---------------------------------------------------------------------------

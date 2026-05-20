@@ -258,20 +258,16 @@ def test_risk_page_post_without_allowed_symbols_preserves_setting(client):
 
 def test_tradingview_page_has_collapsible_sections(client):
     body = client.get("/tradingview").text
-    # After ui-revisions: only Xiznit ORB and the alert template
-    # collapsibles survive (Webhook URL forms and Local curl test
-    # were removed). Two collapsibles minimum, both collapsed.
-    assert body.count('<details class="collapsible"') >= 2
+    # After the polish pass: only the Xiznit ORB collapsible survives
+    # — the Generic / manual alert JSON template collapsible was
+    # removed. At least one collapsible remains, and it must be closed.
+    assert body.count('<details class="collapsible"') >= 1
     assert '<details class="collapsible" open' not in body
 
 
-def test_tradingview_alert_template_still_renders(client):
-    body = client.get("/tradingview").text
-    # Content is still present even though wrapped in a collapsed
-    # <details>; the alert template is preserved verbatim.
-    import html
-    unescaped = html.unescape(body)
-    assert '"timeframe": "{{interval}}"' in unescaped
+# NOTE: test_tradingview_alert_template_still_renders removed during
+# the polish pass — the Generic / manual alert JSON template
+# collapsible was deleted, so there's no alert_template to assert on.
 
 
 # ---------------------------------------------------------------------------
