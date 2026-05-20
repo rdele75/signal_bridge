@@ -168,9 +168,9 @@ def test_tradingview_secret_uses_copy_row(client):
     assert 'class="dark-input"' in body
 
 
-def test_tradingview_field_reference_table_has_mobile_safe_wrapper(client):
-    body = client.get("/tradingview").text
-    assert "table-scroll" in body
+# test_tradingview_field_reference_table_has_mobile_safe_wrapper removed
+# alongside the Field reference card itself (ui-revisions 4.3) — the
+# section it asserted on no longer exists.
 
 
 # ---------------------------------------------------------------------------
