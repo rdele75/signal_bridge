@@ -289,8 +289,15 @@ def create_app() -> FastAPI:
         settings.database_abs_path.parent / "kill_switch.active",
         enabled=settings.enable_kill_switch,
     )
-    risk = RiskEngine(settings=settings, journal=journal, kill_switch=kill_switch)
+    # Broker built first so the risk engine can consult it during
+    # max_open_positions evaluation (H3).
     broker = build_broker(settings, journal, settings_store=settings_store)
+    risk = RiskEngine(
+        settings=settings,
+        journal=journal,
+        kill_switch=kill_switch,
+        broker=broker,
+    )
     symbol_map = SymbolMap(settings.symbols_map_abs_path)
     handler = WebhookHandler(
         settings=settings,
