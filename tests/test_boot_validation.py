@@ -28,6 +28,8 @@ def _fresh_settings(
     allow_insecure: bool = False,
     admin_auth_enabled: bool = False,
     session_secret: str | None = "a" * 64,
+    app_host: str = "127.0.0.1",
+    allow_public_no_auth: bool = False,
 ):
     """Build a Settings instance with the supplied webhook + session secrets.
 
@@ -51,10 +53,17 @@ def _fresh_settings(
         "ADMIN_AUTH_ENABLED", "true" if admin_auth_enabled else "false"
     )
 
+    monkeypatch.setenv("APP_HOST", app_host)
+
     if allow_insecure:
         monkeypatch.setenv("SIGNALBRIDGE_ALLOW_INSECURE_BOOT", "1")
     else:
         monkeypatch.delenv("SIGNALBRIDGE_ALLOW_INSECURE_BOOT", raising=False)
+
+    if allow_public_no_auth:
+        monkeypatch.setenv("SIGNALBRIDGE_ALLOW_PUBLIC_NO_AUTH", "1")
+    else:
+        monkeypatch.delenv("SIGNALBRIDGE_ALLOW_PUBLIC_NO_AUTH", raising=False)
 
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "sb_boot.db"))
     monkeypatch.setenv("LOG_PATH", str(tmp_path / "sb_boot.log"))
@@ -281,6 +290,77 @@ def test_session_secret_warns_when_auth_off_and_unset(tmp_path, monkeypatch, cap
         config_mod.enforce_boot_validation(settings, log)
     assert any(
         "SESSION_SECRET is unset or placeholder" in record.message
+        and record.levelno == logging.WARNING
+        for record in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------
+# M3 — bind+auth refusal
+# ---------------------------------------------------------------------
+
+
+def test_m3_refuses_non_local_bind_when_auth_off(tmp_path, monkeypatch):
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=False,
+        app_host="0.0.0.0",
+    )
+    errors = config_mod.validate_secrets(settings)
+    assert any(
+        "binds a non-localhost interface" in e
+        and "ADMIN_AUTH_ENABLED=false" in e
+        for e in errors
+    )
+
+
+def test_m3_allows_local_bind_when_auth_off(tmp_path, monkeypatch):
+    for host in ("127.0.0.1", "localhost", "::1"):
+        config_mod, settings = _fresh_settings(
+            tmp_path,
+            monkeypatch,
+            webhook_secret="a" * 32,
+            admin_auth_enabled=False,
+            app_host=host,
+        )
+        assert config_mod.validate_secrets(settings) == [], (
+            f"local host {host!r} should not trip the bind check"
+        )
+
+
+def test_m3_allows_non_local_bind_when_auth_on(tmp_path, monkeypatch):
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=True,
+        session_secret="x" * 64,
+        app_host="0.0.0.0",
+    )
+    # With auth enabled the bind check shouldn't trigger — auth is the
+    # gate, not the bind interface.
+    assert config_mod.validate_secrets(settings) == []
+
+
+def test_m3_escape_hatch_boots_with_warning(tmp_path, monkeypatch, caplog):
+    config_mod, settings = _fresh_settings(
+        tmp_path,
+        monkeypatch,
+        webhook_secret="a" * 32,
+        admin_auth_enabled=False,
+        app_host="0.0.0.0",
+        allow_public_no_auth=True,
+    )
+    # The escape hatch removes the fatal error.
+    assert config_mod.validate_secrets(settings) == []
+    # And the WARNING fires through enforce_boot_validation.
+    log = logging.getLogger("signalbridge.boot_test_m3")
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        config_mod.enforce_boot_validation(settings, log)
+    assert any(
+        "SIGNALBRIDGE_ALLOW_PUBLIC_NO_AUTH" in record.message
         and record.levelno == logging.WARNING
         for record in caplog.records
     )

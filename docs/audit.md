@@ -41,17 +41,37 @@ not do — anything missing from this list is not guaranteed.
 mounted, no subsystem is initialised — when any of the following is
 true:
 
+**Webhook secret** (always checked):
+
 - `TRADINGVIEW_WEBHOOK_SECRET` is unset or empty.
 - `TRADINGVIEW_WEBHOOK_SECRET` equals the public placeholder
   `change_me_to_a_long_random_secret` (also the literal value in
   `.env.example`).
 - `TRADINGVIEW_WEBHOOK_SECRET` is shorter than 16 characters.
 
+**Session secret** (only when `ADMIN_AUTH_ENABLED=true`):
+
+- `SESSION_SECRET` is unset or empty.
+- `SESSION_SECRET` equals the placeholder `generate_or_require_secret`.
+- `SESSION_SECRET` is shorter than 32 characters.
+
+The hardcoded `"signalbridge-fallback-secret"` literal in
+`SessionMiddleware` is gone — when auth is on, the validator guarantees
+a real value; when auth is off, `SessionMiddleware` isn't installed.
+
+**Bind interface vs auth**:
+
+- `APP_HOST` not in `{127.0.0.1, localhost, ::1}` while
+  `ADMIN_AUTH_ENABLED=false` refuses boot. Escape hatch:
+  `SIGNALBRIDGE_ALLOW_PUBLIC_NO_AUTH=1` skips with a loud `WARNING` —
+  intended for trusted reverse-proxy deployments that handle their own
+  auth. Tailscale Funnel does *not* count.
+
 Failure raises `RuntimeError` listing every offending item and the fix
-(`openssl rand -hex 32`). Escape hatch:
-`SIGNALBRIDGE_ALLOW_INSECURE_BOOT=1` downgrades the refusal to a loud
-`WARNING` and boots anyway. Intended for debug sessions only; never
-set in production `.env`.
+(`openssl rand -hex 32`). General escape hatch:
+`SIGNALBRIDGE_ALLOW_INSECURE_BOOT=1` downgrades all the fatal refusals
+to a single loud `WARNING` and boots anyway. Intended for debug
+sessions only; never set in production `.env`.
 
 ### Demo execution (`EXECUTION_MODE=demo`)
 

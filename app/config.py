@@ -34,6 +34,18 @@ SESSION_SECRET_MIN_LENGTH = 32
 # only — never set this in production .env.
 INSECURE_BOOT_ENV = "SIGNALBRIDGE_ALLOW_INSECURE_BOOT"
 
+# Hosts considered safe to bind without admin auth. Anything else
+# requires ADMIN_AUTH_ENABLED=true or the explicit
+# SIGNALBRIDGE_ALLOW_PUBLIC_NO_AUTH escape hatch below.
+LOCAL_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+
+# Separate escape hatch for the M3 bind+auth check. Distinct from
+# INSECURE_BOOT_ENV so an operator running behind a trusted reverse
+# proxy that handles its own auth can disable just the bind check
+# without unmuting the secret-strength gates above. Tailscale Funnel
+# does NOT count — it exposes raw HTTP to anyone with the URL.
+PUBLIC_NO_AUTH_ENV = "SIGNALBRIDGE_ALLOW_PUBLIC_NO_AUTH"
+
 
 def _bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -392,6 +404,26 @@ def validate_secrets(settings: Settings) -> List[str]:
             "Generate one with: openssl rand -hex 32"
         )
 
+    # M3 — refuse to bind a non-localhost interface with auth disabled.
+    # An operator who flips ADMIN_AUTH_ENABLED=false and forgets that
+    # APP_HOST is 0.0.0.0 would otherwise expose the dashboard wide
+    # open on whatever network the host is on.
+    host = (settings.app_host or "").strip()
+    if (
+        not settings.admin_auth_enabled
+        and host
+        and host not in LOCAL_HOSTS
+        and not _bool(PUBLIC_NO_AUTH_ENV, False)
+    ):
+        errors.append(
+            f"APP_HOST={host!r} binds a non-localhost interface while "
+            "ADMIN_AUTH_ENABLED=false. Either enable admin auth or bind "
+            f"to one of {LOCAL_HOSTS}. To override for a trusted "
+            "reverse-proxy deployment set "
+            "SIGNALBRIDGE_ALLOW_PUBLIC_NO_AUTH=1 (Tailscale Funnel does "
+            "not count)."
+        )
+
     # SESSION_SECRET is only fatal when admin auth is on — when auth is
     # off, SessionMiddleware isn't installed and the value is unused. A
     # missing secret with auth off still gets a WARNING (see
@@ -434,6 +466,22 @@ def enforce_boot_validation(
 
     if log is None:
         log = _logging.getLogger("signalbridge")
+
+    # Loud WARNING when the public-no-auth escape hatch is on, so the
+    # boot logs make it obvious the bind check was deliberately bypassed.
+    host = (settings.app_host or "").strip()
+    if (
+        not settings.admin_auth_enabled
+        and host
+        and host not in LOCAL_HOSTS
+        and _bool(PUBLIC_NO_AUTH_ENV, False)
+    ):
+        log.warning(
+            "SIGNALBRIDGE_ALLOW_PUBLIC_NO_AUTH=1 — binding %s with admin "
+            "auth disabled. Only safe behind a trusted reverse proxy "
+            "that handles its own authentication.",
+            host,
+        )
 
     # Defensive WARNING when admin auth is off but SESSION_SECRET is
     # missing or the placeholder — the operator may flip auth on later
