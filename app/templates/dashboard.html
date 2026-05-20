@@ -665,12 +665,18 @@
       statusText.classList.remove('execution-status-transitioning');
       if (opts && opts.armed) {
         statusText.classList.add('execution-live-armed-enter');
-        // Drop the enter class once the animation settles.
+        // After the flash-in settles, swap to the persistent solid-
+        // green class so the status text stays calm-armed (no
+        // infinite color pulse — the red card border is the
+        // be-careful cue; the text staying solid green communicates
+        // armed-and-healthy).
         window.setTimeout(function () {
           statusText.classList.remove('execution-live-armed-enter');
+          statusText.classList.add('execution-status-armed-solid');
         }, 1600);
       } else {
         statusText.classList.remove('execution-live-armed-enter');
+        statusText.classList.remove('execution-status-armed-solid');
       }
     }, 220);
   }
@@ -726,6 +732,9 @@
         statusText.classList.add('execution-status-check-visible');
       } else {
         statusText.classList.remove('execution-status-check-visible');
+        // Disarmed → drop the solid-green text class too so the next
+        // state's color isn't shadowed by stale armed styling.
+        statusText.classList.remove('execution-status-armed-solid');
       }
     }
     setDisengageVisible(state);

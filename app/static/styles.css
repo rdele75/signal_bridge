@@ -1006,10 +1006,14 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   opacity: 0;
   transform: translateY(-3px);
 }
-/* Live-armed status text gets a brief checkmark + colour swing on
-   enter; tone settles into the steady armed look afterwards. */
+/* Live-armed status text gets a brief checkmark + flash on enter and
+   then SETTLES SOLID GREEN — not red. The red card-border-pulse is the
+   "be careful" signal; the status text staying solid green communicates
+   "armed and healthy". An infinite color pulse on the text itself
+   reads as anxious; one flash + steady state is calmer. */
 .execution-status-text.execution-live-armed-enter {
   color: var(--good);
+  font-weight: 600;
   animation: execution-status-armed-flash 1.4s ease-out 1 both;
 }
 .execution-status-text.execution-live-armed-enter::before {
@@ -1019,15 +1023,25 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   margin-right: 2px;
   animation: execution-status-check-in 0.5s ease-out 1 both;
 }
+.execution-status-text.execution-status-armed-solid {
+  color: var(--good);
+  font-weight: 600;
+}
 @keyframes execution-status-armed-flash {
-  0%   { color: var(--good); }
-  60%  { color: var(--good); }
-  100% { color: var(--bad); }
+  0%   { color: var(--good); opacity: 0.4; }
+  25%  { color: var(--good); opacity: 1; }
+  50%  { color: var(--good); opacity: 0.6; }
+  100% { color: var(--good); opacity: 1; }
 }
 @keyframes execution-status-check-in {
   0%   { opacity: 0; transform: scale(0.4); }
   60%  { opacity: 1; transform: scale(1.15); }
   100% { opacity: 1; transform: scale(1.0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .execution-status-text.execution-live-armed-enter {
+    animation: none;
+  }
 }
 
 .execution-mode-form {
