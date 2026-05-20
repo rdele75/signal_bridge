@@ -913,13 +913,16 @@ details.collapsible > summary:hover {
    stays put when the section hint wraps to a second line on narrow
    viewports. */
 details.collapsible > summary::after {
-  content: "▸";
+  /* Larger glyph + heavier visual weight so the affordance is
+     impossible to miss. Same character family (▸ / ▾) so the
+     existing chevron rotation feels familiar. */
+  content: "▶";
   position: absolute;
   right: 6px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--accent);
-  font-size: 14px;
+  font-size: 18px;
   font-weight: 700;
   flex-shrink: 0;
   transition: transform 0.15s ease;
@@ -927,7 +930,7 @@ details.collapsible > summary::after {
   line-height: 1;
 }
 details.collapsible[open] > summary::after {
-  content: "▾";
+  content: "▼";
 }
 details.collapsible > summary:hover h3 { color: var(--accent); }
 .collapsible-body {
