@@ -103,7 +103,7 @@
         Risk settings are set by the strategy
       </label>
     </div>
-    <p class="muted" style="margin: 0 0 10px;">
+    <p class="muted mb-4">
       When enabled, SignalBridge uses the contract quantity sent by
       TradingView and disables the fixed-contracts input below. SignalBridge
       still enforces max contracts and other safety limits.
@@ -116,7 +116,7 @@
                name="fixed_contracts_per_trade"
                value="{{ risk.fixed_contracts_per_trade }}"
                {% if risk.strategy_managed_risk %}disabled aria-disabled="true"{% endif %}>
-        <p class="muted" style="margin: 4px 0 0;">
+        <p class="muted mt-1">
           Inactive when strategy-managed sizing is on. Must be ≤ max contracts / trade.
         </p>
       </div>
@@ -125,7 +125,7 @@
         <input type="number" min="1" step="1" id="max_contracts_per_trade"
                name="max_contracts_per_trade"
                value="{{ risk.max_contracts_per_trade }}">
-        <p class="muted" style="margin: 4px 0 0;">
+        <p class="muted mt-1">
           Hard cap. Always enforced, even when the strategy manages sizing.
         </p>
       </div>
@@ -170,7 +170,7 @@
       <input type="text" id="allowed_timeframes" name="allowed_timeframes"
              value="{{ risk.allowed_timeframes_csv }}"
              placeholder="1,5,15">
-      <p class="muted" style="margin: 4px 0 0;">
+      <p class="muted mt-1">
         Comma-separated. Example: <code>1</code> for 1-minute,
         <code>5</code> for 5-minute, <code>15</code> for 15-minute,
         <code>60</code> for 1-hour, <code>D</code> for daily.
@@ -187,7 +187,7 @@
     <h3>Kill switch control</h3>
     <span class="hint">manual override</span>
   </div>
-  <p style="margin: 0 0 10px;">Status:
+  <p class="mb-4">Status:
     <span id="ks-status-badge"
           class="badge {{ 'badge-bad' if kill_switch_active else 'badge-good' }}">
       {{ 'active — all signals blocked' if kill_switch_active

@@ -91,15 +91,15 @@
        the lookback window without a page reload. The server-rendered
        block below shows the current snapshot so the page is useful
        even before the JS runs (and for tests that assert raw HTML). #}
-    <div class="btn-row mobile-actions" style="margin-bottom: 8px;">
-      <label for="past-orders-lookback" style="margin-right: 6px;">Lookback:</label>
+    <div class="btn-row mobile-actions mb-3">
+      <label for="past-orders-lookback" class="mr-1">Lookback:</label>
       <select id="past-orders-lookback" data-default="{{ order_history.lookback_days }}">
         <option value="1">1 day</option>
         <option value="7">7 days</option>
         <option value="30">30 days</option>
       </select>
       <button id="past-orders-refresh" class="btn" type="button">Refresh</button>
-      <span id="past-orders-status" class="muted" style="margin-left: 10px;">loading…</span>
+      <span id="past-orders-status" class="muted ml-2">loading…</span>
     </div>
     <script id="past-orders-config" type="application/json">
       {
@@ -231,7 +231,7 @@
       {% endfor %}
     </div>
     {% if m.past_orders.status == 'fallback_journal' %}
-      <p class="muted" style="margin: 6px 0 0;">
+      <p class="muted mt-2">
         Broker order history unavailable — showing local journal rows.
       </p>
     {% endif %}

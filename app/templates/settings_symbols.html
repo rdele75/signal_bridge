@@ -33,7 +33,7 @@
             <th>Paper Symbol</th>
             <th>Topstep Contract ID</th>
             <th>Tradovate Symbol</th>
-            <th style="width: 80px;">Actions</th>
+            <th class="col-actions">Actions</th>
           </tr>
         </thead>
         <tbody id="symbols-rows">
@@ -59,11 +59,11 @@
       </table>
     </div>
 
-    <div class="btn-row" style="margin-top: 12px;">
+    <div class="btn-row mt-5">
       <button type="button" class="btn" id="btn-add-row">Add mapping</button>
       <button type="submit" class="btn btn-primary">Save mappings</button>
     </div>
-    <p class="muted" style="margin: 8px 0 0;">
+    <p class="muted mt-3">
       TradingView symbol is required. Paper symbol defaults to the TradingView ticker when blank.
       Topstep and Tradovate symbols may be blank — order builders will reject signals for symbols whose
       target broker mapping is missing.
@@ -76,7 +76,7 @@
     <h3>Topstep contract search</h3>
     <span class="hint">probes <code>/api/Contract/search</code></span>
   </div>
-  <p class="muted" style="margin: 0 0 10px;">
+  <p class="muted mb-4">
     Search ProjectX for the active contract id (e.g. <code>NQ</code> or <code>ES</code>) and paste it into the
     Topstep column above. Requires Topstep credentials configured under Broker settings.
   </p>
@@ -91,7 +91,7 @@
     </label>
     <button type="button" class="btn btn-primary" id="btn-contract-search">Search Topstep Contracts</button>
   </div>
-  <div id="contract-results" style="margin-top: 12px;"></div>
+  <div id="contract-results" class="mt-5"></div>
 </section>
 
 <script>

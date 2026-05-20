@@ -355,7 +355,7 @@
       <span class="hint">latest 10 from the active adapter</span>
     </div>
     {% if recent_orders %}
-      <div class="table-wrap table-scroll hide-on-mobile" style="margin-top: 6px;">
+      <div class="table-wrap table-scroll hide-on-mobile mt-2">
         <table class="mini">
           <thead>
             <tr>
@@ -389,7 +389,7 @@
           </tbody>
         </table>
       </div>
-      <div class="mobile-card-list show-on-mobile" style="margin-top: 6px;">
+      <div class="mobile-card-list show-on-mobile mt-2">
         {% for o in recent_orders %}
           <div class="mobile-card-row">
             <dl>
@@ -431,14 +431,14 @@
         {{ last_signal.contracts }}
       </div>
       <div class="card-sub mono">{{ last_signal.received_at }}</div>
-      <div style="margin-top: 8px;">
+      <div class="mt-3">
         {% if last_signal.decision == 'accepted' %}
           <span class="badge badge-good">accepted</span>
         {% else %}
           <span class="badge badge-bad">rejected</span>
         {% endif %}
         {% if last_signal.rejection_reason %}
-          <span class="muted" style="margin-left: 6px;">{{ last_signal.rejection_reason }}</span>
+          <span class="muted ml-1">{{ last_signal.rejection_reason }}</span>
         {% endif %}
       </div>
     {% else %}
@@ -455,7 +455,7 @@
         {{ last_rejection.action or '—' }}
       </div>
       <div class="card-sub mono">{{ last_rejection.received_at }}</div>
-      <div style="margin-top: 8px;">
+      <div class="mt-3">
         <span class="badge badge-bad">{{ last_rejection.rejection_reason }}</span>
       </div>
     {% else %}
