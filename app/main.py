@@ -53,6 +53,7 @@ from .settings_store import (
     webhook_secret_preview,
 )
 from .execution.topstep import TopstepBroker
+from .execution.topstep_order_builder import _generate_custom_tag
 from .signal_router import _topstep_token_sink, build_broker
 from .symbol_map import SymbolMap, parse_form_mappings
 from .webhook import WebhookHandler
@@ -900,7 +901,7 @@ def create_app() -> FastAPI:
             action=action_raw,
             contracts=contracts,
             price=None,
-            order_id=body.get("order_id"),
+            order_id=body.get("order_id") or _generate_custom_tag("manual_demo"),
             comment="topstep_submit_test_order",
             timeframe=None,
             raw=body,
@@ -1938,7 +1939,7 @@ def create_app() -> FastAPI:
                     contracts=contracts,
                     price=None,
                     order_id=None,
-                    comment="smoke_test_entry",
+                    comment=_generate_custom_tag("smoke_entry"),
                     timeframe=None,
                     raw={},
                 )
@@ -1971,7 +1972,7 @@ def create_app() -> FastAPI:
                     contracts=contracts,
                     price=None,
                     order_id=None,
-                    comment="smoke_test_exit",
+                    comment=_generate_custom_tag("smoke_exit"),
                     timeframe=None,
                     raw={},
                 )
@@ -2161,7 +2162,10 @@ def create_app() -> FastAPI:
             action="BUY",
             contracts=contracts,
             price=None,
-            order_id="smoke_test_entry",
+            # order_id is the primary tag source; the builder picks it
+            # up as the customTag. Fresh per call so ProjectX never
+            # rejects as duplicate.
+            order_id=_generate_custom_tag("smoke_entry"),
             comment="smoke_test entry",
             timeframe=None,
             raw={"smoke_test": True},
@@ -2175,7 +2179,7 @@ def create_app() -> FastAPI:
             action="SELL",
             contracts=contracts,
             price=None,
-            order_id="smoke_test_exit",
+            order_id=_generate_custom_tag("smoke_exit"),
             comment="smoke_test exit",
             timeframe=None,
             raw={"smoke_test": True},
@@ -2502,7 +2506,7 @@ def create_app() -> FastAPI:
             action=action,
             contracts=contracts,
             price=None,
-            order_id=body.get("order_id"),
+            order_id=body.get("order_id") or _generate_custom_tag("manual_live"),
             comment="topstep_submit_live_test_order",
             timeframe=None,
             raw=body,

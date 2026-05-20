@@ -27,6 +27,7 @@ ProjectX order schema (subset we use):
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any, Optional, Protocol
 
 from ..schemas import NormalizedSignal
@@ -92,6 +93,24 @@ def _truncate_tag(value: Optional[str]) -> Optional[str]:
     if len(text) <= CUSTOM_TAG_MAX_LEN:
         return text
     return text[:CUSTOM_TAG_MAX_LEN]
+
+
+def _generate_custom_tag(purpose: str) -> str:
+    """Generate a unique customTag for a ProjectX order.
+
+    ProjectX enforces customTag uniqueness per account. We combine a
+    short purpose label with a UUID4 suffix so each logical order
+    gets a unique tag even when the same purpose fires repeatedly.
+
+    Tag format: ``sb-{purpose}-{uuid12}``. The ``sb-`` prefix marks
+    SignalBridge-originated orders for journal/audit clarity. The
+    result is truncated to ``CUSTOM_TAG_MAX_LEN`` chars.
+    """
+    suffix = uuid.uuid4().hex[:12]
+    base = f"sb-{purpose}-{suffix}"
+    # _truncate_tag returns Optional[str] but base is always non-empty
+    # so the result is non-None.
+    return _truncate_tag(base) or base
 
 
 def _parse_numeric_account_id(value: Any) -> Optional[int]:
@@ -200,10 +219,17 @@ def build_market_order_payload(
             ),
         )
 
+    # customTag priority: explicit kwarg > signal.order_id > signal.comment
+    # > auto-generated unique tag. ProjectX enforces uniqueness per
+    # account, so we fall back to ``_generate_custom_tag`` when nothing
+    # explicit is provided — otherwise a caller that forgets to set a
+    # unique field gets a duplicate-tag rejection forever.
     tag_source = custom_tag
     if tag_source is None:
         tag_source = signal.order_id or signal.comment
     custom_tag_value = _truncate_tag(tag_source)
+    if custom_tag_value is None:
+        custom_tag_value = _generate_custom_tag("order")
 
     payload: dict[str, Any] = {
         "accountId": numeric_account_id,
