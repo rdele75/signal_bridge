@@ -397,6 +397,18 @@ dl.kv dd { font-family: var(--mono); font-size: 12.5px; word-break: break-all; c
   transition: all 0.15s ease;
 }
 .btn:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--accent); }
+/* Subtle press feedback — 1px translate plus a faint inset shadow so
+   buttons feel registered without bouncing. Kept off disabled buttons
+   so the disabled state stays inert. */
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn:active:not(:disabled) {
+    transform: none;
+  }
+}
 .btn-primary {
   background: linear-gradient(180deg, var(--accent), #5e6fe6);
   border-color: transparent;
