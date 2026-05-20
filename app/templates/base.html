@@ -7,7 +7,7 @@
   <title>{% block title %}SignalBridge{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}" />
 </head>
-<body>
+<body data-first-paint="1">
 {% set path = request.url.path %}
 {# Mode + broker badges used to live in the topbar. They're gone now —
    the Dashboard Execution card owns execution status. Only the
@@ -236,6 +236,17 @@
       closeDrawer();
     }
   });
+})();
+
+// Clear the data-first-paint flag once the staggered section enter
+// has had time to finish. Subsequent in-place refreshes never re-trigger
+// the animation because the flag is gone by then. ~250ms animation + up
+// to ~640ms of stagger across 9 sections = a 1000ms safety cushion.
+(function () {
+  if (document.body.dataset.firstPaint !== '1') return;
+  window.setTimeout(function () {
+    delete document.body.dataset.firstPaint;
+  }, 1000);
 })();
 
 // Smooth open/close for details.collapsible. The native <details>

@@ -189,6 +189,39 @@ code {
 .main h3 { font-size: 13px; margin: 0 0 10px; font-weight: 600; color: var(--fg); }
 
 .section { margin-bottom: 22px; }
+
+/* First-paint stagger.
+   Section cards fade in with a small upward translate so the page
+   feels like it lands instead of dumping all at once. body
+   data-first-paint="1" is rendered server-side (base.html) so the
+   initial keyframe state is applied before first paint — no flash of
+   visible content. The flag is cleared by the JS hook in base.html
+   once the last animation has had time to complete; subsequent
+   in-place refreshes never re-trigger the stagger. */
+@keyframes section-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+body[data-first-paint="1"] main.main > section.section {
+  animation: section-enter 0.25s ease both;
+}
+body[data-first-paint="1"] main.main > section.section:nth-of-type(1) { animation-delay:   0ms; }
+body[data-first-paint="1"] main.main > section.section:nth-of-type(2) { animation-delay:  80ms; }
+body[data-first-paint="1"] main.main > section.section:nth-of-type(3) { animation-delay: 160ms; }
+body[data-first-paint="1"] main.main > section.section:nth-of-type(4) { animation-delay: 240ms; }
+body[data-first-paint="1"] main.main > section.section:nth-of-type(5) { animation-delay: 320ms; }
+body[data-first-paint="1"] main.main > section.section:nth-of-type(6) { animation-delay: 400ms; }
+body[data-first-paint="1"] main.main > section.section:nth-of-type(7) { animation-delay: 480ms; }
+body[data-first-paint="1"] main.main > section.section:nth-of-type(8) { animation-delay: 560ms; }
+body[data-first-paint="1"] main.main > section.section:nth-of-type(9) { animation-delay: 640ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-first-paint="1"] main.main > section.section {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
 .section-head {
   display: flex; align-items: baseline; justify-content: space-between;
   margin-bottom: 10px;
