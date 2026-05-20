@@ -29,7 +29,7 @@
 </section>
 
 {# ---- Top status cards ---- #}
-<section class="grid grid-3 section">
+<section class="grid grid-2 section">
   <div class="card">
     <div class="card-label">Selected broker provider</div>
     <div class="card-value">
@@ -44,20 +44,6 @@
         active: <code>{{ active_broker_provider }}</code> · <span class="warn">restart to switch</span>
       {% else %}
         active adapter
-      {% endif %}
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-label">Selected account</div>
-    <div id="broker-selected-account-id" class="card-value sm mono">
-      {{ mask_value(selected_account_id or '—') }}
-    </div>
-    <div class="card-sub">
-      {% if selected_account_id_raw %}
-        from <code>SELECTED_ACCOUNT_ID</code>
-      {% else %}
-        per-provider default
       {% endif %}
     </div>
   </div>
@@ -500,10 +486,6 @@ async function _refreshBrokerSnapshot() {
     const r = await fetch('/api/broker/status', { credentials: 'same-origin' });
     if (!r.ok) return;
     const payload = await r.json();
-    const idValue = document.getElementById('broker-selected-account-id');
-    if (idValue) {
-      idValue.textContent = payload.selected_account_id || '—';
-    }
     const msg = document.getElementById('broker-connection-message');
     if (msg) msg.textContent = payload.broker_message || '—';
     _applyConnectionBadge(payload);
