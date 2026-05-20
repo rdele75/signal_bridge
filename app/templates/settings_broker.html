@@ -178,6 +178,12 @@
               Empty → use the per-provider default. Use <em>Fetch accounts</em> below to populate live Topstep accounts.
               Saving updates <code>SELECTED_ACCOUNT_ID</code> and (for topstep) <code>TOPSTEP_ACCOUNT_ID</code>.
             </p>
+            {% if configured_provider == 'topstep' and not selected_account_id_raw %}
+              <p class="banner warn mt-1">
+                Connect to Topstep first using the credentials below,
+                then select an account.
+              </p>
+            {% endif %}
           </div>
         </div>
 
@@ -211,15 +217,6 @@
                 not configured
               {% endif %}
             </p>
-          </div>
-        </div>
-        <div class="grid grid-2">
-          <div class="form-row">
-            <label for="topstep_account_id">TopstepX account ID</label>
-            <input id="topstep_account_id" name="topstep_account_id"
-                   type="text" maxlength="256" autocomplete="off"
-                   placeholder="e.g. PRACTICE-XXXX"
-                   value="{{ topstep.account_id }}" />
           </div>
         </div>
         <div class="grid grid-2">

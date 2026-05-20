@@ -979,10 +979,12 @@ def test_post_settings_broker_persists_topstep_fields(client):
         data={
             "broker_provider": "topstep",
             "execution_mode": "demo",
-            "selected_account_id": "",
+            # The standalone topstep_account_id input was removed —
+            # the dropdown owns selection and the POST handler mirrors
+            # SELECTED_ACCOUNT_ID into TOPSTEP_ACCOUNT_ID for topstep.
+            "selected_account_id": "PRACTICE-9001",
             "topstep_username": "trader42",
             "topstep_api_key": "abcd1234efgh5678",
-            "topstep_account_id": "PRACTICE-9001",
             "topstep_env": "demo",
             "topstep_base_url": "https://api.topstepx.com",
             "topstep_ws_url": "https://rtc.topstepx.com",
@@ -1001,6 +1003,9 @@ def test_post_settings_broker_persists_topstep_fields(client):
     stored = client.app.state.settings_store.get_all_settings()
     assert stored["TOPSTEP_USERNAME"] == "trader42"
     assert stored["TOPSTEP_API_KEY"] == "abcd1234efgh5678"
+    # SELECTED_ACCOUNT_ID and TOPSTEP_ACCOUNT_ID are kept in sync.
+    assert stored["SELECTED_ACCOUNT_ID"] == "PRACTICE-9001"
+    assert stored["TOPSTEP_ACCOUNT_ID"] == "PRACTICE-9001"
 
 
 def test_post_settings_broker_keeps_existing_api_key_when_blank_sentinel(client):
@@ -1141,7 +1146,6 @@ def test_settings_store_strips_topstep_api_key_on_save(client):
             "execution_mode": "paper",
             "topstep_username": " trader42 ",
             "topstep_api_key": "  abcd1234efgh5678 \n",
-            "topstep_account_id": " PRACTICE-9001 ",
             "topstep_env": "demo",
             "topstep_base_url": "https://api.topstepx.com",
             "topstep_ws_url": "https://rtc.topstepx.com",
@@ -1151,7 +1155,6 @@ def test_settings_store_strips_topstep_api_key_on_save(client):
     stored = client.app.state.settings_store.get_all_settings()
     assert stored["TOPSTEP_USERNAME"] == "trader42"
     assert stored["TOPSTEP_API_KEY"] == "abcd1234efgh5678"
-    assert stored["TOPSTEP_ACCOUNT_ID"] == "PRACTICE-9001"
     s = client.app.state.settings
     assert s.topstep_username == "trader42"
     assert s.topstep_api_key == "abcd1234efgh5678"

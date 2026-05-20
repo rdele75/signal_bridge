@@ -3161,24 +3161,26 @@ def create_app() -> FastAPI:
         selected_account_id: str = Form(""),
         topstep_username: str = Form(""),
         topstep_api_key: str = Form(_TOPSTEP_API_KEY_UNCHANGED),
-        topstep_account_id: str = Form(""),
         topstep_env: str = Form("demo"),
         topstep_base_url: str = Form("https://api.topstepx.com"),
         topstep_ws_url: str = Form("https://rtc.topstepx.com"),
     ):
-        # Build the update list dynamically so the API key is only touched
-        # when the user actually changed it (blank-on-purpose still clears
-        # it via the sentinel).
+        # The form's TOPSTEP_ACCOUNT_ID input was removed in the polish
+        # pass — the dropdown owns the selection. For the topstep
+        # provider we keep TOPSTEP_ACCOUNT_ID in sync with the dropdown
+        # value so anything reading the env var on the next boot picks
+        # up the same account.
         updates: list[tuple[str, Any]] = [
             ("BROKER_PROVIDER", broker_provider),
             ("EXECUTION_MODE", execution_mode),
             ("SELECTED_ACCOUNT_ID", selected_account_id),
             ("TOPSTEP_USERNAME", topstep_username),
-            ("TOPSTEP_ACCOUNT_ID", topstep_account_id),
             ("TOPSTEP_ENV", topstep_env),
             ("TOPSTEP_BASE_URL", topstep_base_url),
             ("TOPSTEP_WS_URL", topstep_ws_url),
         ]
+        if str(broker_provider or "").strip().lower() == "topstep":
+            updates.append(("TOPSTEP_ACCOUNT_ID", selected_account_id))
         if topstep_api_key != _TOPSTEP_API_KEY_UNCHANGED:
             updates.append(("TOPSTEP_API_KEY", topstep_api_key))
 
