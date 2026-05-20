@@ -299,10 +299,13 @@ class TopstepBroker(BrokerBase):
         if self._token_sink is not None:
             try:
                 self._token_sink(token, expires_at)
-            except Exception as exc:  # pragma: no cover - best-effort persistence
+            except Exception:  # pragma: no cover - best-effort persistence
+                # L1 — log the full traceback, not just the class name.
+                # Otherwise a silent persistence failure here means the
+                # next restart forgets the token without an explanation.
                 log.warning(
-                    "topstep token persistence failed: %s",
-                    exc.__class__.__name__,
+                    "topstep token persistence failed",
+                    exc_info=True,
                 )
 
     def _auth_headers_or_none(self) -> Optional[dict[str, str]]:

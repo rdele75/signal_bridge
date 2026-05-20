@@ -1334,8 +1334,15 @@ def create_app() -> FastAPI:
                 broker_symbol=None,
                 timeframe=None,
             )
-        except Exception:  # pragma: no cover - audit only
-            pass
+        except Exception:  # pragma: no cover - persistence best-effort
+            # L1 — don't swallow silently. The arming response still
+            # returns success because the in-memory + settings_store
+            # write already completed; the journal is for audit only.
+            # But the operator should see the audit-trail gap in logs.
+            log.warning(
+                "live-execution arm: audit journal write failed",
+                exc_info=True,
+            )
 
         return JSONResponse(
             status_code=200,

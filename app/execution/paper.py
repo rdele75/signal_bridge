@@ -172,6 +172,10 @@ class PaperBroker(BrokerBase):
         # position state without trying to compute a fair exit price —
         # there is no live market context.
         flattened: list[str] = []
+        # L3 — distinguish "asked for a symbol we don't track" from
+        # "the symbol is tracked but already flat" so the message
+        # surfaces the actual state instead of a generic count.
+        unknown_symbol = symbol is not None and symbol not in self._positions
         with self._lock:
             targets = [symbol] if symbol else list(self._positions.keys())
             for sym in targets:
@@ -197,6 +201,14 @@ class PaperBroker(BrokerBase):
             symbol or "*",
             flattened,
         )
+        if flattened:
+            message = f"flattened {len(flattened)} position(s)"
+        elif unknown_symbol:
+            message = (
+                f"no open position for symbol {symbol} — nothing to flatten"
+            )
+        else:
+            message = "no open positions"
         return {
             "ok": True,
             "provider": self.provider,
@@ -206,11 +218,7 @@ class PaperBroker(BrokerBase):
             "symbol": symbol,
             "flattened": flattened,
             "count": len(flattened),
-            "message": (
-                f"flattened {len(flattened)} position(s)"
-                if flattened
-                else "no open positions"
-            ),
+            "message": message,
         }
 
     def flatten_all_positions(self) -> dict[str, Any]:
