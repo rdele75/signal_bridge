@@ -33,6 +33,7 @@ from .auth import (
     warn_if_default_secrets,
 )
 from .config import Settings, enforce_boot_validation, get_settings
+from .rate_limiter import TokenBucket
 from .dashboard import (
     broker_status_payload,
     dashboard_summary,
@@ -284,15 +285,37 @@ def create_app() -> FastAPI:
     # misconfigured install fails fast.
     enforce_boot_validation(settings, log)
 
-    journal = Journal(settings.database_abs_path)
+    journal = Journal(
+        settings.database_abs_path,
+        trading_day_timezone=settings.trading_day_timezone,
+    )
     settings_store = SettingsStore(settings.database_abs_path)
     settings_store.initialize_settings_from_env(settings)
     kill_switch = KillSwitch(
         settings.database_abs_path.parent / "kill_switch.active",
         enabled=settings.enable_kill_switch,
     )
-    risk = RiskEngine(settings=settings, journal=journal, kill_switch=kill_switch)
+    # M2 — surface ENABLE_KILL_SWITCH=false at boot. is_active() always
+    # returns False in this state, which means the dashboard kill-switch
+    # toggle and the live-trading kill-switch gate both silently no-op.
+    # The dashboard pill is rendered as "disabled (config)" elsewhere;
+    # this warning makes the startup logs explicit too.
+    if not settings.enable_kill_switch:
+        log.warning(
+            "ENABLE_KILL_SWITCH=false — kill switch disabled by config. "
+            "Emergency-stop button will not block trades and the live "
+            "kill-switch gate trivially passes. Set ENABLE_KILL_SWITCH=true "
+            "to re-enable."
+        )
+    # Broker built first so the risk engine can consult it during
+    # max_open_positions evaluation (H3).
     broker = build_broker(settings, journal, settings_store=settings_store)
+    risk = RiskEngine(
+        settings=settings,
+        journal=journal,
+        kill_switch=kill_switch,
+        broker=broker,
+    )
     symbol_map = SymbolMap(settings.symbols_map_abs_path)
     handler = WebhookHandler(
         settings=settings,
@@ -1320,8 +1343,15 @@ def create_app() -> FastAPI:
                 broker_symbol=None,
                 timeframe=None,
             )
-        except Exception:  # pragma: no cover - audit only
-            pass
+        except Exception:  # pragma: no cover - persistence best-effort
+            # L1 — don't swallow silently. The arming response still
+            # returns success because the in-memory + settings_store
+            # write already completed; the journal is for audit only.
+            # But the operator should see the audit-trail gap in logs.
+            log.warning(
+                "live-execution arm: audit journal write failed",
+                exc_info=True,
+            )
 
         return JSONResponse(
             status_code=200,
@@ -2556,6 +2586,116 @@ def create_app() -> FastAPI:
         return _safe_broker_call("get_positions")
 
     @app.get(
+        "/api/broker/positions/reconcile",
+        dependencies=[Depends(require_admin_api)],
+    )
+    def api_broker_positions_reconcile() -> JSONResponse:
+        """Report differences between broker and journal positions.
+
+        Read-only: never auto-corrects. The operator decides what to do
+        when the two disagree (typical causes: manual close in the
+        broker UI, broker EOD auto-flatten, or — for the Topstep
+        adapter today — the journal never wrote a position row for a
+        topstep submission).
+
+        Dedupe is by the raw symbol key, so a TradingView ticker in
+        the journal (``MES1!``) and a ProjectX contract id from the
+        broker (``CON.F.US.MES.M26``) appear in separate buckets even
+        when they refer to the same instrument. That's intentional —
+        the goal is to surface mismatches for human review, not
+        silently reconcile them.
+        """
+        broker_resp: dict[str, Any] = _safe_broker_call("get_positions")
+        journal_rows = journal.list_open_positions()
+
+        # Build symbol → qty maps for both sides. Quantity uses ``size``
+        # for the broker side (ProjectX schema) with fallbacks for
+        # other shapes; the journal uses ``quantity``.
+        broker_positions: list[dict[str, Any]] = []
+        broker_qty: dict[str, int] = {}
+        if (
+            broker_resp.get("ok") is True
+            and isinstance(broker_resp.get("positions"), list)
+        ):
+            for pos in broker_resp["positions"]:
+                if not isinstance(pos, dict):
+                    continue
+                key = ""
+                for k in ("symbol", "contractId", "contract_id"):
+                    if pos.get(k):
+                        key = str(pos[k])
+                        break
+                if not key:
+                    continue
+                qty_raw = (
+                    pos.get("quantity")
+                    if pos.get("quantity") is not None
+                    else pos.get("size")
+                )
+                try:
+                    qty = int(qty_raw) if qty_raw is not None else 0
+                except (TypeError, ValueError):
+                    qty = 0
+                if qty == 0:
+                    continue
+                broker_positions.append({"symbol": key, "quantity": qty})
+                broker_qty[key] = qty
+
+        journal_positions: list[dict[str, Any]] = []
+        journal_qty: dict[str, int] = {}
+        for row in journal_rows:
+            sym = row.get("symbol")
+            qty = int(row.get("quantity") or 0)
+            if not sym or qty == 0:
+                continue
+            journal_positions.append({"symbol": str(sym), "quantity": qty})
+            journal_qty[str(sym)] = qty
+
+        differences: list[dict[str, Any]] = []
+        for sym in sorted(set(broker_qty) | set(journal_qty)):
+            b = broker_qty.get(sym)
+            j = journal_qty.get(sym)
+            if b is None:
+                differences.append(
+                    {
+                        "symbol": sym,
+                        "kind": "not_in_broker",
+                        "journal_quantity": j,
+                    }
+                )
+            elif j is None:
+                differences.append(
+                    {
+                        "symbol": sym,
+                        "kind": "not_in_journal",
+                        "broker_quantity": b,
+                    }
+                )
+            elif b != j:
+                differences.append(
+                    {
+                        "symbol": sym,
+                        "kind": "qty_mismatch",
+                        "broker_quantity": b,
+                        "journal_quantity": j,
+                    }
+                )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "provider": broker.provider,
+                "broker_reachable": bool(broker_resp.get("ok")),
+                "broker_status": broker_resp.get("status"),
+                "broker_positions": broker_positions,
+                "journal_positions": journal_positions,
+                "differences": differences,
+                "in_sync": not differences,
+            },
+        )
+
+    @app.get(
         "/api/broker/orders", dependencies=[Depends(require_admin_api)]
     )
     def api_broker_orders() -> dict[str, Any]:
@@ -2766,8 +2906,55 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.post("/webhooks/tradingview", response_model=WebhookResponse)
-    async def tradingview_webhook(request: Request) -> WebhookResponse:
+    # M5 — per-process token bucket guarding the webhook. A misconfigured
+    # TradingView alert template (or anyone with the secret) firing
+    # tightly could otherwise saturate the broker / daily-loss limit.
+    webhook_rate_limiter = TokenBucket(
+        rate_per_second=settings.webhook_rate_limit_per_second,
+        burst=settings.webhook_rate_burst,
+    )
+    app.state.webhook_rate_limiter = webhook_rate_limiter
+
+    @app.post("/webhooks/tradingview")
+    async def tradingview_webhook(request: Request):
+        if not webhook_rate_limiter.allow():
+            log.warning(
+                "webhook rate-limited (limit=%s/s burst=%s)",
+                settings.webhook_rate_limit_per_second,
+                settings.webhook_rate_burst,
+            )
+            # Journal the refusal so the operator can see it. We don't
+            # have a parsed payload yet — stub the row with what we know.
+            journal.record_signal(
+                source=None,
+                strategy=None,
+                symbol=None,
+                action=None,
+                contracts=None,
+                price=None,
+                order_id=None,
+                raw_payload={"_rate_limited": True},
+                decision="rejected",
+                rejection_reason="rate_limited",
+                execution_mode=broker.execution_mode,
+                execution_result=None,
+                broker_provider=broker.provider,
+                broker_symbol=None,
+                timeframe=None,
+            )
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "accepted": False,
+                    "decision": "rejected",
+                    "rejection_reason": "rate_limited",
+                    "message": (
+                        "webhook rate limit exceeded — slow down or raise "
+                        "WEBHOOK_RATE_LIMIT_PER_SECOND / WEBHOOK_RATE_BURST"
+                    ),
+                },
+            )
+
         try:
             payload = await request.json()
         except Exception:

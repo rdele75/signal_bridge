@@ -1,13 +1,17 @@
 """Risk checks applied to every incoming signal before execution."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from .config import Settings
+from .execution.broker_base import BrokerBase
 from .journal import Journal
 from .kill_switch import KillSwitch
 from .schemas import NormalizedSignal
+
+log = logging.getLogger("signalbridge.risk_engine")
 
 
 # Map of incoming TradingView action -> internal normalized action.
@@ -133,10 +137,16 @@ class RiskEngine:
         settings: Settings,
         journal: Journal,
         kill_switch: KillSwitch,
+        *,
+        broker: Optional[BrokerBase] = None,
     ) -> None:
         self.settings = settings
         self.journal = journal
         self.kill_switch = kill_switch
+        # Optional — when provided and the active provider is topstep,
+        # ``_open_position_symbols`` augments the journal-known set with
+        # whatever the broker reports. See H3.
+        self.broker = broker
 
     def evaluate(self, signal: NormalizedSignal) -> RiskDecision:
         s = self.settings
@@ -195,11 +205,14 @@ class RiskEngine:
                 return RiskDecision(False, "duplicate_order_id")
 
         # Max open positions — only enforce for entries, not exits/covers.
+        # H3: the count must include positions the bot didn't open
+        # (e.g. operator manually opened a position in TopstepX), so we
+        # merge the broker's open-position list with the journal's.
         if signal.action in LONG_ACTIONS | SHORT_ACTIONS:
-            existing = self.journal.get_position(signal.symbol)
-            already_open_here = existing is not None and existing.get("quantity", 0) != 0
+            open_symbols = self._open_position_symbols()
+            already_open_here = signal.symbol in open_symbols
             if not already_open_here:
-                open_count = self.journal.count_open_positions()
+                open_count = len(open_symbols)
                 if open_count >= s.max_open_positions:
                     return RiskDecision(
                         False,
@@ -207,3 +220,59 @@ class RiskEngine:
                     )
 
         return RiskDecision(True, None)
+
+    def _open_position_symbols(self) -> set[str]:
+        """Symbols currently considered open across the journal and the
+        active broker. Topstep is queried via ``get_positions()`` so
+        operator-initiated TopstepX positions count toward
+        ``max_open_positions``.
+
+        Tradeoff: when the broker call fails (network error / timeout)
+        the gate falls open to journal-only — preferring to let a
+        legitimate trade through during a transient outage rather than
+        block the operator on a count we can't verify. The fallback
+        path logs a WARNING so it's visible in the audit trail.
+
+        Dedupe is by raw string key, so a TradingView ticker in the
+        journal (``MES1!``) and a ProjectX contract id from the broker
+        (``CON.F.US.MES.M26``) appear as two different entries — that
+        OVER-counts when the same instrument is in both places, which
+        fails closed (rejects when the operator may already be near
+        the cap). Safe direction for a risk gate.
+        """
+        symbols: set[str] = set()
+        for row in self.journal.list_open_positions():
+            sym = row.get("symbol")
+            if sym:
+                symbols.add(str(sym))
+
+        if self.broker is None or self.broker.provider != "topstep":
+            return symbols
+
+        try:
+            resp = self.broker.get_positions()
+        except Exception as exc:  # broad — adapter-defined errors vary
+            log.warning(
+                "broker.get_positions() failed during max_open_positions "
+                "merge — falling back to journal-only count (%s: %s). "
+                "Manual TopstepX positions may be under-counted.",
+                exc.__class__.__name__,
+                exc,
+            )
+            return symbols
+
+        if not isinstance(resp, dict) or resp.get("ok") is not True:
+            # missing_credentials / not_implemented envelopes aren't
+            # errors — the operator simply hasn't connected the broker.
+            # Don't log; the dashboard already surfaces that state.
+            return symbols
+
+        for pos in resp.get("positions") or []:
+            if not isinstance(pos, dict):
+                continue
+            for key in ("symbol", "contractId", "contract_id"):
+                value = pos.get(key)
+                if value:
+                    symbols.add(str(value))
+                    break
+        return symbols

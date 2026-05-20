@@ -182,6 +182,20 @@ def test_flatten_symbol_safe_message_for_topstep(make_app):
     assert body["not_implemented"] is True
 
 
+def test_flatten_unknown_symbol_returns_clear_message(client):
+    """L3 — flattening a symbol the paper broker doesn't know about
+    must explicitly say so, not silently return ``flattened 0
+    position(s)`` which reads like success."""
+    body = client.post("/api/paper/flatten/DOES_NOT_EXIST").json()
+    assert body["ok"] is True
+    assert body["count"] == 0
+    assert body["flattened"] == []
+    # Message must name the missing symbol so the operator can tell the
+    # difference between "already flat" and "wrong symbol typed".
+    assert "DOES_NOT_EXIST" in body["message"]
+    assert "nothing to flatten" in body["message"]
+
+
 # ---------- UI surfacing ----------
 
 def test_dashboard_no_longer_shows_inline_paper_controls(client):

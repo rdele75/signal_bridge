@@ -94,6 +94,11 @@
                        {% if kill_switch_active %}active{% endif %}">
             kill switch {{ 'active' if kill_switch_active else 'off' }}
           </span>
+        {% else %}
+          <span class="execution-kill-switch-indicator badge-warn"
+                title="ENABLE_KILL_SWITCH=false in config — the emergency-stop button will not block trades. Set ENABLE_KILL_SWITCH=true and restart to re-enable.">
+            kill switch disabled (config)
+          </span>
         {% endif %}
       </div>
 
@@ -285,6 +290,27 @@
     <div class="card-sub">
       {% if selected_account_id %}acct <code>{{ selected_account_id }}</code>{% else %}<a href="/settings/broker">configure</a>{% endif %}
     </div>
+  </div>
+</section>
+
+{# Reconcile broker positions against the journal (M4).
+   Read-only — no auto-correct. Operator clicks "Reconcile" to see a
+   diff in a small inline panel below. #}
+<section class="section">
+  <div class="card">
+    <div class="card-row">
+      <div class="card-label">Broker vs journal positions</div>
+      <button type="button" id="btn-reconcile-positions" class="btn">
+        Reconcile
+      </button>
+    </div>
+    <p class="muted mt-1">
+      Compares <code>broker.get_positions()</code> against journal-tracked
+      open positions. Read-only — flags mismatches so you can decide
+      what to do (typical causes: manual close in the broker UI,
+      broker EOD auto-flatten, or a journal write that didn't happen).
+    </p>
+    <div id="reconcile-output" class="reconcile-output" hidden></div>
   </div>
 </section>
 
@@ -1005,6 +1031,48 @@
   }
 
   if (flattenBtn) {
+    // M4 — Reconcile broker vs journal positions. Read-only inline diff.
+    var reconcileBtn = document.getElementById('btn-reconcile-positions');
+    var reconcileOut = document.getElementById('reconcile-output');
+    if (reconcileBtn && reconcileOut) {
+      reconcileBtn.addEventListener('click', function () {
+        reconcileBtn.disabled = true;
+        reconcileOut.hidden = false;
+        reconcileOut.innerHTML = '<p class="muted">checking…</p>';
+        fetch('/api/broker/positions/reconcile', { credentials: 'same-origin' })
+          .then(function (r) { return r.json(); })
+          .then(function (body) {
+            if (!body || body.ok !== true) {
+              reconcileOut.innerHTML =
+                '<div class="banner warn"><span class="t">Error:</span> '
+                + (body && (body.message || body.status) || 'unknown') + '</div>';
+              return;
+            }
+            if (body.in_sync) {
+              reconcileOut.innerHTML =
+                '<div class="banner"><span class="t">In sync:</span> '
+                + 'broker and journal positions agree.</div>';
+              return;
+            }
+            var rows = (body.differences || []).map(function (d) {
+              var bits = ['<code>' + d.symbol + '</code>', d.kind];
+              if (d.broker_quantity != null) bits.push('broker=' + d.broker_quantity);
+              if (d.journal_quantity != null) bits.push('journal=' + d.journal_quantity);
+              return '<li>' + bits.join(' · ') + '</li>';
+            }).join('');
+            reconcileOut.innerHTML =
+              '<div class="banner warn"><span class="t">Out of sync:</span> '
+              + '<ul>' + rows + '</ul></div>';
+          })
+          .catch(function (err) {
+            reconcileOut.innerHTML =
+              '<div class="banner warn"><span class="t">Error:</span> '
+              + err + '</div>';
+          })
+          .then(function () { reconcileBtn.disabled = false; });
+      });
+    }
+
     flattenBtn.addEventListener('click', function () {
       if (!window.confirm('Flatten/Exit all positions on the active broker?')) return;
       clearFeedback();

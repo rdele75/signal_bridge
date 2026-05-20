@@ -92,6 +92,34 @@ def _mask_token(value: Optional[str]) -> str:
     return f"…{text[-4:]}"
 
 
+# ProjectX errorCode values that indicate the request failed because of
+# authentication (token expired / missing / invalid), not a business
+# rejection. Codes inferred from the existing "phantom errorCode=3"
+# workaround in __init__ + ProjectX convention (1 = unauthorized).
+# Submission paths use this set to decide whether to re-auth + retry
+# once before giving up (H5).
+AUTH_ERROR_CODES: frozenset[int] = frozenset({1, 3})
+
+
+def _is_auth_failure(http_status: int, response: Any) -> bool:
+    """True iff a ProjectX response looks like an auth rejection.
+
+    Used by submit paths to decide whether to re-authenticate and
+    retry once. Conservative — matches HTTP 401 OR a recognized
+    errorCode in the response body. Any other status / errorCode is a
+    real business rejection (or a transport error) and is NOT retried.
+    """
+    if http_status == 401:
+        return True
+    if not isinstance(response, dict):
+        return False
+    code = response.get("errorCode")
+    try:
+        return int(code) in AUTH_ERROR_CODES
+    except (TypeError, ValueError):
+        return False
+
+
 class TopstepBroker(BrokerBase):
     name = "topstep"
     provider = "topstep"
@@ -138,6 +166,15 @@ class TopstepBroker(BrokerBase):
         self.password = password or ""
         self.api_key = (api_key or "").strip()
         self.account_id = (account_id or "").strip()
+        # M1 — per-account canTrade cache. Populated by ``get_accounts``
+        # whenever the call succeeds. Maps the trimmed-string account
+        # id to whatever ProjectX reported for ``canTrade``.
+        # ``None`` (no entry) means we've never received an account
+        # snapshot covering this id — the gate falls open in that case
+        # (with a one-shot WARNING) so a fresh boot doesn't refuse to
+        # submit before the operator has clicked Fetch Accounts.
+        self._can_trade_cache: dict[str, bool] = {}
+        self._can_trade_warned: bool = False
         self.env = (env or "demo").lower()
         self.base_url = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
         self.ws_url = (ws_url or DEFAULT_WS_URL).strip().rstrip("/")
@@ -262,10 +299,13 @@ class TopstepBroker(BrokerBase):
         if self._token_sink is not None:
             try:
                 self._token_sink(token, expires_at)
-            except Exception as exc:  # pragma: no cover - best-effort persistence
+            except Exception:  # pragma: no cover - best-effort persistence
+                # L1 — log the full traceback, not just the class name.
+                # Otherwise a silent persistence failure here means the
+                # next restart forgets the token without an explanation.
                 log.warning(
-                    "topstep token persistence failed: %s",
-                    exc.__class__.__name__,
+                    "topstep token persistence failed",
+                    exc_info=True,
                 )
 
     def _auth_headers_or_none(self) -> Optional[dict[str, str]]:
@@ -507,6 +547,9 @@ class TopstepBroker(BrokerBase):
             self._normalize_account(a) if isinstance(a, dict) else {"raw": a}
             for a in raw_accounts
         ]
+        # M1 — refresh the canTrade cache from the live snapshot so the
+        # execution-safety check can consult it on the next submit.
+        self._refresh_can_trade_cache(accounts)
         return {
             "ok": True,
             "provider": self.provider,
@@ -515,6 +558,48 @@ class TopstepBroker(BrokerBase):
             "accounts": accounts,
             "credentials": self._credentials_summary(),
         }
+
+    def _refresh_can_trade_cache(
+        self, accounts: list[dict[str, Any]]
+    ) -> None:
+        """Update the canTrade cache from a fresh ``get_accounts`` payload.
+
+        Only accounts whose normalized payload carries an explicit
+        ``can_trade`` boolean overwrite the cache; anything else leaves
+        the prior entry alone (so a partial refresh doesn't drop a
+        previously-known account's flag)."""
+        for acct in accounts:
+            raw_id = acct.get("id")
+            if raw_id is None:
+                continue
+            can_trade = acct.get("can_trade")
+            if isinstance(can_trade, bool):
+                self._can_trade_cache[str(raw_id).strip()] = can_trade
+
+    def _account_can_trade(self) -> Optional[bool]:
+        """Return the cached canTrade flag for the currently selected
+        account. ``None`` means we've never received a snapshot — the
+        execution-safety gate silently bypasses the check in that case
+        (matching the "if known" language in the public docs)."""
+        target = (self.account_id or "").strip()
+        if not target:
+            return None
+        return self._can_trade_cache.get(target)
+
+    def _warn_can_trade_unknown_once(self) -> None:
+        """Log the canTrade-unknown WARNING at most once per process
+        lifetime so the audit trail records the "if known" bypass
+        without spamming every signal."""
+        if self._can_trade_warned:
+            return
+        self._can_trade_warned = True
+        log.warning(
+            "Topstep canTrade gate is unenforced for account %s — no "
+            "accounts snapshot is cached. Fetch Accounts on the broker "
+            "page to populate the cache so the gate can act. Subsequent "
+            "signals will not repeat this warning.",
+            self.account_id or "(unset)",
+        )
 
     @staticmethod
     def _match_account_by_id(
@@ -1056,6 +1141,13 @@ class TopstepBroker(BrokerBase):
             return "missing_credentials"
         if self._numeric_account_id() is None:
             return "non_numeric_account_id"
+        # M1 — canTrade gate. False blocks; unknown silently bypasses
+        # with a one-shot WARNING (matches "if known" in the docs).
+        can_trade = self._account_can_trade()
+        if can_trade is False:
+            return "account_cannot_trade"
+        if can_trade is None:
+            self._warn_can_trade_unknown_once()
         return None
 
     def _live_execution_safety_check(
@@ -1086,6 +1178,13 @@ class TopstepBroker(BrokerBase):
             return "missing_credentials"
         if self._numeric_account_id() is None:
             return "non_numeric_account_id"
+        # M1 — canTrade gate. Same shape as the demo path: False blocks,
+        # unknown bypasses with a one-shot WARNING.
+        can_trade = self._account_can_trade()
+        if can_trade is False:
+            return "account_cannot_trade"
+        if can_trade is None:
+            self._warn_can_trade_unknown_once()
         if signal is not None:
             allowed = [s.strip() for s in self.live_allowed_symbols if s and s.strip()]
             if not allowed:
@@ -1142,6 +1241,15 @@ class TopstepBroker(BrokerBase):
 
         No paper fallback: a refusal here surfaces clearly back to the
         webhook handler / admin endpoint instead of silently no-op'ing.
+
+        Auth-failure retry (H5): the local 23h token-validity check is
+        based on mint time + TTL and can disagree with the server's
+        actual session state. If the first POST returns HTTP 401 or a
+        ProjectX ``errorCode`` matching the documented auth-rejection
+        codes, this method calls ``authenticate()`` once and retries
+        the POST exactly once. Non-auth failures (network, validation,
+        ProjectX business rejections) are NOT retried — the retry is a
+        single shot, not a loop.
         """
         safety_gate = self._execution_safety_check(signal)
         if safety_gate is not None:
@@ -1207,6 +1315,22 @@ class TopstepBroker(BrokerBase):
         http_status, response = self._post_json(
             "/api/Order/place", payload, auth=True
         )
+        if _is_auth_failure(http_status, response):
+            log.info(
+                "topstep order place auth failure (http=%s errorCode=%s) — "
+                "re-authenticating and retrying once",
+                http_status,
+                response.get("errorCode") if isinstance(response, dict) else None,
+            )
+            auth_retry = self.authenticate()
+            if auth_retry.get("ok"):
+                http_status, response = self._post_json(
+                    "/api/Order/place", payload, auth=True
+                )
+            # If the re-auth itself failed, fall through with the
+            # original (auth-failed) response — the existing rejection
+            # envelope already conveys what went wrong. We do NOT loop.
+
         if http_status == 0:
             return {
                 "ok": False,
