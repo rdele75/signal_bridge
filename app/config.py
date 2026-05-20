@@ -16,6 +16,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 
+# Public placeholder for TRADINGVIEW_WEBHOOK_SECRET. The boot-time
+# validator refuses to start if the live setting equals this value, so
+# both the default and the .env.example must reference this single
+# constant to keep the check honest.
+WEBHOOK_SECRET_PLACEHOLDER = "change_me_to_a_long_random_secret"
+WEBHOOK_SECRET_MIN_LENGTH = 16
+# Escape hatch env var. When set to a truthy value the validator emits a
+# loud WARNING and lets the app boot anyway. Intended for debug sessions
+# only — never set this in production .env.
+INSECURE_BOOT_ENV = "SIGNALBRIDGE_ALLOW_INSECURE_BOOT"
+
+
 def _bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None or raw == "":
@@ -68,7 +80,7 @@ class Settings(BaseModel):
 
     webhook_secret: str = Field(
         default_factory=lambda: os.getenv(
-            "TRADINGVIEW_WEBHOOK_SECRET", "change_me_to_a_long_random_secret"
+            "TRADINGVIEW_WEBHOOK_SECRET", WEBHOOK_SECRET_PLACEHOLDER
         )
     )
 
@@ -343,3 +355,72 @@ def reload_settings() -> Settings:
     """Force re-read of environment. Used in tests."""
     get_settings.cache_clear()
     return get_settings()
+
+
+def validate_secrets(settings: Settings) -> List[str]:
+    """Return a list of fatal boot-time problems with the configured secrets.
+
+    Empty list means the configuration is safe to bind. Callers should
+    raise ``RuntimeError`` (or the equivalent) when the list is non-empty
+    so the process refuses to start.
+    """
+    errors: List[str] = []
+
+    secret = settings.webhook_secret or ""
+    if not secret:
+        errors.append(
+            "TRADINGVIEW_WEBHOOK_SECRET is unset or empty. "
+            "Generate one with: openssl rand -hex 32"
+        )
+    elif secret == WEBHOOK_SECRET_PLACEHOLDER:
+        errors.append(
+            "TRADINGVIEW_WEBHOOK_SECRET is still the public placeholder "
+            f"({WEBHOOK_SECRET_PLACEHOLDER!r}). "
+            "Generate one with: openssl rand -hex 32"
+        )
+    elif len(secret) < WEBHOOK_SECRET_MIN_LENGTH:
+        errors.append(
+            "TRADINGVIEW_WEBHOOK_SECRET is shorter than "
+            f"{WEBHOOK_SECRET_MIN_LENGTH} characters (got {len(secret)}). "
+            "Generate one with: openssl rand -hex 32"
+        )
+
+    return errors
+
+
+def enforce_boot_validation(
+    settings: Settings, log: "logging.Logger | None" = None
+) -> None:
+    """Call ``validate_secrets`` and refuse to boot when it reports problems.
+
+    Honors ``SIGNALBRIDGE_ALLOW_INSECURE_BOOT=1`` as an escape hatch — when
+    set, the validator's findings are downgraded to a single ``WARNING``
+    log line and boot continues. Intended for debug sessions only.
+    """
+    import logging as _logging
+
+    if log is None:
+        log = _logging.getLogger("signalbridge")
+
+    errors = validate_secrets(settings)
+    if not errors:
+        return
+
+    if _bool(INSECURE_BOOT_ENV, False):
+        joined = "; ".join(errors)
+        log.warning(
+            "SIGNALBRIDGE_ALLOW_INSECURE_BOOT is set — booting despite "
+            "fatal secret problems: %s",
+            joined,
+        )
+        return
+
+    bullet = "\n  - "
+    message = (
+        "SignalBridge refuses to start with insecure configuration:"
+        + bullet
+        + bullet.join(errors)
+        + "\n\nFix each item above and restart. To override for a debug "
+        "session set SIGNALBRIDGE_ALLOW_INSECURE_BOOT=1 (loudly logged)."
+    )
+    raise RuntimeError(message)

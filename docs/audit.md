@@ -35,6 +35,24 @@ not do — anything missing from this list is not guaranteed.
 
 ## Current safety gates
 
+### Boot-time validation
+
+`create_app()` refuses to construct the FastAPI app — no routes are
+mounted, no subsystem is initialised — when any of the following is
+true:
+
+- `TRADINGVIEW_WEBHOOK_SECRET` is unset or empty.
+- `TRADINGVIEW_WEBHOOK_SECRET` equals the public placeholder
+  `change_me_to_a_long_random_secret` (also the literal value in
+  `.env.example`).
+- `TRADINGVIEW_WEBHOOK_SECRET` is shorter than 16 characters.
+
+Failure raises `RuntimeError` listing every offending item and the fix
+(`openssl rand -hex 32`). Escape hatch:
+`SIGNALBRIDGE_ALLOW_INSECURE_BOOT=1` downgrades the refusal to a loud
+`WARNING` and boots anyway. Intended for debug sessions only; never
+set in production `.env`.
+
 ### Demo execution (`EXECUTION_MODE=demo`)
 
 All of the following must be true before `/api/Order/place` is called:

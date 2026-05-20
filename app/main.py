@@ -32,7 +32,7 @@ from .auth import (
     safe_next_path,
     warn_if_default_secrets,
 )
-from .config import Settings, get_settings
+from .config import Settings, enforce_boot_validation, get_settings
 from .dashboard import (
     broker_status_payload,
     dashboard_summary,
@@ -278,6 +278,11 @@ def create_app() -> FastAPI:
         settings.execution_mode,
         settings.resolved_provider,
     )
+
+    # Refuse to start with a default/short/missing webhook secret. Runs
+    # before any subsystem (journal, broker, routes) is constructed so a
+    # misconfigured install fails fast.
+    enforce_boot_validation(settings, log)
 
     journal = Journal(settings.database_abs_path)
     settings_store = SettingsStore(settings.database_abs_path)
