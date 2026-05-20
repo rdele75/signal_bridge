@@ -815,7 +815,14 @@ details.collapsible[open] > summary::after {
   transform: rotate(0deg);
 }
 details.collapsible > summary:hover h3 { color: var(--accent); }
-.collapsible-body { padding-top: 10px; }
+.collapsible-body {
+  padding-top: 10px;
+  /* The JS shim in base.html sets max-height and overflow inline
+     during open/close transitions, then clears them on
+     transitionend. The shim is the source of truth — no fixed
+     CSS rule here so that operators with prefers-reduced-motion
+     get the native snap-open behaviour unchanged. */
+}
 
 /* ----- Profit graph (metrics page) ----- */
 .profit-graph { color: var(--accent); }

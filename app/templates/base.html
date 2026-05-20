@@ -237,6 +237,73 @@
     }
   });
 })();
+
+// Smooth open/close for details.collapsible. The native <details>
+// element snaps its content area open / closed with no transition; we
+// intercept the summary click, run a max-height transition on the
+// .collapsible-body, and only flip the open attribute once the
+// animation lands. The chevron rotation continues to come from the
+// existing CSS (details.collapsible > summary::after).
+//
+// Limited to .collapsible — the sidebar's nav-group is intentionally
+// left native because its content is short and already feels snappy.
+(function () {
+  var reduceMotion = window.matchMedia(
+    '(prefers-reduced-motion: reduce)'
+  ).matches;
+  if (reduceMotion) return;
+  var DURATION_MS = 220;
+  document.querySelectorAll('details.collapsible').forEach(function (det) {
+    var summary = det.querySelector('summary');
+    var body = det.querySelector('.collapsible-body');
+    if (!summary || !body) return;
+
+    body.style.overflow = 'hidden';
+    body.style.transition = 'max-height ' + (DURATION_MS / 1000) + 's ease';
+    body.style.maxHeight = det.open ? 'none' : '0px';
+
+    var animating = false;
+
+    function openCollapsible() {
+      if (animating) return;
+      animating = true;
+      det.open = true;
+      body.style.maxHeight = '0px';
+      // Double rAF so the browser commits the 0 baseline before we
+      // animate to the measured height.
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(function () {
+          body.style.maxHeight = body.scrollHeight + 'px';
+        });
+      });
+      window.setTimeout(function () {
+        body.style.maxHeight = 'none';
+        animating = false;
+      }, DURATION_MS + 30);
+    }
+
+    function closeCollapsible() {
+      if (animating) return;
+      animating = true;
+      body.style.maxHeight = body.scrollHeight + 'px';
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(function () {
+          body.style.maxHeight = '0px';
+        });
+      });
+      window.setTimeout(function () {
+        det.open = false;
+        animating = false;
+      }, DURATION_MS + 30);
+    }
+
+    summary.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      if (det.open) closeCollapsible();
+      else openCollapsible();
+    });
+  });
+})();
 </script>
 </body>
 </html>
