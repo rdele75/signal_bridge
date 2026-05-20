@@ -49,7 +49,7 @@
 
   <div class="card">
     <div class="card-label">Selected account</div>
-    <div class="card-value sm mono">{{ selected_account_id or '—' }}</div>
+    <div id="broker-selected-account-id" class="card-value sm mono">{{ selected_account_id or '—' }}</div>
     <div class="card-sub">
       {% if selected_account_id_raw %}
         from <code>SELECTED_ACCOUNT_ID</code>
@@ -63,18 +63,22 @@
     <div class="card-label">Broker connection</div>
     <div class="card-value">
       {% if broker_status.broker_connected %}
-        <span class="badge badge-good plain">connected</span>
+        <span id="broker-connection-badge" class="badge badge-good plain">connected</span>
       {% elif broker_status.not_implemented %}
-        <span class="badge badge-warn plain">not implemented</span>
+        <span id="broker-connection-badge" class="badge badge-warn plain">not implemented</span>
       {% else %}
-        <span class="badge badge-bad plain">offline</span>
+        <span id="broker-connection-badge" class="badge badge-bad plain">offline</span>
       {% endif %}
     </div>
-    <div class="card-sub">{{ broker_status.broker_message or '—' }}</div>
+    <div id="broker-connection-message" class="card-sub">{{ broker_status.broker_message or '—' }}</div>
   </div>
 </section>
 
-{# ---- Selected broker account snapshot ---- #}
+{# ---- Selected broker account snapshot ----
+       Wrapped in a stable mount node so the broker-page JS can rebuild
+       the snapshot in place after a select-account action without
+       reloading the whole page. #}
+<div id="broker-snapshot-mount">
 {% if broker_status.selected_account %}
 <section class="card section">
   <div class="section-head">
@@ -145,6 +149,7 @@
   </p>
 </section>
 {% endif %}
+</div>
 
 {# ---- Broker / execution selection form (account configuration only) ---- #}
 <section class="card section">
@@ -412,6 +417,129 @@ function _renderAccountsList(body) {
   _tsList.appendChild(wrap);
 }
 
+// HTML escape helper for fields rendered into the snapshot mount via
+// innerHTML below. Each field is user-controlled (account name, status
+// strings); without escaping a hostile broker response could inject
+// markup.
+function _esc(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Connection badge has three states (connected / not implemented /
+// offline) — mirror the same conditional logic the Jinja template uses.
+function _applyConnectionBadge(payload) {
+  const badge = document.getElementById('broker-connection-badge');
+  if (!badge) return;
+  badge.classList.remove('badge-good', 'badge-warn', 'badge-bad');
+  if (payload.broker_connected) {
+    badge.classList.add('badge-good');
+    badge.textContent = 'connected';
+  } else if (payload.not_implemented) {
+    badge.classList.add('badge-warn');
+    badge.textContent = 'not implemented';
+  } else {
+    badge.classList.add('badge-bad');
+    badge.textContent = 'offline';
+  }
+}
+
+function _renderBrokerSnapshot(payload) {
+  const mount = document.getElementById('broker-snapshot-mount');
+  if (!mount) return;
+  const acct = payload.selected_account;
+  if (acct && (acct.id !== null && acct.id !== undefined)) {
+    const balanceTxt = (acct.balance === null || acct.balance === undefined)
+      ? '—'
+      : Number(acct.balance).toFixed(2);
+    let canTradeHtml = '—';
+    if (acct.can_trade === true) {
+      canTradeHtml = '<span class="badge badge-good plain">yes</span>';
+    } else if (acct.can_trade === false) {
+      canTradeHtml = '<span class="badge badge-bad plain">no</span>';
+    }
+    let authHtml = '<code>' + _esc(payload.auth_status || '—') + '</code>';
+    if (payload.token_cached) {
+      authHtml += ' · token cached';
+      if (payload.token_expires_at) {
+        authHtml += ' · expires <code>'
+          + _esc(payload.token_expires_at) + '</code>';
+      }
+    }
+    const positionsHtml = payload.positions_not_implemented
+      ? '<span class="badge badge-warn plain">not implemented</span>'
+      : '<span class="badge badge-good plain">'
+        + _esc(payload.positions_count) + ' open</span>';
+    const ordersHtml = payload.orders_not_implemented
+      ? '<span class="badge badge-warn plain">not implemented</span>'
+      : '<span class="badge badge-good plain">'
+        + _esc(payload.orders_count) + ' known</span>';
+    mount.innerHTML =
+      '<section class="card section">'
+      +   '<div class="section-head">'
+      +     '<h3>Selected ' + _esc(payload.provider) + ' account</h3>'
+      +     '<span class="hint">live snapshot from the broker</span>'
+      +   '</div>'
+      +   '<dl class="kv">'
+      +     '<dt>account id</dt><dd><code>'
+      +       _esc(acct.id_str || acct.id || '—')
+      +     '</code></dd>'
+      +     '<dt>name</dt><dd>' + _esc(acct.name || '—') + '</dd>'
+      +     '<dt>balance</dt><dd>' + balanceTxt + '</dd>'
+      +     '<dt>canTrade</dt><dd>' + canTradeHtml + '</dd>'
+      +     '<dt>auth</dt><dd>' + authHtml + '</dd>'
+      +     '<dt>positions</dt><dd>' + positionsHtml
+      +       ' <span class="muted">status <code>'
+      +       _esc(payload.positions_status || '—') + '</code></span></dd>'
+      +     '<dt>orders</dt><dd>' + ordersHtml
+      +       ' <span class="muted">status <code>'
+      +       _esc(payload.orders_status || '—') + '</code></span></dd>'
+      +   '</dl>'
+      + '</section>';
+  } else if (payload.active_broker_provider === 'topstep') {
+    mount.innerHTML =
+      '<section class="card section">'
+      +   '<div class="section-head">'
+      +     '<h3>Selected Topstep account</h3>'
+      +     '<span class="hint">live snapshot from the broker</span>'
+      +   '</div>'
+      +   '<p class="muted">No selected account snapshot yet — current status: '
+      +   '<code>' + _esc(payload.auth_status || payload.status || '—')
+      +   '</code>.'
+      +   (payload.broker_message
+        ? ' ' + _esc(payload.broker_message) : '')
+      +   '</p>'
+      + '</section>';
+  } else {
+    mount.innerHTML = '';
+  }
+}
+
+async function _refreshBrokerSnapshot() {
+  try {
+    const r = await fetch('/api/broker/status', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const payload = await r.json();
+    const idValue = document.getElementById('broker-selected-account-id');
+    if (idValue) {
+      idValue.textContent = payload.selected_account_id || '—';
+    }
+    const msg = document.getElementById('broker-connection-message');
+    if (msg) msg.textContent = payload.broker_message || '—';
+    _applyConnectionBadge(payload);
+    _renderBrokerSnapshot(payload);
+  } catch (e) {
+    // Don't surface — the operator already sees the POST result in
+    // #test-out and a future reload would resync if anything's wrong.
+    console.warn('broker snapshot refresh failed', e);
+  }
+}
+
 async function _topstepSelect(accountId) {
   if (!accountId) return;
   if (!window.confirm('Save ' + accountId + ' as SELECTED_ACCOUNT_ID / TOPSTEP_ACCOUNT_ID?')) return;
@@ -423,7 +551,7 @@ async function _topstepSelect(accountId) {
     _writeOut(body);
     if (body && body.ok) {
       if (_acctSelect) _acctSelect.value = body.selected_account_id || accountId;
-      window.setTimeout(() => window.location.reload(), 500);
+      await _refreshBrokerSnapshot();
     }
   } catch (e) {
     if (_out) _out.textContent = 'select-account failed: ' + e;
