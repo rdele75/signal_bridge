@@ -992,8 +992,15 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   flex-wrap: wrap;
 }
 .execution-mode-form select {
-  min-width: 120px;
+  flex: 1 1 200px;
+  min-width: 200px;
   width: auto;
+}
+/* Apply sits at the trailing edge of the row so the select can grow
+   into the card width instead of leaving the row left-clumped. The
+   mobile breakpoint overrides this back to full-width column. */
+.execution-mode-form .btn {
+  margin-left: auto;
 }
 .execution-mode-label {
   font-size: 11px;
