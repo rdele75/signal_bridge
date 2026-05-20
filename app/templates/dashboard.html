@@ -158,11 +158,14 @@
     </p>
     <p class="execution-modal-account">
       Account:
-      <code id="live-modal-account-id">{{ selected_account_id or '—' }}</code>
+      <code id="live-modal-account-id" class="sensitive" title="Click to reveal">{{ selected_account_id or '—' }}</code>
       {% if broker_account_card.selected_account_name %}
         <span class="muted">/</span>
-        <span id="live-modal-account-name">{{ broker_account_card.selected_account_name }}</span>
+        <span id="live-modal-account-name" class="sensitive" title="Click to reveal">{{ broker_account_card.selected_account_name }}</span>
       {% endif %}
+    </p>
+    <p class="muted execution-modal-reveal-hint">
+      click the account info above to reveal
     </p>
     <p class="execution-modal-instructions">
       Type <code>{{ live_execution.confirm_phrase }}</code> and check
