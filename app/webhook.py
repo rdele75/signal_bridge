@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import threading
 from contextlib import contextmanager
@@ -70,6 +71,58 @@ def extract_timeframe(payload: dict[str, Any]) -> Optional[str]:
         if normalized:
             return normalized
     return None
+
+
+# Keys whose VALUES must be redacted in any logged payload preview.
+# Match case-insensitively. The values are replaced with the literal
+# string "<redacted>" so the operator can see the key was present
+# without exposing the secret.
+_REDACT_KEYS = frozenset(
+    {"secret", "token", "api_key", "apikey", "password", "auth"}
+)
+
+# Maximum chars of preview to log. 200 is enough to see the dialect
+# shape and the first few field names without flooding the log.
+_PAYLOAD_PREVIEW_MAX_CHARS = 200
+
+
+def _redact_payload_for_log(payload: Any) -> str:
+    """Build a single-line, redacted, truncated preview of a payload
+    for inclusion in log lines.
+
+    * dict → serialised as JSON with sensitive values masked. Inner
+      dicts are walked one level deep so a nested ``secret`` field
+      under e.g. ``order`` is also redacted.
+    * non-dict (str, list, None, etc.) → coerced to ``repr`` and
+      truncated.
+    * Output is truncated to ``_PAYLOAD_PREVIEW_MAX_CHARS`` chars,
+      with ``...(truncated)`` appended when cut.
+    """
+    if isinstance(payload, dict):
+        redacted: dict[str, Any] = {}
+        for key, value in payload.items():
+            if isinstance(key, str) and key.lower() in _REDACT_KEYS:
+                redacted[key] = "<redacted>"
+            elif isinstance(value, dict):
+                inner: dict[str, Any] = {}
+                for k2, v2 in value.items():
+                    if isinstance(k2, str) and k2.lower() in _REDACT_KEYS:
+                        inner[k2] = "<redacted>"
+                    else:
+                        inner[k2] = v2
+                redacted[key] = inner
+            else:
+                redacted[key] = value
+        try:
+            preview = json.dumps(redacted, default=str, ensure_ascii=False)
+        except (TypeError, ValueError):
+            preview = repr(redacted)
+    else:
+        preview = repr(payload)
+
+    if len(preview) > _PAYLOAD_PREVIEW_MAX_CHARS:
+        preview = preview[:_PAYLOAD_PREVIEW_MAX_CHARS] + "...(truncated)"
+    return preview
 
 
 class WebhookHandler:
@@ -1095,4 +1148,8 @@ class WebhookHandler:
             broker_symbol=broker_symbol,
             timeframe=normalize_timeframe(tf_raw),
         )
-        log.info("REJECTED reason=%s", reason)
+        log.info(
+            "REJECTED reason=%s payload=%s",
+            reason,
+            _redact_payload_for_log(raw),
+        )
