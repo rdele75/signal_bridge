@@ -306,6 +306,7 @@ body[data-first-paint="1"] main.main > section.section:nth-of-type(9) { animatio
 .badge-info   { color: var(--info); border-color: rgba(96,165,250,0.35); background: rgba(96,165,250,0.08); }
 .badge-paper  { color: var(--accent-2); border-color: rgba(167,139,250,0.4); background: rgba(167,139,250,0.10); }
 .badge-muted  { color: var(--fg-dim); }
+.badge-unknown { color: var(--warn); border-color: rgba(251,191,36,0.35); background: rgba(75,85,99,0.15); }
 
 /* status pills inside topbar — same as badge but bigger label */
 .topbar .badge { font-size: 11px; padding: 4px 10px; }

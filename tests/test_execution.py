@@ -176,8 +176,23 @@ def test_armed_mode_submits_exactly_one_order_place(
         ("DEMO-200K", False),
         ("SIM-Funded", False),  # SIM keyword wins
         ("Combine-150K", False),
-        ("FundedAccount-1010", True),  # plain "Funded" without any blockers
-        ("PA-50K", True),  # Performance Account — funded
+        # The operator's real Topstep eval account format —
+        # "TC" (Trading Combine) and "DLL" (TC product variant) both
+        # mark it as eval.
+        ("50KTC-V2-DLL-483189-61358372", False),
+        # Express Funded Account — confusingly marketed as "funded"
+        # but it's still an eval product.
+        ("XFA-100K", False),
+        # Performance Account prefix is the funded slot earned after
+        # passing eval.
+        ("PA-50K", True),
+        ("PA-50K-12345", True),
+        ("PA_100K-7777", True),  # underscore variant
+        # Plain "Funded" in the name without a PA- prefix is no longer
+        # enough to classify — Topstep marketing reuses the word for
+        # eval products too (see Express Funded). Stays None → Unknown.
+        ("FundedAccount-1010", None),
+        ("100K-UNKNOWN-FORMAT", None),
         ("", None),
         (None, None),
     ],
@@ -198,8 +213,8 @@ def test_funded_badge_surfaces_in_dashboard_context(tmp_path, monkeypatch):
     assert broker.provider == "topstep"
 
     # Bypass the live ProjectX probe with a canned response carrying a
-    # Funded-shaped account name. broker_status_payload should pick up
-    # the heuristic from the name alone.
+    # Performance-Account-shaped name. broker_status_payload should
+    # pick up the heuristic from the name alone.
     def fake_probe(self):  # noqa: ARG001 - called bound
         return {
             "ok": True,
@@ -211,7 +226,7 @@ def test_funded_badge_surfaces_in_dashboard_context(tmp_path, monkeypatch):
             "accounts_count": 1,
             "selected_account_id": broker.account_id,
             "selected_account": {
-                "id": 5001, "name": "FundedAccount-1010",
+                "id": 5001, "name": "PA-50K-1010",
                 "balance": 100000.0, "canTrade": True, "isVisible": True,
             },
         }
@@ -222,7 +237,40 @@ def test_funded_badge_surfaces_in_dashboard_context(tmp_path, monkeypatch):
         settings=app.state.settings, broker=broker
     )
     assert payload["selected_account_is_funded"] is True
-    assert payload["selected_account"]["name"] == "FundedAccount-1010"
+    assert payload["selected_account"]["name"] == "PA-50K-1010"
+
+
+def test_unknown_badge_when_classifier_abstains(tmp_path, monkeypatch):
+    """An account name the classifier can't read should surface
+    ``selected_account_is_funded=None`` so the template renders the
+    explicit Unknown badge rather than silently dropping the badge."""
+    _write_topstep_symbol_map(tmp_path)
+    app = _build_app(tmp_path, monkeypatch)
+    broker = app.state.broker
+
+    def fake_probe(self):  # noqa: ARG001
+        return {
+            "ok": True,
+            "connected": True,
+            "provider": "topstep",
+            "status": "ok",
+            "message": "stub",
+            "credentials": {},
+            "accounts_count": 1,
+            "selected_account_id": broker.account_id,
+            "selected_account": {
+                "id": 5001, "name": "100K-UNKNOWN-FORMAT",
+                "balance": 100000.0, "canTrade": True, "isVisible": True,
+            },
+        }
+    monkeypatch.setattr(broker.__class__, "test_connection", fake_probe)
+
+    from app.dashboard import broker_status_payload
+    payload = broker_status_payload(
+        settings=app.state.settings, broker=broker
+    )
+    assert payload["selected_account_is_funded"] is None
+    assert payload["selected_account"]["name"] == "100K-UNKNOWN-FORMAT"
 
 
 def test_eval_badge_classification_via_dashboard_context(

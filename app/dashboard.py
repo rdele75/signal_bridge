@@ -686,13 +686,18 @@ def _account_view(account: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]
     }
 
 
+import re as _re
+
 # Substrings (case-insensitive) that, if present in the account name,
-# indicate a non-funded account. ProjectX doesn't expose a structured
-# "funded" flag on /api/Account/search, so a heuristic on the name is
-# the most reliable signal available today. The dashboard surfaces an
-# explicit "unknown" badge when we can't classify, so the operator
-# always sees confirmation of what they're trading even when the
-# heuristic abstains.
+# indicate a non-funded (eval / sim / practice) account. ProjectX
+# doesn't expose a structured "funded" flag on /api/Account/search, so
+# a name heuristic is the most reliable signal available today.
+#
+# Topstep-specific tokens carry the bulk of the signal:
+#   TC   — Trading Combine (the standard eval product)
+#   DLL  — one of the TC product variants (e.g. "50KTC-V2-DLL-...")
+#   XFA  — Express Funded Account, which despite the name is still an
+#          eval product (the marketing says "funded" but it's not).
 _NON_FUNDED_NAME_HINTS: tuple[str, ...] = (
     "PRACTICE",
     "EVAL",
@@ -701,26 +706,44 @@ _NON_FUNDED_NAME_HINTS: tuple[str, ...] = (
     "SIM",
     "COMBINE",
     "EXPRESS",
+    "TC",
+    "DLL",
+    "XFA",
 )
+
+# Token prefix indicating a Performance Account — the funded slot you
+# earn after passing eval. Matched at the start of the name or after a
+# separator (space / dash / underscore / slash / dot) so we don't
+# pick up incidental "PA" letters embedded in random tokens.
+_FUNDED_PREFIX_RE = _re.compile(r"(?:^|[\s\-_/.])PA[-_]")
 
 
 def _classify_funded(account: dict[str, Any]) -> Optional[bool]:
     """Best-effort 'is this a funded account?' classification.
 
-    Returns ``True`` when the account name clearly does NOT match any
-    practice/eval/trial keyword; ``False`` when it does; ``None`` when
-    we have nothing to go on (no name, no usable hints). Phase 4 polish
-    should swap this for a real ProjectX field if one becomes
-    available.
+    Returns ``True`` only when the name carries a clear funded-slot
+    token (``PA-``/``PA_`` prefix), ``False`` when it carries a clear
+    eval/practice/sim token, and ``None`` when neither (or both)
+    apply — the dashboard renders ``None`` as an explicit "Unknown"
+    badge so the operator sees that classification abstained instead
+    of silently assuming funded.
+
+    Eval beats funded on conflict: a name carrying both an eval
+    keyword and a PA-prefix is ambiguous (real Topstep accounts don't
+    do that, so this almost certainly means our heuristic is wrong),
+    and false-positive funded is the more dangerous direction.
     """
     name = account.get("name")
     if not isinstance(name, str) or not name.strip():
         return None
     upper = name.upper()
-    for hint in _NON_FUNDED_NAME_HINTS:
-        if hint in upper:
-            return False
-    return True
+    eval_hint = any(hint in upper for hint in _NON_FUNDED_NAME_HINTS)
+    funded_hint = bool(_FUNDED_PREFIX_RE.search(upper))
+    if eval_hint:
+        return False
+    if funded_hint:
+        return True
+    return None
 
 
 def broker_status_payload(

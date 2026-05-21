@@ -30,7 +30,11 @@
           {% elif execution.funded_badge == 'eval' %}
             <span class="badge badge-info plain ml-1" id="execution-funded-badge">Eval</span>
           {% elif execution.funded_badge == 'unknown' %}
-            <span class="badge plain ml-1" id="execution-funded-badge">unknown</span>
+            <span class="badge badge-unknown plain ml-1"
+                  id="execution-funded-badge"
+                  title="Account type couldn't be determined from the name. Verify on TopstepX before arming for real money.">
+              Unknown <span aria-hidden="true">?</span>
+            </span>
           {% endif %}
         </span>
       </div>
