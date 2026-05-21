@@ -683,6 +683,10 @@ class WebhookHandler:
         *,
         extra_execution_metadata: Optional[dict[str, Any]] = None,
     ) -> WebhookResponse:
+        # Off state short-circuits BEFORE the risk engine runs the
+        # symbol allowlist? No — risk checks still apply uniformly so
+        # the journal records *why* the operator's strategy would have
+        # done what it did. The skip is only of the broker call.
         decision = self.risk.evaluate(signal)
         if not decision.accepted:
             # Compose the journal / response rejection_reason as
@@ -724,7 +728,29 @@ class WebhookHandler:
                 rejection_reason=composed_reason,
             )
 
-        if isinstance(self.broker, TopstepBroker):
+        execution_mode = (self.settings.execution_mode or "off").lower()
+        if execution_mode == "off":
+            # Off state: risk passed but execution is disengaged. Journal
+            # as accepted with a sentinel execution_result; the broker
+            # is never touched.
+            result = ExecutionResult(
+                accepted=True,
+                broker=self.broker.provider,
+                execution_mode="off",
+                symbol=signal.symbol,
+                action=signal.action,
+                contracts=signal.contracts,
+                fill_price=signal.price,
+                order_id=signal.order_id,
+                message="execution_off_no_submission",
+                details={
+                    "event": "execution_off",
+                    "submitted": False,
+                    "mode": "off",
+                    "broker_provider": self.broker.provider,
+                },
+            )
+        elif isinstance(self.broker, TopstepBroker):
             result = self._execute_topstep(signal)
         else:
             try:
@@ -902,153 +928,55 @@ class WebhookHandler:
     def _execute_topstep(self, signal: NormalizedSignal) -> ExecutionResult:
         """Dispatch a normalized signal through the Topstep adapter.
 
-        Outcomes:
+        Off state is handled by the caller before this method runs.
 
-        * ``ENABLE_TOPSTEP_ORDER_EXECUTION=false`` (default): build a
-          dry-run preview, return ``accepted=True`` with
-          ``message=topstep_dry_run_order_built`` and the built payload
-          in ``details``. The order is NOT submitted.
-        * ``EXECUTION_MODE=demo`` with demo gates lined up: POST
-          ``/api/Order/place``, return the parsed ProjectX response.
-        * ``EXECUTION_MODE=live`` with every live gate satisfied:
-          POST ``/api/Order/place``. Any failing gate returns
-          ``message=live_execution_locked`` with the specific
-          ``gate`` label in ``details``.
-
-        No paper fallback ever happens.
+        * ``test``  → ``submit_market_order`` builds the
+                      ``/api/Order/place`` payload and journals it
+                      without POSTing. Result has ``submitted=False``,
+                      ``mode="test"``.
+        * ``armed`` → armed gate stack runs; on pass, POSTs to
+                      ProjectX. Any failing gate is surfaced as
+                      ``status=<gate>`` in the envelope.
         """
         broker = self.broker
         assert isinstance(broker, TopstepBroker)
         provider = broker.provider
-        execution_mode = self.settings.execution_mode
+        execution_mode = (self.settings.execution_mode or "off").lower()
 
-        # Mirror current settings onto the broker so the gate evaluation
-        # sees the live runtime state (no restart needed for these flips).
-        broker.enable_order_execution = (
-            self.settings.enable_topstep_order_execution
-        )
-        broker.enable_order_dry_run = self.settings.enable_topstep_order_dry_run
-        broker.execution_confirm = self.settings.topstep_execution_confirm
-        broker.enable_live_trading = self.settings.enable_live_trading
+        # Mirror runtime settings onto the broker so the gate evaluation
+        # sees the latest state (no restart needed for these flips).
         broker.execution_mode = execution_mode
-        broker.live_trading_confirm = self.settings.live_trading_confirm
-        broker.live_trading_account_ack = self.settings.live_trading_account_ack
-        broker.live_max_contracts_per_trade = (
-            self.settings.live_max_contracts_per_trade
-        )
-        broker.live_allowed_symbols = list(
-            self.settings.live_allowed_symbols
-        )
-        broker.live_require_kill_switch_off = (
-            self.settings.live_require_kill_switch_off
+        broker.allowed_symbols_armed = list(
+            self.settings.allowed_symbols_armed
         )
         broker.max_contracts_per_trade = self.settings.max_contracts_per_trade
+        broker.kill_switch_enabled = self.settings.enable_kill_switch
         broker.kill_switch_active = self.risk.kill_switch.is_active()
-
-        if execution_mode == "live":
-            gate = broker._live_execution_safety_check(signal)
-            if gate is not None:
-                details = {
-                    "reason": "live_execution_locked",
-                    "gate": gate,
-                    "broker_provider": provider,
-                    "execution_mode": execution_mode,
-                    "enable_live_trading": self.settings.enable_live_trading,
-                    "safety": broker._safety_state(),
-                }
-                log.info(
-                    "LIVE_BLOCKED symbol=%s action=%s gate=%s",
-                    signal.symbol,
-                    signal.action,
-                    gate,
-                )
-                return ExecutionResult(
-                    accepted=False,
-                    broker=provider,
-                    execution_mode=execution_mode,
-                    symbol=signal.symbol,
-                    action=signal.action,
-                    contracts=signal.contracts,
-                    message="live_execution_locked",
-                    details=details,
-                )
-            # All live gates passed — submit. ``submit_market_order``
-            # re-runs the safety check; defense in depth.
-            result = broker.submit_market_order(
-                signal, symbol_map=self.symbol_map
-            )
-            accepted = bool(result.get("accepted"))
-            order_id = result.get("broker_order_id") or result.get("order_id")
-            message_label = (
-                "topstep_live_order_submitted"
-                if accepted
-                else f"topstep_live_order_failed:{result.get('status')}"
-            )
-            log.info(
-                "LIVE %s symbol=%s action=%s contracts=%s",
-                "ACCEPTED" if accepted else "REJECTED",
-                signal.symbol,
-                signal.action,
-                signal.contracts,
-            )
-            return ExecutionResult(
-                accepted=accepted,
-                broker=provider,
-                execution_mode=execution_mode,
-                symbol=signal.symbol,
-                action=signal.action,
-                contracts=signal.contracts,
-                order_id=str(order_id) if order_id is not None else None,
-                message=message_label,
-                details=result,
-            )
-
-        if not self.settings.enable_topstep_order_execution:
-            preview = broker.build_order_preview(
-                signal, symbol_map=self.symbol_map
-            )
-            if not preview.get("ok"):
-                details = dict(preview)
-                details["would_submit"] = False
-                details["dry_run"] = True
-                return ExecutionResult(
-                    accepted=False,
-                    broker=provider,
-                    execution_mode=execution_mode,
-                    symbol=signal.symbol,
-                    action=signal.action,
-                    contracts=signal.contracts,
-                    message=(
-                        f"topstep_dry_run_build_failed:{preview.get('reason')}"
-                    ),
-                    details=details,
-                )
-            details = dict(preview)
-            details["would_submit"] = False
-            details["dry_run"] = True
-            details["broker_provider"] = provider
-            details["execution_mode"] = execution_mode
-            return ExecutionResult(
-                accepted=True,
-                broker=provider,
-                execution_mode=execution_mode,
-                symbol=signal.symbol,
-                action=signal.action,
-                contracts=signal.contracts,
-                message="topstep_dry_run_order_built",
-                details=details,
-            )
 
         result = broker.submit_market_order(
             signal, symbol_map=self.symbol_map
         )
         accepted = bool(result.get("accepted"))
-        message_label = (
-            "topstep_demo_order_submitted"
-            if accepted
-            else f"topstep_demo_order_failed:{result.get('status')}"
-        )
+        submitted = bool(result.get("submitted"))
         order_id = result.get("broker_order_id") or result.get("order_id")
+        gate = result.get("gate") or result.get("status")
+        if execution_mode == "armed":
+            label = "topstep_armed_order_submitted" if accepted else (
+                f"topstep_armed_order_failed:{gate}"
+            )
+        else:
+            label = "topstep_test_order_built" if accepted else (
+                f"topstep_test_order_failed:{gate}"
+            )
+        log.info(
+            "TOPSTEP %s mode=%s symbol=%s action=%s contracts=%s submitted=%s",
+            "ACCEPTED" if accepted else "REJECTED",
+            execution_mode,
+            signal.symbol,
+            signal.action,
+            signal.contracts,
+            submitted,
+        )
         return ExecutionResult(
             accepted=accepted,
             broker=provider,
@@ -1057,7 +985,7 @@ class WebhookHandler:
             action=signal.action,
             contracts=signal.contracts,
             order_id=str(order_id) if order_id is not None else None,
-            message=message_label,
+            message=label,
             details=result,
         )
 

@@ -154,14 +154,32 @@ class RiskEngine:
 
     def evaluate(self, signal: NormalizedSignal) -> RiskDecision:
         s = self.settings
+        execution_mode = (s.execution_mode or "off").lower()
 
-        # Kill switch first — fail closed.
-        if self.kill_switch.is_active():
+        # Kill switch is only checked when the operator is Armed. In Off
+        # state nothing submits anyway, and Test is for plumbing — the
+        # operator should be able to verify payload construction even
+        # while the kill switch is hot. The feature flag
+        # ``ENABLE_KILL_SWITCH`` still governs whether the switch
+        # functions at all.
+        if execution_mode == "armed" and self.kill_switch.is_active():
             return RiskDecision(False, "kill_switch_active")
 
-        # Symbol allow-list.
+        # General symbol allow-list applies in every state.
         if signal.symbol not in s.allowed_symbols:
             return RiskDecision(False, f"symbol_not_allowed: {signal.symbol}")
+
+        # In Armed state, the stricter ``ALLOWED_SYMBOLS_ARMED`` subset
+        # also applies. Off / Test only need the general list.
+        if execution_mode == "armed":
+            armed = [
+                str(sym).strip() for sym in s.allowed_symbols_armed
+                if sym and str(sym).strip()
+            ]
+            if signal.symbol not in armed:
+                return RiskDecision(
+                    False, f"symbol_not_allowed_armed: {signal.symbol}"
+                )
 
         # Timeframe lock — optional. When off we don't even look at the
         # field, so older alerts that predate the lock keep working.

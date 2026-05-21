@@ -5,40 +5,34 @@ This adapter implements:
 * ``authenticate()`` / ``get_auth_headers()`` / ``refresh_token()`` —
   ``/api/Auth/loginKey`` + JWT cache (23h TTL).
 * ``get_accounts()`` / ``get_selected_account()`` —
-  ``/api/Account/search`` with ``onlyActiveAccounts=true``. Account ids
-  compare as trimmed strings so ProjectX's numeric ids and the
-  user-saved string form match cleanly.
-* ``get_positions()`` — ``/api/Position/searchOpen`` (Phase 1).
-* ``get_orders()`` — ``/api/Order/searchOpen`` (Phase 1).
+  ``/api/Account/search`` with ``onlyActiveAccounts=true``.
+* ``get_positions()`` — ``/api/Position/searchOpen``.
+* ``get_orders()`` — ``/api/Order/searchOpen``.
 * ``search_orders(startTimestamp, endTimestamp)`` —
-  ``/api/Order/search`` (Phase 1).
+  ``/api/Order/search``.
 * ``submit_market_order()`` — builds a payload via
-  ``topstep_order_builder.build_market_order_payload`` and conditionally
-  POSTs ``/api/Order/place`` (Phase 3).
+  ``topstep_order_builder.build_market_order_payload`` and submits to
+  ``/api/Order/place`` when execution_mode is ``armed``; in ``test``
+  mode the payload is built and journaled but not POSTed.
+* ``flatten_position`` / ``cancel_all_orders`` — close existing state
+  via ``/api/Position/closeContract`` / ``/api/Order/cancel``.
 
-Order routing safety is layered (defense in depth):
+Execution states (post-collapse, 2026-05-21):
 
-Demo execution gates (``EXECUTION_MODE=demo``):
-  1. ``ENABLE_TOPSTEP_ORDER_EXECUTION`` must be true.
-  2. ``TOPSTEP_EXECUTION_CONFIRM`` must be ``DEMO_ONLY``.
-  3. ``ENABLE_LIVE_TRADING`` must be false.
-  4. The selected account must be numeric and (if known) ``canTrade``.
+* ``off``    — webhook short-circuits before the adapter is touched.
+* ``test``   — ``submit_market_order`` builds the payload, journals the
+                attempt, and returns a ``submitted=false, mode=test``
+                envelope without POSTing.
+* ``armed``  — ``submit_market_order`` runs the armed gate stack and
+                POSTs. Gates: credentials present, account numeric +
+                ``canTrade`` (when known), kill switch off (when
+                ``ENABLE_KILL_SWITCH`` is true), signal symbol in
+                ``allowed_symbols_armed``, contracts ≤
+                ``max_contracts_per_trade``.
 
-Live execution gates (``EXECUTION_MODE=live``):
-  1. ``ENABLE_TOPSTEP_ORDER_EXECUTION`` must be true.
-  2. ``TOPSTEP_EXECUTION_CONFIRM`` must be ``LIVE_CONFIRMED``.
-  3. ``ENABLE_LIVE_TRADING`` must be true.
-  4. ``LIVE_TRADING_CONFIRM`` must be ``I_UNDERSTAND_LIVE_ORDERS``.
-  5. ``LIVE_TRADING_ACCOUNT_ACK`` must be true.
-  6. Selected account numeric + (if known) ``canTrade``.
-  7. Symbol is in ``LIVE_ALLOWED_SYMBOLS``.
-  8. ``contracts`` is <= ``LIVE_MAX_CONTRACTS_PER_TRADE`` and
-     ``MAX_CONTRACTS_PER_TRADE``.
-  9. Kill switch off (if ``LIVE_REQUIRE_KILL_SWITCH_OFF`` is true).
-
-If any gate is open, ``submit_market_order`` refuses with a structured
-envelope and never touches the wire. Dry-run mode (the default) goes
-through the same builder but stops short of POSTing.
+Confirmation tokens and the multi-step arming ceremony from the
+pre-collapse model have been removed. The dashboard's mode dropdown
+flips state atomically.
 """
 from __future__ import annotations
 
@@ -123,7 +117,7 @@ def _is_auth_failure(http_status: int, response: Any) -> bool:
 class TopstepBroker(BrokerBase):
     name = "topstep"
     provider = "topstep"
-    execution_mode = "demo"
+    execution_mode = "off"
 
     def __init__(
         self,
@@ -139,23 +133,14 @@ class TopstepBroker(BrokerBase):
         token_expires_at: str = "",
         token_sink: Optional[TokenSink] = None,
         http_timeout: float = DEFAULT_TIMEOUT_SECONDS,
-        # Phase 2/3 safety: nothing here flips on order execution by
-        # itself. The settings layer + webhook handler are still
-        # authoritative; the broker holds them so admin endpoints and
-        # programmatic callers can interrogate them without re-reading
-        # settings.
-        enable_order_execution: bool = False,
-        enable_order_dry_run: bool = True,
-        execution_confirm: str = "disabled",
-        enable_live_trading: bool = False,
-        execution_mode: str = "demo",
-        live_trading_confirm: str = "disabled",
-        live_trading_account_ack: bool = False,
-        live_max_contracts_per_trade: int = 1,
-        live_allowed_symbols: Optional[list[str]] = None,
-        live_require_kill_switch_off: bool = True,
+        # Post-collapse: a single execution_mode (off / test / armed)
+        # plus the structural caps. The pre-collapse arming-token plumbing
+        # is gone.
+        execution_mode: str = "off",
+        allowed_symbols_armed: Optional[list[str]] = None,
         max_contracts_per_trade: int = 1,
         kill_switch_active: bool = False,
+        kill_switch_enabled: bool = True,
     ) -> None:
         # Strip credentials on load: stray whitespace in the dashboard /
         # .env was the cause of phantom errorCode=3 responses that worked
@@ -166,13 +151,13 @@ class TopstepBroker(BrokerBase):
         self.password = password or ""
         self.api_key = (api_key or "").strip()
         self.account_id = (account_id or "").strip()
-        # M1 — per-account canTrade cache. Populated by ``get_accounts``
-        # whenever the call succeeds. Maps the trimmed-string account
-        # id to whatever ProjectX reported for ``canTrade``.
-        # ``None`` (no entry) means we've never received an account
-        # snapshot covering this id — the gate falls open in that case
-        # (with a one-shot WARNING) so a fresh boot doesn't refuse to
-        # submit before the operator has clicked Fetch Accounts.
+        # Per-account canTrade cache. Populated by ``get_accounts`` whenever
+        # the call succeeds. Maps the trimmed-string account id to whatever
+        # ProjectX reported for ``canTrade``. ``None`` (no entry) means we've
+        # never received an account snapshot covering this id — the gate
+        # falls open in that case (with a one-shot WARNING) so a fresh boot
+        # doesn't refuse to submit before the operator has clicked Fetch
+        # Accounts.
         self._can_trade_cache: dict[str, bool] = {}
         self._can_trade_warned: bool = False
         self.env = (env or "demo").lower()
@@ -182,27 +167,14 @@ class TopstepBroker(BrokerBase):
         self.token_expires_at = (token_expires_at or "").strip()
         self._token_sink = token_sink
         self._http_timeout = http_timeout
-        self.enable_order_execution = bool(enable_order_execution)
-        self.enable_order_dry_run = bool(enable_order_dry_run)
-        self.execution_confirm = (execution_confirm or "disabled").strip()
-        self.enable_live_trading = bool(enable_live_trading)
-        # Adapter-level execution mode (paper/demo/live). The webhook
-        # layer's settings.execution_mode wins on conflict but this is
-        # used for ExecutionResult.broker / .execution_mode labelling
-        # and as a final safety check below.
-        self.execution_mode = (execution_mode or "demo").lower()
-        # Live-trading gates. Defaults match the safe-by-default config:
-        # confirmation off, no account ack, 1-contract cap, micros only.
-        self.live_trading_confirm = (live_trading_confirm or "disabled").strip()
-        self.live_trading_account_ack = bool(live_trading_account_ack)
-        self.live_max_contracts_per_trade = int(live_max_contracts_per_trade or 1)
-        self.live_allowed_symbols = list(
-            live_allowed_symbols if live_allowed_symbols is not None
+        self.execution_mode = (execution_mode or "off").lower()
+        self.allowed_symbols_armed = list(
+            allowed_symbols_armed if allowed_symbols_armed is not None
             else ["MES1!", "MNQ1!"]
         )
-        self.live_require_kill_switch_off = bool(live_require_kill_switch_off)
         self.max_contracts_per_trade = int(max_contracts_per_trade or 1)
         self.kill_switch_active = bool(kill_switch_active)
+        self.kill_switch_enabled = bool(kill_switch_enabled)
 
     # ------------------------------------------------------------------
     # Credential helpers
@@ -1075,10 +1047,10 @@ class TopstepBroker(BrokerBase):
         payload: dict[str, Any] = {
             "ok": False,
             "provider": self.provider,
-            "status": "topstep_execution_not_enabled",
+            "status": "topstep_execution_not_armed",
             "not_implemented": True,
             "message": (
-                "Topstep order submission is disabled by configuration."
+                "Topstep order submission refused: execution is not armed."
             ),
         }
         payload.update(extra)
@@ -1090,127 +1062,61 @@ class TopstepBroker(BrokerBase):
         return {
             "broker_provider": self.provider,
             "execution_mode": self.execution_mode,
-            "enable_order_execution": self.enable_order_execution,
-            "enable_order_dry_run": self.enable_order_dry_run,
-            "execution_confirm": self.execution_confirm,
-            "enable_live_trading": self.enable_live_trading,
-            "live_trading_confirm": self.live_trading_confirm,
-            "live_trading_account_ack": self.live_trading_account_ack,
-            "live_max_contracts_per_trade": self.live_max_contracts_per_trade,
-            "live_allowed_symbols": list(self.live_allowed_symbols),
-            "live_require_kill_switch_off": self.live_require_kill_switch_off,
+            "allowed_symbols_armed": list(self.allowed_symbols_armed),
             "max_contracts_per_trade": self.max_contracts_per_trade,
             "kill_switch_active": self.kill_switch_active,
+            "kill_switch_enabled": self.kill_switch_enabled,
             "selected_account_id": self.account_id or None,
         }
 
-    def _execution_safety_check(
-        self,
-        signal: Optional[NormalizedSignal] = None,
-    ) -> Optional[str]:
-        """Return ``None`` when every gate is satisfied, else the
-        identifier of the first failing gate. The caller turns the
-        identifier into a labelled envelope.
-
-        Demo and live modes use disjoint gate sets. Live mode is the
-        stricter path — it requires all demo prerequisites plus the
-        live-only confirmations, account ack, kill switch, and per-symbol
-        + per-contract caps.
-        """
-        if self.execution_mode == "live":
-            return self._live_execution_safety_check(signal)
-        return self._demo_execution_safety_check()
-
-    def _demo_execution_safety_check(self) -> Optional[str]:
-        """Gate evaluation for demo (sim) execution.
-
-        Order is deliberate: ``topstep_execution_disabled`` is reported
-        first when execution simply isn't on yet so the operator gets an
-        actionable label. ``live_execution_locked`` short-circuits
-        anything that smells like an accidental live attempt.
-        """
-        if self.enable_live_trading:
-            return "live_execution_locked"
-        if not self.enable_order_execution:
-            return "topstep_execution_disabled"
-        if self.execution_mode != "demo":
-            return "execution_mode_not_demo"
-        if self.execution_confirm != "DEMO_ONLY":
-            return "topstep_execution_confirm_missing"
-        if not self._has_required_credentials():
-            return "missing_credentials"
-        if self._numeric_account_id() is None:
-            return "non_numeric_account_id"
-        # M1 — canTrade gate. False blocks; unknown silently bypasses
-        # with a one-shot WARNING (matches "if known" in the docs).
-        can_trade = self._account_can_trade()
-        if can_trade is False:
-            return "account_cannot_trade"
-        if can_trade is None:
-            self._warn_can_trade_unknown_once()
-        return None
-
-    def _live_execution_safety_check(
+    def _armed_safety_check(
         self,
         signal: Optional[NormalizedSignal] = None,
         *,
         bypass_kill_switch: bool = False,
     ) -> Optional[str]:
-        """Gate evaluation for live (funded) execution.
+        """Return ``None`` when every armed-mode gate is satisfied, else
+        the identifier of the first failing gate.
 
-        Returns a stable status label for the first failing gate. The
-        labels match the ones documented in docs/audit.md and the test
-        suite. ``signal`` is optional — when omitted the symbol /
-        contract caps are skipped (used by panel rendering); when set,
-        they are enforced (used by ``submit_market_order``).
+        Called from ``submit_market_order`` when ``execution_mode ==
+        "armed"`` and from ``flatten_position`` / ``cancel_all_orders``
+        (which bypass the kill-switch gate — closing existing state
+        must remain available after emergency stop).
 
-        ``bypass_kill_switch`` lets exit paths (flatten, cancel) skip
-        the kill-switch gate. Kill switch blocks NEW entries; closing
-        an existing position is a different action and should remain
-        available even after the operator hits emergency stop.
+        ``signal`` is optional: when supplied, the symbol allowlist and
+        contract cap are enforced; otherwise they're skipped (used by
+        panel rendering / verify endpoints).
         """
-        if not self.enable_live_trading:
-            return "live_trading_disabled"
-        if not self.enable_order_execution:
-            return "topstep_execution_disabled"
-        if self.execution_confirm != "LIVE_CONFIRMED":
-            return "topstep_execution_confirm_missing"
-        if self.live_trading_confirm != "I_UNDERSTAND_LIVE_ORDERS":
-            return "live_confirmation_missing"
-        if not self.live_trading_account_ack:
-            return "live_account_ack_missing"
-        if (
-            not bypass_kill_switch
-            and self.live_require_kill_switch_off
-            and self.kill_switch_active
-        ):
-            return "kill_switch_active"
+        if self.execution_mode != "armed":
+            return "execution_not_armed"
         if not self._has_required_credentials():
             return "missing_credentials"
         if self._numeric_account_id() is None:
             return "non_numeric_account_id"
-        # M1 — canTrade gate. Same shape as the demo path: False blocks,
-        # unknown bypasses with a one-shot WARNING.
         can_trade = self._account_can_trade()
         if can_trade is False:
             return "account_cannot_trade"
         if can_trade is None:
             self._warn_can_trade_unknown_once()
+        if (
+            not bypass_kill_switch
+            and self.kill_switch_enabled
+            and self.kill_switch_active
+        ):
+            return "kill_switch_active"
         if signal is not None:
-            allowed = [s.strip() for s in self.live_allowed_symbols if s and s.strip()]
+            allowed = [
+                s.strip() for s in self.allowed_symbols_armed
+                if s and s.strip()
+            ]
             if not allowed:
-                return "live_symbol_not_allowed"
+                return "symbol_not_allowed_armed"
             if signal.symbol not in allowed:
-                return "live_symbol_not_allowed"
-            cap = max(int(self.live_max_contracts_per_trade or 0), 0)
+                return "symbol_not_allowed_armed"
+            cap = max(int(self.max_contracts_per_trade or 0), 0)
             if cap <= 0:
-                return "live_contracts_above_max"
-            if signal.contracts > cap:
-                return "live_contracts_above_max"
-            global_cap = max(int(self.max_contracts_per_trade or 0), 0)
-            if global_cap <= 0:
                 return "contracts_above_max"
-            if signal.contracts > global_cap:
+            if signal.contracts > cap:
                 return "contracts_above_max"
         return None
 
@@ -1243,36 +1149,91 @@ class TopstepBroker(BrokerBase):
         *,
         symbol_map: Any = None,
     ) -> dict[str, Any]:
-        """Submit a market order via ``POST /api/Order/place``.
+        """Build (and conditionally submit) a market order.
 
-        Returns ``{"ok": True, "accepted": True, ...}`` on a successful
-        ProjectX submission (HTTP 200 + ``success=true`` + ``orderId``).
-        Refuses with a structured envelope if any safety gate is open,
-        the order builder rejects, or ProjectX rejects.
+        Behavior by execution_mode:
 
-        No paper fallback: a refusal here surfaces clearly back to the
-        webhook handler / admin endpoint instead of silently no-op'ing.
+        * ``off``    — caller should not reach this method. If called,
+                      returns a refusal envelope with status
+                      ``execution_not_armed``.
+        * ``test``   — builds the ``/api/Order/place`` payload, logs it,
+                      returns ``{ok: True, submitted: False, mode: "test",
+                      payload, ...}``. Never touches the network.
+        * ``armed``  — runs the armed gate stack; on pass, POSTs to
+                      ``/api/Order/place`` and returns the parsed
+                      response.
 
-        Auth-failure retry (H5): the local 23h token-validity check is
-        based on mint time + TTL and can disagree with the server's
-        actual session state. If the first POST returns HTTP 401 or a
-        ProjectX ``errorCode`` matching the documented auth-rejection
-        codes, this method calls ``authenticate()`` once and retries
-        the POST exactly once. Non-auth failures (network, validation,
-        ProjectX business rejections) are NOT retried — the retry is a
-        single shot, not a loop.
+        Auth-failure retry (H5): for armed submissions the local 23h
+        token-validity check can disagree with the server. If the first
+        POST returns HTTP 401 or a ProjectX ``errorCode`` matching the
+        documented auth-rejection codes, this method calls
+        ``authenticate()`` once and retries the POST exactly once.
+        Non-auth failures are NOT retried.
         """
-        safety_gate = self._execution_safety_check(signal)
+        # Test mode short-circuits BEFORE the armed gate stack — Test
+        # is for plumbing verification, so it intentionally tolerates
+        # an active kill switch and missing canTrade. The general risk
+        # engine has already vetted the signal at this point (symbol
+        # in ALLOWED_SYMBOLS, contracts ≤ MAX_CONTRACTS_PER_TRADE,
+        # direction toggles, daily loss, open positions).
+        if self.execution_mode == "test":
+            built = self.build_order_preview(signal, symbol_map=symbol_map)
+            if not built.get("ok"):
+                envelope = dict(built)
+                envelope.update(
+                    {
+                        "ok": False,
+                        "accepted": False,
+                        "status": built.get("reason", "order_build_failed"),
+                        "provider": self.provider,
+                        "submitted": False,
+                        "mode": "test",
+                        "would_submit": False,
+                        "safety": self._safety_state(),
+                    }
+                )
+                envelope.setdefault(
+                    "message",
+                    f"Test order build failed: {built.get('reason')}",
+                )
+                return envelope
+            log.info(
+                "topstep test-mode order built (no POST): symbol=%s "
+                "action=%s contracts=%s account=%s",
+                signal.symbol,
+                signal.action,
+                signal.contracts,
+                self.account_id or "(none)",
+            )
+            return {
+                "ok": True,
+                "accepted": True,
+                "status": "test_built",
+                "provider": self.provider,
+                "submitted": False,
+                "mode": "test",
+                "would_submit": True,
+                "message": (
+                    "Test-mode order built and validated; not submitted "
+                    "to ProjectX."
+                ),
+                "payload": built["payload"],
+                "account_id": built.get("account_id"),
+                "contract_id": built.get("contract_id"),
+                "side": built.get("side"),
+                "size": built.get("size"),
+                "safety": self._safety_state(),
+            }
+
+        safety_gate = self._armed_safety_check(signal)
         if safety_gate is not None:
-            if self.execution_mode == "live":
-                top_status = "live_execution_locked"
-            else:
-                top_status = safety_gate
             envelope = self._execution_disabled_envelope(
                 "submit_market_order",
                 accepted=False,
-                status=top_status,
+                status=safety_gate,
                 gate=safety_gate,
+                mode=self.execution_mode,
+                submitted=False,
                 symbol=signal.symbol,
                 broker_symbol=signal.broker_symbol,
                 action=signal.action,
@@ -1280,7 +1241,7 @@ class TopstepBroker(BrokerBase):
                 safety=self._safety_state(),
             )
             envelope["message"] = (
-                f"Topstep order submission refused: {safety_gate}"
+                f"Topstep armed-mode order refused: {safety_gate}"
             )
             envelope["would_submit"] = False
             return envelope
@@ -1392,10 +1353,12 @@ class TopstepBroker(BrokerBase):
                 "accepted": True,
                 "status": "submitted",
                 "provider": self.provider,
+                "submitted": True,
+                "mode": "armed",
                 "http_status": http_status,
                 "broker_order_id": str(order_id),
                 "order_id": str(order_id),
-                "message": "topstep demo order submitted",
+                "message": "topstep armed order submitted",
                 "payload": payload,
                 "safety": self._safety_state(),
                 "response": {
@@ -1439,18 +1402,21 @@ class TopstepBroker(BrokerBase):
     # after hitting emergency stop.
     # ------------------------------------------------------------------
 
-    def _flatten_demo_noop(self, symbol: Optional[str]) -> dict[str, Any]:
-        """Envelope returned when flatten/cancel is invoked outside live
-        mode. We never fake the action with phantom orders — demo
-        positions exist (if at all) inside TopstepX's own demo book and
-        must be closed there."""
+    def _flatten_not_armed_noop(
+        self, op: str, symbol: Optional[str]
+    ) -> dict[str, Any]:
+        """Envelope returned when flatten/cancel is invoked while
+        execution is not Armed. We never fake the action with phantom
+        orders — positions live on Topstep's side and must be closed
+        through a real ``/api/Position/closeContract`` call, which only
+        runs in Armed mode."""
         return {
             "ok": False,
             "provider": self.provider,
-            "status": "not_in_live_mode",
+            "status": "not_armed",
             "message": (
-                "flatten requires live execution mode — use TopstepX "
-                "directly for demo positions"
+                f"{op} requires execution_mode=armed — close positions "
+                "from the dashboard's Armed state or directly in TopstepX"
             ),
             "symbol": symbol,
             "legs": [],
@@ -1749,12 +1715,14 @@ class TopstepBroker(BrokerBase):
 
         Behavior:
 
-        * Demo / dry-run mode → no-op envelope with
-          ``status="not_in_live_mode"``. No phantom orders.
-        * Live mode → runs the live safety gates (account ack, auth,
-          confirm tokens, canTrade) with the kill switch bypassed,
-          fetches open positions, closes each one independently, and
-          returns a structured envelope with one entry per leg.
+        * Off / Test states → no-op envelope with ``status="not_armed"``.
+          No phantom orders — positions live on Topstep's side and must
+          be closed through a real broker call, which only happens in
+          Armed.
+        * Armed → runs the armed safety gates with the kill switch
+          bypassed, fetches open positions, closes each one
+          independently, and returns a structured envelope with one
+          entry per leg.
         * ``symbol`` is optional. When set, only positions whose
           ``contractId`` matches are closed (exact or substring — see
           ``_position_matches_symbol``).
@@ -1763,10 +1731,10 @@ class TopstepBroker(BrokerBase):
         N+1..end are still attempted. The envelope reports every
         attempt so the operator can decide what to do next.
         """
-        if self.execution_mode != "live":
-            return self._flatten_demo_noop(symbol)
+        if self.execution_mode != "armed":
+            return self._flatten_not_armed_noop("flatten", symbol)
 
-        gate = self._live_execution_safety_check(bypass_kill_switch=True)
+        gate = self._armed_safety_check(bypass_kill_switch=True)
         if gate is not None:
             return self._exit_safety_refusal(
                 "flatten", gate, symbol, container_key="legs"
@@ -1866,19 +1834,19 @@ class TopstepBroker(BrokerBase):
         """Cancel every open Topstep working order via
         ``/api/Order/cancel``.
 
-        Same shape as ``flatten_position``: demo mode is a no-op, live
-        mode runs the gates (kill switch bypassed), fetches working
+        Same shape as ``flatten_position``: Off/Test states no-op,
+        Armed runs the gates (kill switch bypassed), fetches working
         orders, cancels each independently, returns a per-leg envelope.
         Partial failures are reported, not raised.
         """
-        if self.execution_mode != "live":
+        if self.execution_mode != "armed":
             return {
                 "ok": False,
                 "provider": self.provider,
-                "status": "not_in_live_mode",
+                "status": "not_armed",
                 "message": (
-                    "cancel-all requires live execution mode — manage "
-                    "demo orders in TopstepX directly"
+                    "cancel-all requires execution_mode=armed — manage "
+                    "non-armed orders in TopstepX directly"
                 ),
                 "symbol": symbol,
                 "legs": [],
@@ -1886,7 +1854,7 @@ class TopstepBroker(BrokerBase):
                 "safety": self._safety_state(),
             }
 
-        gate = self._live_execution_safety_check(bypass_kill_switch=True)
+        gate = self._armed_safety_check(bypass_kill_switch=True)
         if gate is not None:
             return self._exit_safety_refusal(
                 "cancel-all", gate, symbol, container_key="legs"
