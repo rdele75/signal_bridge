@@ -846,7 +846,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Execution state endpoints + Topstep flatten/cancel
     #
-    # ``/api/execution/{off,test,arm}`` flip the single
+    # ``/api/execution/{off,test,armed}`` flip the single
     # ``EXECUTION_MODE`` setting atomically. No confirmation tokens,
     # no acknowledgement checkboxes — the dropdown click is the
     # confirmation. The Armed transition runs a gate-stack check
@@ -919,7 +919,7 @@ def create_app() -> FastAPI:
         )
 
     @app.post(
-        "/api/execution/arm", dependencies=[Depends(require_admin_api)]
+        "/api/execution/armed", dependencies=[Depends(require_admin_api)]
     )
     def api_execution_arm() -> JSONResponse:
         """Set execution mode to ``armed``.

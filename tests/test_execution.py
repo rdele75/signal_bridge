@@ -326,7 +326,7 @@ def test_api_execution_arm_refuses_when_no_account(tmp_path, monkeypatch):
     app = _build_app(tmp_path, monkeypatch)
     assert not app.state.settings.resolved_account_id
     with TestClient(app) as c:
-        r = c.post("/api/execution/arm")
+        r = c.post("/api/execution/armed")
     assert r.status_code == 400
     assert r.json()["status"] == "no_selected_account"
     assert app.state.settings.execution_mode != "armed"
@@ -338,7 +338,7 @@ def test_api_execution_arm_refuses_when_kill_switch_active(
     app = _build_app(tmp_path, monkeypatch)
     app.state.kill_switch.activate("test_block_arm")
     with TestClient(app) as c:
-        r = c.post("/api/execution/arm")
+        r = c.post("/api/execution/armed")
     assert r.status_code == 400
     assert r.json()["status"] == "kill_switch_active"
     assert app.state.settings.execution_mode != "armed"
@@ -347,7 +347,7 @@ def test_api_execution_arm_refuses_when_kill_switch_active(
 def test_api_execution_arm_success(tmp_path, monkeypatch):
     app = _build_app(tmp_path, monkeypatch)
     with TestClient(app) as c:
-        r = c.post("/api/execution/arm")
+        r = c.post("/api/execution/armed")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
