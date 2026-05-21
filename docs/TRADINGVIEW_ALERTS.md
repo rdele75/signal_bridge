@@ -276,3 +276,32 @@ lock continue to work unchanged.
 | `missing_or_invalid_price` | The paper broker needs a numeric price — fix the alert JSON. |
 | `broker_not_implemented: topstep_...` | `BROKER_PROVIDER=topstep` selected, but the Topstep adapter is a placeholder — switch to `paper` until the adapter ships. |
 | `malformed_payload: ...` | Non-numeric `contracts` or `price`, or otherwise invalid JSON shape. |
+
+---
+
+## 9. Debugging rejected alerts
+
+When SignalBridge rejects a webhook, the log file at
+`app/logs/signalbridge.log` (or wherever your install routes logs)
+records a line like:
+
+    REJECTED reason=malformed_payload payload={"symbol": "MES1!", "secret": "<redacted>", ...}
+
+The `payload=` field shows up to 200 characters of what was actually
+received, with any `secret`, `token`, `api_key`, `apikey`,
+`password`, or `auth` value redacted (case-insensitive). This is
+the fastest way to debug an alert template that isn't reaching
+SignalBridge cleanly — you don't have to instrument the code or
+re-run TradingView's test alert to inspect what was sent.
+
+Quick reference for the most common rejections (full table in
+section 8 above):
+
+| reason | what it means |
+|--------|---------------|
+| `malformed_payload` | Body wasn't valid JSON, or wasn't a JSON object at the top level, or didn't match any known dialect. The `payload=` preview will show you what was received. |
+| `invalid_secret` | Body parsed fine, dialect detected, but the secret didn't match. Check that your TradingView alert is sending the same secret you set in SignalBridge. |
+| `missing_timeframe` | Timeframe lock is enabled but the alert didn't include a `timeframe`, `interval`, or `tf` field. See section 7 for accepted key names. |
+| `missing_required_field: X` | Generic envelope alerts must include `secret`, `symbol`, `action`, `contracts`. The missing field is named in the reason. |
+| `contracts_above_max (N > M)` | Alert requested more contracts than the configured cap. Raise `MAX_CONTRACTS_PER_TRADE` or lower the order size. |
+| `symbol_not_allowed` | Alert symbol isn't in the configured allow-list. Add it to `ALLOWED_SYMBOLS` and restart. |
