@@ -31,3 +31,4 @@ runtime/*.pid
 .vscode/
 *.swp
 signalbridge.db
+*_pre_collapse_*.csv
