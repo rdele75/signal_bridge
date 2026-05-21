@@ -51,6 +51,8 @@ def _build_topstep_app(
     monkeypatch.setenv("TOPSTEP_API_KEY", "abcd1234efgh5678")
     monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", selected_account)
     monkeypatch.setenv("SELECTED_ACCOUNT_ID", selected_account)
+    monkeypatch.setenv("MAX_CONTRACTS_PER_TRADE", "1")
+    monkeypatch.setenv("LIVE_MAX_CONTRACTS_PER_TRADE", "1")
     return _build_app(
         tmp_path,
         monkeypatch,
