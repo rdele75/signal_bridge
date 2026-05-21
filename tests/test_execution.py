@@ -494,6 +494,31 @@ def test_dashboard_apply_wires_badge_refresh(tmp_path, monkeypatch):
     assert "'off'" in body or '"off"' in body
 
 
+def test_dashboard_apply_wires_loading_animation(tmp_path, monkeypatch):
+    """The Apply lifecycle adds an ``execution-loading`` class to the
+    card while the POST is in flight so the border-slide animation
+    runs. The class is added on submit and removed when both the
+    response and a min-duration floor settle (prevents flicker on
+    instant responses)."""
+    _write_topstep_symbol_map(tmp_path)
+    app = _build_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        body = c.get("/").text
+
+    # JS toggles the class on the card.
+    assert "execution-loading" in body
+    # Min-duration floor exists so the animation doesn't flicker on a
+    # 50ms response.
+    assert "APPLY_MIN_DURATION_MS" in body
+
+    # CSS defines the slide keyframe and pseudo-element borders.
+    from pathlib import Path
+    css = Path("app/static/styles.css").read_text()
+    assert "@keyframes execution-loading-slide" in css
+    assert ".execution-card.execution-loading::before" in css
+    assert ".execution-card.execution-loading::after" in css
+
+
 def test_off_state_skips_broker(tmp_path, monkeypatch):
     """A valid webhook in Off state is journaled as accepted but the
     broker is never asked to execute. The result.message identifies

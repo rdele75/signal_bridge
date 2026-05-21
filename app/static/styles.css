@@ -1335,6 +1335,34 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   background: rgba(248, 113, 113, 0.04);
 }
 
+/* ----- Apply in-flight: top + bottom border lines slide from center
+   outward to the edges and back. Lifted from the pre-collapse
+   execution-live-engaging effect (commit dbb0c6b) — the original was
+   a one-shot 3.6s travel scoped to the live engagement modal. Here
+   we loop it on a 1.2s cadence with the accent color so it reads as
+   "operation in progress" for any /api/execution/{mode} POST. The
+   ``.execution-card`` already has ``overflow: hidden`` so the slide
+   stays clipped to the card. ----- */
+.execution-card.execution-loading::before,
+.execution-card.execution-loading::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  height: 2px;
+  width: 0;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(124, 140, 255, 0.55);
+  z-index: 2;
+  animation: execution-loading-slide 1.2s ease-in-out infinite;
+}
+.execution-card.execution-loading::before { top: 0; }
+.execution-card.execution-loading::after  { bottom: 0; }
+@keyframes execution-loading-slide {
+  0%   { width: 0;    left: 50%; opacity: 0.55; }
+  50%  { width: 100%; left: 0;   opacity: 1; }
+  100% { width: 0;    left: 50%; opacity: 0.55; }
+}
+
 /* ----- Armed: full red, subtle pulse ----- */
 .execution-armed {
   border-color: var(--bad);
