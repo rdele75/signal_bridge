@@ -28,7 +28,7 @@ class BrokerBase(ABC):
 
     name: str = "base"
     provider: str = "base"
-    execution_mode: str = "paper"
+    execution_mode: str = "off"
 
     @abstractmethod
     def execute(self, signal: NormalizedSignal) -> ExecutionResult:

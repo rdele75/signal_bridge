@@ -412,8 +412,10 @@ def coerce(key: str, raw: Any) -> Any:
         # against the regular ProjectX endpoints — this knob stays demo.
         if text == "live":
             raise SettingsValidationError(
-                "TOPSTEP_ENV=live is not allowed — use EXECUTION_MODE=live "
-                "after arming via /api/topstep/live-execution/enable"
+                "TOPSTEP_ENV=live is not allowed — post-collapse the only "
+                "execution control is EXECUTION_MODE (off/test/armed). "
+                "Submit live orders by flipping to Armed via "
+                "/api/execution/arm."
             )
         return text
 
