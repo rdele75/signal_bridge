@@ -236,17 +236,17 @@
 <section class="grid grid-3 section">
   <div class="card">
     <div class="card-label">Trades today</div>
-    <div class="card-value lg">{{ trades_today }}</div>
+    <div id="stat-trades-today" class="card-value lg">{{ trades_today }}</div>
     <div class="card-sub">accepted signals</div>
   </div>
   <div class="card">
     <div class="card-label">Accepted today</div>
-    <div class="card-value lg good">{{ accepted_today }}</div>
+    <div id="stat-accepted-today" class="card-value lg good">{{ accepted_today }}</div>
     <div class="card-sub">passed risk + broker</div>
   </div>
   <div class="card">
     <div class="card-label">Rejected today</div>
-    <div class="card-value lg {{ 'bad' if rejected_today else 'muted' }}">{{ rejected_today }}</div>
+    <div id="stat-rejected-today" class="card-value lg {{ 'bad' if rejected_today else 'muted' }}">{{ rejected_today }}</div>
     <div class="card-sub">blocked by risk</div>
   </div>
 </section>
@@ -330,7 +330,7 @@
 </section>
 
 <section class="grid grid-2 section">
-  <div class="card">
+  <div class="card" id="last-signal-card">
     <div class="card-label">Last signal</div>
     {% if last_signal %}
       <div class="card-value sm">
@@ -359,7 +359,7 @@
     {% endif %}
   </div>
 
-  <div class="card">
+  <div class="card" id="last-rejection-card">
     <div class="card-label">Last rejection</div>
     {% if last_rejection %}
       <div class="card-value sm">
@@ -836,6 +836,267 @@
         badge.textContent = active ? 'halted' : 'running';
       }
     });
+
+    // Live polling: keeps Flatten button, stat cards, last signal/
+    // rejection, and broker pill fresh without F5. Off mode does no
+    // polling; Test/Armed poll every 5s; hidden tabs pause. Wired
+    // into the Apply handler so flipping modes starts/stops the loop.
+    var DASHBOARD_POLL_INTERVAL_MS = 5000;
+    var pollTimerId = null;
+
+    function escapeText(s) {
+      return String(s == null ? '' : s);
+    }
+
+    function updateFlattenButton(body) {
+      var btn = document.getElementById('btn-flatten-all');
+      if (!btn) return;
+      var positions = (body && Array.isArray(body.positions)) ? body.positions : [];
+      var count = positions.filter(function (p) {
+        return p && p.size;
+      }).length;
+      if (count > 0) {
+        btn.disabled = false;
+        btn.removeAttribute('title');
+      } else {
+        btn.disabled = true;
+        btn.setAttribute('title', 'No open positions to flatten');
+      }
+    }
+
+    function updateStatCards(body) {
+      if (!body) return;
+      var acc = document.getElementById('stat-accepted-today');
+      var rej = document.getElementById('stat-rejected-today');
+      var trd = document.getElementById('stat-trades-today');
+      if (acc && typeof body.accepted_today !== 'undefined') {
+        acc.textContent = body.accepted_today;
+      }
+      if (rej && typeof body.rejected_today !== 'undefined') {
+        rej.textContent = body.rejected_today;
+        // Mirror the server-side bad/muted treatment.
+        rej.classList.toggle('bad', !!body.rejected_today);
+        rej.classList.toggle('muted', !body.rejected_today);
+      }
+      // The dashboard's "Trades today" mirrors accepted_today (the
+      // server template renders {{ trades_today }} which equals the
+      // accepted-today bucket). Reuse the same value here.
+      if (trd && typeof body.accepted_today !== 'undefined') {
+        trd.textContent = body.accepted_today;
+      }
+    }
+
+    function renderLastSignalCard(card, sig) {
+      if (!card) return;
+      card.innerHTML = '';
+      var label = document.createElement('div');
+      label.className = 'card-label';
+      label.textContent = 'Last signal';
+      card.appendChild(label);
+      if (!sig) {
+        var empty = document.createElement('div');
+        empty.className = 'empty';
+        var strong = document.createElement('strong');
+        strong.textContent = 'no signals yet';
+        empty.appendChild(strong);
+        empty.appendChild(document.createTextNode('fire a TradingView alert to populate'));
+        card.appendChild(empty);
+        return;
+      }
+      var value = document.createElement('div');
+      value.className = 'card-value sm';
+      var symStrong = document.createElement('strong');
+      symStrong.textContent = escapeText(sig.symbol);
+      value.appendChild(symStrong);
+      var dot1 = document.createElement('span');
+      dot1.className = 'muted';
+      dot1.textContent = '·';
+      value.appendChild(document.createTextNode(' '));
+      value.appendChild(dot1);
+      value.appendChild(document.createTextNode(' ' + escapeText(sig.action) + ' '));
+      var times = document.createElement('span');
+      times.className = 'muted';
+      times.textContent = '×';
+      value.appendChild(times);
+      value.appendChild(document.createTextNode(' ' + escapeText(sig.contracts)));
+      card.appendChild(value);
+      var sub = document.createElement('div');
+      sub.className = 'card-sub mono';
+      sub.textContent = escapeText(sig.received_at);
+      card.appendChild(sub);
+      var row = document.createElement('div');
+      row.className = 'mt-3';
+      var decBadge = document.createElement('span');
+      if (sig.decision === 'accepted') {
+        decBadge.className = 'badge badge-good';
+        decBadge.textContent = 'accepted';
+      } else {
+        decBadge.className = 'badge badge-bad';
+        decBadge.textContent = 'rejected';
+      }
+      row.appendChild(decBadge);
+      if (sig.execution_mode) {
+        var modeBadge = document.createElement('span');
+        modeBadge.className = 'badge badge-info plain ml-1';
+        modeBadge.textContent = escapeText(sig.execution_mode);
+        row.appendChild(document.createTextNode(' '));
+        row.appendChild(modeBadge);
+      }
+      if (sig.rejection_reason) {
+        var reason = document.createElement('span');
+        reason.className = 'muted ml-1';
+        reason.textContent = ' ' + escapeText(sig.rejection_reason);
+        row.appendChild(reason);
+      }
+      card.appendChild(row);
+    }
+
+    function renderLastRejectionCard(card, sig) {
+      if (!card) return;
+      card.innerHTML = '';
+      var label = document.createElement('div');
+      label.className = 'card-label';
+      label.textContent = 'Last rejection';
+      card.appendChild(label);
+      if (!sig) {
+        var empty = document.createElement('div');
+        empty.className = 'empty';
+        var strong = document.createElement('strong');
+        strong.textContent = 'clean';
+        empty.appendChild(strong);
+        empty.appendChild(document.createTextNode('no rejections recorded'));
+        card.appendChild(empty);
+        return;
+      }
+      var value = document.createElement('div');
+      value.className = 'card-value sm';
+      var symStrong = document.createElement('strong');
+      symStrong.textContent = escapeText(sig.symbol || '—');
+      value.appendChild(symStrong);
+      var dot = document.createElement('span');
+      dot.className = 'muted';
+      dot.textContent = '·';
+      value.appendChild(document.createTextNode(' '));
+      value.appendChild(dot);
+      value.appendChild(document.createTextNode(' ' + escapeText(sig.action || '—')));
+      card.appendChild(value);
+      var sub = document.createElement('div');
+      sub.className = 'card-sub mono';
+      sub.textContent = escapeText(sig.received_at);
+      card.appendChild(sub);
+      var row = document.createElement('div');
+      row.className = 'mt-3';
+      var badge = document.createElement('span');
+      badge.className = 'badge badge-bad';
+      badge.textContent = escapeText(sig.rejection_reason);
+      row.appendChild(badge);
+      card.appendChild(row);
+    }
+
+    function updateJournalCards(body) {
+      if (!body || !Array.isArray(body.signals)) return;
+      var signals = body.signals;
+      var latest = signals[0] || null;
+      var latestRejection = null;
+      for (var i = 0; i < signals.length; i++) {
+        if (signals[i] && signals[i].decision === 'rejected') {
+          latestRejection = signals[i];
+          break;
+        }
+      }
+      renderLastSignalCard(document.getElementById('last-signal-card'), latest);
+      renderLastRejectionCard(document.getElementById('last-rejection-card'), latestRejection);
+    }
+
+    function updateBrokerPill(body) {
+      var pill = document.getElementById('summary-broker-conn');
+      if (!pill || !body) return;
+      if (body.broker_connected) {
+        pill.className = 'badge badge-good';
+        pill.textContent = 'connected';
+      } else if (body.not_implemented) {
+        pill.className = 'badge badge-warn';
+        pill.textContent = 'not implemented';
+      } else {
+        pill.className = 'badge badge-bad';
+        pill.textContent = 'offline';
+      }
+    }
+
+    function pollOnce() {
+      // Fan out the four reads in parallel. Each handler swallows its
+      // own error and logs to console — a failed fetch must not block
+      // the others or surface a toast (the operator would see a flood
+      // during any brief network blip).
+      fetch('/api/broker/positions', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          if (body && body.ok) updateFlattenButton(body);
+        })
+        .catch(function (err) { console.log('poll positions failed:', err); });
+
+      fetch('/api/metrics', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(updateStatCards)
+        .catch(function (err) { console.log('poll metrics failed:', err); });
+
+      fetch('/api/journal/recent?limit=5', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(updateJournalCards)
+        .catch(function (err) { console.log('poll journal failed:', err); });
+
+      fetch('/api/broker/status', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(updateBrokerPill)
+        .catch(function (err) { console.log('poll broker status failed:', err); });
+    }
+
+    function startPolling() {
+      if (pollTimerId !== null) return;  // idempotent
+      if (document.hidden) return;  // visibilitychange will start it later
+      pollOnce();
+      pollTimerId = window.setInterval(pollOnce, DASHBOARD_POLL_INTERVAL_MS);
+    }
+
+    function stopPolling() {
+      if (pollTimerId === null) return;
+      window.clearInterval(pollTimerId);
+      pollTimerId = null;
+    }
+
+    function startOrStopPolling(mode) {
+      if (mode === 'off') {
+        stopPolling();
+      } else {
+        startPolling();
+      }
+    }
+
+    document.addEventListener('visibilitychange', function () {
+      var mode = card.dataset.executionMode || 'off';
+      if (document.hidden) {
+        stopPolling();
+      } else if (mode !== 'off') {
+        startPolling();
+      }
+    });
+
+    // Boot: kick off polling if the page loaded in Test or Armed.
+    startOrStopPolling(card.dataset.executionMode || 'off');
+
+    // Hook the existing Apply handler so polling tracks mode changes.
+    // Listening on the form's submit event runs AFTER applyMode() has
+    // updated card.dataset.executionMode on success, so reading it
+    // here picks up the new mode.
+    if (modeForm) {
+      modeForm.addEventListener('submit', function () {
+        // Re-check on the next tick — applyMode is async and the
+        // dataset only flips after the POST resolves.
+        window.setTimeout(function () {
+          startOrStopPolling(card.dataset.executionMode || 'off');
+        }, APPLY_MIN_DURATION_MS + 100);
+      });
+    }
   } catch (e) {
     console.error('SignalBridge dashboard init failed:', e);
   }

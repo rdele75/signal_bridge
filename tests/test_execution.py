@@ -519,6 +519,41 @@ def test_dashboard_apply_wires_loading_animation(tmp_path, monkeypatch):
     assert ".execution-card.execution-loading::after" in css
 
 
+def test_dashboard_polls_live_state_in_test_and_armed(tmp_path, monkeypatch):
+    """The dashboard must re-fetch positions, metrics, journal, and
+    broker status on a 5s loop so the Flatten button and stat cards
+    don't go stale after page load. Live UI behaviour can't be
+    unit-tested in Python — assert the JS-string contract: the
+    rendered dashboard wires up the polling endpoints, the interval
+    constant, the visibilitychange pause, and the off-mode no-op."""
+    _write_topstep_symbol_map(tmp_path)
+    app = _build_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        body = c.get("/").text
+
+    # All four polled endpoints must appear in the rendered JS.
+    assert "/api/broker/positions" in body
+    assert "/api/metrics" in body
+    assert "/api/journal/recent?limit=5" in body
+    assert "/api/broker/status" in body
+
+    # 5-second poll interval (named constant) + actual scheduling.
+    assert "DASHBOARD_POLL_INTERVAL_MS = 5000" in body
+    assert "setInterval" in body
+
+    # Hidden tabs pause; off mode disables polling entirely.
+    assert "visibilitychange" in body
+    assert "document.hidden" in body
+    assert "startOrStopPolling" in body
+
+    # DOM hooks the poll handlers need.
+    assert 'id="stat-trades-today"' in body
+    assert 'id="stat-accepted-today"' in body
+    assert 'id="stat-rejected-today"' in body
+    assert 'id="last-signal-card"' in body
+    assert 'id="last-rejection-card"' in body
+
+
 def test_off_state_skips_broker(tmp_path, monkeypatch):
     """A valid webhook in Off state is journaled as accepted but the
     broker is never asked to execute. The result.message identifies
