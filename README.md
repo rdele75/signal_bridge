@@ -4,14 +4,18 @@
 
 It runs on your own machine, exposes a small web UI you open in a browser, accepts TradingView alerts at a webhook endpoint, applies your risk rules, and executes them through a broker adapter.
 
-**Broker status today:**
+**Broker:** Topstep / TopstepX (ProjectX) is the only adapter. Every order SignalBridge submits is a real ProjectX order on a real Topstep account. The fact that a Topstep account is an eval (Combine, Practice, Express) vs funded is incidental — both are real money, both go through the same `/api/Order/place` endpoint, both deserve the same treatment. The dashboard labels the selected account with a `Funded` or `Eval` badge so the operator always sees which one is wired up.
 
-- **Paper** — fully functional. Simulates fills, tracks positions, and computes realized PnL in price-points. Default account id is `PAPER-001` (configurable via `SELECTED_ACCOUNT_ID`).
-- **Topstep / TopstepX** — adapter is scaffolded but **not connected** to a real API yet. `execute()` rejects with `broker_not_implemented: topstep_execution_not_implemented…`; `test_connection()` returns `missing_credentials` or `scaffolded_not_connected`; the read-only methods (`get_accounts`, `get_positions`, `get_orders`, …) return a structured `not_implemented` envelope so the dashboard never crashes. See [`docs/topstep.md`](docs/topstep.md) for the integration plan.
-- Topstep credentials (`TOPSTEP_USERNAME`, `TOPSTEP_API_KEY`, `TOPSTEP_ACCOUNT_ID`, `TOPSTEP_ENV`, `TOPSTEP_BASE_URL`, `TOPSTEP_WS_URL`) can be set in `.env` or persisted via `/settings/broker`. The dashboard masks the API key (last four characters only).
-- **No live orders are placed by this build.**
+**Execution state:** SignalBridge runs in one of three states, picked from the Dashboard's mode dropdown:
 
-> Not SaaS. Not multi-user. Not packaged for distribution. Not live yet.
+- **Off** — execution disengaged. Signals are journaled but no orders submit, no broker round-trip happens, and the kill switch is irrelevant.
+- **Test** — orders are built and validated against ProjectX schema but NOT POSTed. Used for smoke-testing plumbing (credentials, symbol map, payload shape) without risking a fill.
+- **Armed** — orders submit to `/api/Order/place` against the selected Topstep account. The kill switch, the armed-symbol allowlist, the contracts cap, and the account-canTrade flag all gate each submission.
+
+> [!WARNING]
+> **Armed execution is real.** Switching to Armed and clicking Apply flips a single setting; subsequent TradingView alerts route through `submit_market_order` to the selected Topstep account. Verify the selected account, the `ALLOWED_SYMBOLS_ARMED` list, and `MAX_CONTRACTS_PER_TRADE` before you arm.
+
+> Not SaaS. Not multi-user. Not packaged for distribution.
 
 ```
 TradingView alert
@@ -20,10 +24,13 @@ TradingView alert
 SignalBridge webhook (POST /webhooks/tradingview)
    │  validate secret → parse → normalize action
    ▼
-Risk engine (allow-list, caps, kill switch, dupes, daily loss…)
+Risk engine (allow-list, caps, direction toggles, dupes, daily loss,
+             kill switch when armed)
    │
    ▼
-Broker adapter (paper today; topstep planned)
+Execution state:  off    → journal as accepted, no broker call
+                  test   → Topstep adapter builds payload, no POST
+                  armed  → Topstep adapter POSTs /api/Order/place
    │
    ▼
 Journal / metrics / logs   ←—   visible in the local dashboard
@@ -37,17 +44,17 @@ Journal / metrics / logs   ←—   visible in the local dashboard
 
 | Page | What it shows |
 | --- | --- |
-| `/`                | **Execution card** (mode toggle, demo/live arming, Exit-All), trading session, broker status, account snapshot card, **Ticker Watch** placeholder, today's accepted/rejected counts, last signal, last rejection, P&L |
-| `/settings/broker` | account configuration: broker provider, Topstep credentials, selected-account dropdown, account snapshot polling. Execution controls live on the Dashboard. |
-| `/settings/risk`   | edit allow-list, contracts cap, daily loss, open-positions cap, longs/shorts toggles, dup cooldown · kill-switch toggle |
-| `/tradingview`     | current webhook secret (copyable) + regenerate button, Xiznit Universal ORB alert recipe, generic JSON template, curl test, allowed symbols |
-| `/journal`         | recent signals (accepted/rejected) + recent closed paper trades |
-| `/metrics`         | accepted/rejected counts, rejection reasons, trades by symbol, basic paper P&L, win rate |
+| `/`                | **Execution card** (Off / Test / Armed dropdown with Apply, Funded/Eval badge next to Armed, Flatten All button, Smoke Test button), trading session, broker connection status, today's **Armed** accepted/rejected counts, last signal, last rejection, P&L |
+| `/settings/broker` | Topstep credentials, account-selection dropdown, Test connection / Fetch accounts buttons |
+| `/settings/risk`   | edit contracts cap, daily loss, open-positions cap, longs/shorts toggles, timeframe lock, dup cooldown, and BOTH symbol allowlists (general + armed) |
+| `/tradingview`     | current webhook secret (copyable) + regenerate, Xiznit Universal ORB alert recipe, Test webhook button |
+| `/journal`         | recent signals with a Mode column (off / test / armed) so the operator can tell Test fills from real Armed submissions at a glance |
+| `/metrics`         | accepted/rejected counts, rejection reasons, by-symbol breakdown, past orders |
 | `/logs`            | tail of `logs/signalbridge.log` |
 | `/system`          | app name/version, host/port, db & log paths, cwd, broker, mode, `.env` loaded?, runtime status, useful local URLs |
 | `/settings/profile`| change dashboard admin username + password (PBKDF2-SHA256 hash stored in SQLite) |
 
-All pages share a top bar showing **execution mode**, **broker provider**, and a **live / halted** pill driven by the kill switch.
+Every page has a top-bar kill-switch button. Execution state, the funded/eval badge, and the Topstep connection status live on the Dashboard execution card.
 
 ---
 
@@ -109,10 +116,11 @@ from your browser, or just open the dashboard.
    - daily loss limit reached?
    - duplicate `order_id` inside cooldown window?
    - already at max open positions?
-6. **Broker adapter** executes:
-   - `paper` — simulates a fill at the alert's `price`, updates the position, records realized PnL (in price-points) when a fill closes / reduces the position.
-   - `topstep` — rejects with `broker_not_implemented`. (Adapter loads so the app can boot, but `execute()` raises `NotImplementedError` — caught by the webhook handler and turned into a labeled rejection.)
-7. **Journal** writes one row per signal (accepted or rejected) to SQLite.
+6. **Execution dispatch** branches on the state set in the Dashboard:
+   - **Off** — no broker call. The signal is journaled as accepted with `message="execution_off_no_submission"` and SignalBridge returns.
+   - **Test** — Topstep adapter builds the `/api/Order/place` payload, validates the contract id, logs the build, returns `submitted=false, mode="test"`. Never POSTs.
+   - **Armed** — Topstep adapter runs its armed gate stack (credentials, numeric account id, canTrade, kill switch, ALLOWED_SYMBOLS_ARMED, MAX_CONTRACTS_PER_TRADE) and POSTs `/api/Order/place`. The ProjectX response is journaled and surfaced in the dashboard.
+7. **Journal** writes one row per signal (accepted or rejected) to SQLite. The Mode column on `/journal` distinguishes Off / Test / Armed entries.
 8. **Dashboard** picks up the new row on the next page load.
 
 A rejection at any step returns `{"accepted": false, "decision": "rejected", "rejection_reason": "..."}` and is still written to the journal.
@@ -127,25 +135,35 @@ stored values **override the `.env` defaults** at runtime. Resetting a value
 back to its `.env` default means editing the `settings` row in SQLite (or
 deleting it and restarting).
 
-Dashboard-editable keys: `APP_HOST`, `APP_PORT`, `EXECUTION_MODE`,
-`BROKER_PROVIDER`, `SELECTED_ACCOUNT_ID`, `TRADINGVIEW_WEBHOOK_SECRET`,
-`ALLOWED_SYMBOLS`, `MAX_CONTRACTS_PER_TRADE`, `MAX_DAILY_LOSS`,
+> [!IMPORTANT]
+> The execution-model-collapse (2026-05-21) rework removed every pre-collapse
+> `paper` / `demo` / `live` setting and renamed `LIVE_ALLOWED_SYMBOLS` to
+> `ALLOWED_SYMBOLS_ARMED`. The boot-time schema check refuses to start
+> against a SQLite database that still carries any of the removed keys —
+> if you see `pre-collapse SQLite schema detected` in the log, delete
+> `data/signalbridge.db` and restart so a fresh database can be
+> bootstrapped from `.env`. The operator's journal export from the
+> pre-flight checklist is the source of truth for prior history.
+
+Dashboard-editable keys today: `EXECUTION_MODE` (via the Dashboard mode
+dropdown), `SELECTED_ACCOUNT_ID`, `TRADINGVIEW_WEBHOOK_SECRET`,
+`ALLOWED_SYMBOLS`, `ALLOWED_SYMBOLS_ARMED`, `MAX_CONTRACTS_PER_TRADE`,
+`STRATEGY_MANAGED_RISK`, `FIXED_CONTRACTS_PER_TRADE`, `MAX_DAILY_LOSS`,
 `MAX_OPEN_POSITIONS`, `ENABLE_LONGS`, `ENABLE_SHORTS`,
-`DUPLICATE_ORDER_COOLDOWN_SECONDS`.
+`DUPLICATE_ORDER_COOLDOWN_SECONDS`, `ENABLE_TIMEFRAME_LOCK`,
+`ALLOWED_TIMEFRAMES`, `TOPSTEP_USERNAME`, `TOPSTEP_API_KEY`,
+`ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`.
 
 Runtime-applied immediately: webhook secret, execution mode, all risk
-limits, allow-list, longs/shorts toggles, duplicate cooldown.
-Restart-required: `APP_HOST`, `APP_PORT`, `BROKER_PROVIDER` (the broker
-adapter is built once at startup).
+limits, allowlists, longs/shorts toggles, duplicate cooldown, Topstep
+credentials.
+Restart-required: `APP_HOST`, `APP_PORT`, `BROKER_PROVIDER` (pinned to
+topstep post-collapse).
 
-**Broker credentials** (Topstep `USERNAME`, `PASSWORD`, `API_KEY`, etc.)
-are intentionally **not** editable from the UI yet — those still come
-from `.env` only.
-
-**Execution adapters today.** Only `paper` is functional. `topstep`
-loads so the app can boot, but `execute()` raises `NotImplementedError`
-(turned into a labeled rejection by the webhook handler). `live`
-execution mode is rejected at the settings layer.
+**Broker credentials.** `TOPSTEP_USERNAME` and `TOPSTEP_API_KEY` can be
+persisted from `/settings/broker`. `TOPSTEP_PASSWORD` stays env-only —
+ProjectX authenticates via the API key, the password is unused once
+the key is configured.
 
 All env defaults (see `.env.example` for the full list):
 
@@ -155,21 +173,25 @@ All env defaults (see `.env.example` for the full list):
 | `ADMIN_AUTH_ENABLED`                | enable dashboard login (default `true`) |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD`  | admin credentials for `/login` |
 | `SESSION_SECRET`                    | signing key for the session cookie |
-| `EXECUTION_MODE`                    | `paper` today; `demo` / `live` reserved for the future |
-| `BROKER_PROVIDER`                   | `paper` (default), `topstep` |
-| `BROKER`                            | legacy alias for `BROKER_PROVIDER` |
+| `EXECUTION_MODE`                    | `off` (default), `test`, or `armed` |
+| `BROKER_PROVIDER`                   | pinned to `topstep`; other values rejected |
 | `TRADINGVIEW_WEBHOOK_SECRET`        | shared secret in the alert body |
-| `ALLOWED_SYMBOLS`                   | comma-separated allow-list |
-| `MAX_CONTRACTS_PER_TRADE`           | hard cap per signal (always enforced) |
-| `STRATEGY_MANAGED_RISK`             | `true` (default) → trade sizing comes from the alert's `contracts`; `false` → use `FIXED_CONTRACTS_PER_TRADE`. See [docs/risk.md](docs/risk.md). |
+| `ALLOWED_SYMBOLS`                   | comma-separated allowlist (applies in every state) |
+| `ALLOWED_SYMBOLS_ARMED`             | stricter subset applied only when execution is Armed |
+| `MAX_CONTRACTS_PER_TRADE`           | hard cap per trade; applies uniformly in Test and Armed |
+| `STRATEGY_MANAGED_RISK`             | `true` (default) → sizing comes from the alert's `contracts`; `false` → use `FIXED_CONTRACTS_PER_TRADE`. See [docs/risk.md](docs/risk.md). |
 | `FIXED_CONTRACTS_PER_TRADE`         | quantity used when `STRATEGY_MANAGED_RISK=false` (must be ≤ `MAX_CONTRACTS_PER_TRADE`) |
 | `MAX_DAILY_LOSS`                    | daily realized PnL floor |
 | `MAX_OPEN_POSITIONS`                | concurrent open positions cap |
 | `ENABLE_LONGS`, `ENABLE_SHORTS`     | direction toggles |
-| `ENABLE_KILL_SWITCH`                | turn the kill switch feature on/off |
+| `ENABLE_KILL_SWITCH`                | master switch for the kill switch feature (env-only, restart required) |
 | `DUPLICATE_ORDER_COOLDOWN_SECONDS`  | reject re-sent `order_id`s inside this window |
-| `DATABASE_PATH`, `LOG_PATH`         | storage paths |
-| `TOPSTEP_*`                         | placeholders — not used until the adapter ships |
+| `TRADING_DAY_TIMEZONE`              | timezone for the daily-PnL boundary (env-only, restart required) |
+| `DATABASE_PATH`, `LOG_PATH`, `LOG_LEVEL` | storage paths and log verbosity |
+| `TOPSTEP_USERNAME`, `TOPSTEP_API_KEY`, `TOPSTEP_ACCOUNT_ID`, `TOPSTEP_ENV` | ProjectX credentials; username + API key editable from `/settings/broker` |
+| `TOPSTEP_PASSWORD`                  | env-only; unused once `TOPSTEP_API_KEY` is configured |
+| `TOPSTEP_BASE_URL`, `TOPSTEP_WS_URL` | ProjectX endpoints |
+| `TOPSTEP_TOKEN`, `TOPSTEP_TOKEN_EXPIRES_AT` | adapter-managed auth cache — never user-editable |
 
 ---
 
@@ -212,55 +234,32 @@ To make `127.0.0.1` reachable from TradingView's servers, expose it with **ngrok
 | `GET  /api/broker/accounts`           | accounts visible to the active adapter |
 | `GET  /api/broker/positions`          | open positions from the active adapter |
 | `GET  /api/broker/orders`             | recent orders from the active adapter |
-| `POST /api/paper/flatten`             | zero every open paper position (paper provider only) |
-| `POST /api/paper/flatten/{symbol}`    | zero one paper position by symbol |
-| `POST /api/paper/reset`               | clear paper position/order state (keeps signal journal) |
+| `POST /api/broker/flatten-all`        | flatten every open Topstep position (Armed only) |
+| `POST /api/execution/off`             | set execution state to Off |
+| `POST /api/execution/test`            | set execution state to Test |
+| `POST /api/execution/arm`             | set execution state to Armed (runs the gate-stack check first) |
+| `POST /api/execution/submit-test-order` | build a synthetic 1-contract test order against ProjectX without POSTing |
 | `GET  /api/system`                    | host/port, paths, runtime status, useful local URLs |
 | `POST /webhooks/tradingview`          | the inbound alert endpoint |
 
-`POST /api/broker/test-connection` returns `200` with `ok: true` for paper. For topstep it returns `200` with `ok: false` and a documented `status` — `missing_credentials` when the username/API key isn't configured, or `scaffolded_not_connected` once credentials are saved. Genuine server errors come back as `500`. The `GET /api/broker/*` query endpoints always return `200` with a JSON envelope — when the active provider hasn't implemented an operation, the envelope includes `"not_implemented": true` so the dashboard can render safely.
+`POST /api/broker/test-connection` runs a real `/api/Auth/loginKey` + `/api/Account/search` round-trip and returns `200` with `ok: true` on success. Topstep failure envelopes carry a documented `status` field (`missing_credentials`, `auth_failed`, `non_numeric_account_id`, `network_error`, ...) at HTTP 200 with `ok: false`; genuine server errors come back as `500`.
 
 ---
 
-## Paper position cleanup (flatten / reset)
+## Flatten / cancel-all
 
-Paper mode accumulates simulated positions during testing — every accepted
-TradingView alert adds, reduces, or flips a position the same way a live
-broker would. To return the simulated account to flat without restarting:
+When execution is **Armed** and Topstep is holding open positions, the
+Dashboard's **Flatten All Positions** button POSTs `/api/broker/flatten-all`
+which calls `flatten_position()` on the Topstep adapter. The adapter
+queries `/api/Position/searchOpen`, then POSTs one
+`/api/Position/closeContract` per open leg and reports a per-leg
+envelope.
 
-- **Flatten Paper Positions** — closes every open paper position (or one
-  symbol via `/api/paper/flatten/{symbol}`).
-- **Reset Paper State** — additionally clears the paper adapter's
-  in-memory order state. Useful when you've been firing test alerts and
-  want a clean slate.
-
-Neither action deletes the signal journal, closed-trade history, or daily
-PnL — those remain as your testing record. Each action logs a
-`paper_flatten_all` / `paper_flatten_symbol` / `paper_reset_state` event to
-`logs/signalbridge.log`.
-
-Buttons live on the **Dashboard** (under Open positions) and on
-**Broker** (`/settings/broker`, under "Paper controls"). Both prompt for
-confirmation before firing.
-
-If the active provider is `topstep`, these endpoints return a safe
-`{"ok": false, "not_implemented": true, "status":
-"not_available_for_provider"}` envelope — they only operate on the paper
-adapter.
-
-```bash
-# Flatten all paper positions
-curl -X POST http://127.0.0.1:8000/api/paper/flatten \
-  -b "$(cat dashboard_cookies.txt)"
-
-# Flatten one symbol
-curl -X POST http://127.0.0.1:8000/api/paper/flatten/MES1! \
-  -b "$(cat dashboard_cookies.txt)"
-
-# Reset paper position/order state (keeps signal journal)
-curl -X POST http://127.0.0.1:8000/api/paper/reset \
-  -b "$(cat dashboard_cookies.txt)"
-```
+The kill switch is bypassed for flatten — closing existing state
+remains available after emergency stop. Off and Test states refuse
+flatten with a `not_armed` envelope: positions live on Topstep's side
+and must be closed through a real broker call, which only happens in
+Armed.
 
 ---
 
@@ -354,9 +353,10 @@ startup (and no `ADMIN_PASSWORD_HASH` has been saved), the app logs a
 
 ## Safety notes
 
-- Live execution is **not** implemented. The Topstep adapter raises `NotImplementedError` on `execute()`, and every read-only method (`get_accounts`, `get_positions`, `get_orders`, …) returns `not_implemented: true` instead of hitting a real API.
-- Paper mode is the default and cannot place real orders.
-- Broker credentials live in `.env` only. The UI never echoes raw values back; it only reports whether each one is configured.
-- The kill switch is on by default — create `data/kill_switch.active` (or click the button on `/settings/risk`) to halt all execution. Delete the file (or click again) to resume.
+- **Armed execution submits real orders to your Topstep account.** Eval (Combine / Practice / Express) accounts behave the same as funded for SignalBridge's purposes — both are real ProjectX orders, both fill against your real account state, both deserve the same care. The Dashboard renders a `Funded` or `Eval` badge next to the Armed state so you always see which one is wired up.
+- **Default state is Off.** First boot and every restart land in Off; the operator has to deliberately switch to Test or Armed.
+- **Verify the safety knobs before arming.** `MAX_CONTRACTS_PER_TRADE` (hard cap), `ALLOWED_SYMBOLS_ARMED` (which symbols can submit when Armed — defaults to micros only), and the selected Topstep account all gate live submissions. The Dashboard's "Cannot Arm" line surfaces blockers before you click.
+- `TOPSTEP_USERNAME` and `TOPSTEP_API_KEY` can be saved from the UI. `TOPSTEP_PASSWORD` stays env-only. The UI never echoes raw API-key values back; it only shows the last four characters.
+- The kill switch is on by default — create `data/kill_switch.active`, click the top-bar button, or click Activate on `/settings/risk` to halt new Armed orders. The kill switch is consulted only when execution is Armed (Off and Test ignore it).
 - The webhook secret is the only check on `/webhooks/tradingview` — use a long random string and never commit it.
 - This is a single-user local app. Dashboard auth (above) gates the UI and admin API; the webhook stays open by design but is shared-secret protected.
