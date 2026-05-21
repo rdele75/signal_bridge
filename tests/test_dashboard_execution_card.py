@@ -924,6 +924,30 @@ def test_dashboard_apply_button_has_spinner_element(client):
     assert "btn-spinner" in body
 
 
+def test_dashboard_apply_button_form_has_no_orphan_helper_calls(client):
+    """Regression for an Apply-button bug where the submit handler
+    called ``hidePreviewChip()`` after the preview chip had been
+    removed in a prior commit. The leftover reference threw a
+    ReferenceError on click and silently aborted the rest of the
+    init block. This test pins down two invariants:
+
+    1. The orphan helper name is gone from the rendered template.
+    2. The dashboard's init block is wrapped in try/catch so any
+       future orphan reference logs to console instead of disabling
+       every other handler on the page.
+    """
+    body = client.get("/").text
+    assert "hidePreviewChip" not in body, (
+        "Apply submit handler must not reference the removed "
+        "preview-chip helper"
+    )
+    assert "showPreviewChip" not in body
+    assert "SignalBridge dashboard init failed:" in body, (
+        "Defensive try/catch is missing — a single orphan reference "
+        "could once again silently disable every dashboard handler"
+    )
+
+
 def test_dashboard_has_no_legacy_raw_output_block(client):
     """The card no longer renders the ``<pre id="execution-out">`` block
     where the legacy JSON dump used to appear."""

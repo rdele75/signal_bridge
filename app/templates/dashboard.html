@@ -486,7 +486,19 @@
 
 <script>
 // ---- Dashboard Execution card ----
+//
+// JS init guards: every getElementById that targets a conditionally-
+// rendered element MUST be null-checked before .addEventListener is
+// called. A single null reference aborts the rest of the script and
+// silently disables every later handler — including the Apply button.
+// If you remove a helper function, grep for ALL its call sites before
+// committing; a stale reference produces a ReferenceError with the
+// same fatal effect.
+//
+// The whole init block is wrapped in try/catch so a single broken
+// reference can't silently disable unrelated handlers.
 (function () {
+  try {
   var card = document.getElementById('exec-card');
   if (!card) return;
 
@@ -914,7 +926,6 @@
   if (modeForm && modeSelect) {
     modeForm.addEventListener('submit', function (e) {
       e.preventDefault();
-      hidePreviewChip();
       var picked = modeSelect.value;
       if (picked === 'live') {
         setStatusText('Live verification required');
@@ -1456,6 +1467,15 @@
   // after the page reload that follows engagement.
   if (statusText && card.dataset.executionState === 'live-armed') {
     statusText.classList.add('execution-status-check-visible');
+  }
+  } catch (e) {
+    // Defensive: a single bad reference (e.g. a stale call site
+    // pointing at a helper that was deleted in a later commit) used
+    // to silently disable every handler in this block, including
+    // the Apply button. Log instead of crashing so the rest of the
+    // page keeps working and the next debug session can find the
+    // error in the browser console.
+    console.error('SignalBridge dashboard init failed:', e);
   }
 })();
 </script>
