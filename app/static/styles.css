@@ -1010,6 +1010,20 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   opacity: 0;
   transform: translateY(-3px);
 }
+/* Brief fade-in for the new label after an Apply success. The class is
+   restarted on every swap so the new state animates in cleanly; the
+   check ::before from .execution-status-check-visible fades along with
+   the parent so it never appears on the previous label. */
+.execution-status-text.execution-status-swap {
+  animation: execution-status-swap-in 0.2s ease-out 1 both;
+}
+@keyframes execution-status-swap-in {
+  from { opacity: 0.35; }
+  to   { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .execution-status-text.execution-status-swap { animation: none; }
+}
 /* Armed status text gets a brief checkmark + flash on enter and
    then SETTLES SOLID GREEN — not red. The red card-border-pulse is the
    "be careful" signal; the status text staying solid green communicates

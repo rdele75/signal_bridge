@@ -554,6 +554,28 @@
     // submit button; second click never reaches applyMode.
     var APPLY_MIN_DURATION_MS = 300;
 
+    // Swap the visible mode label synchronously so any subsequent
+    // success cue (check icon, armed-enter flash) lands on the NEW
+    // state, never the OLD one. Preserves the funded/eval badge across
+    // the swap so it doesn't blink out — refreshBadgeForMode will
+    // replace it shortly with fresh broker context. A brief CSS
+    // animation fades the new label in (~200ms).
+    function swapStatusModeText(mode) {
+      if (!statusText) return;
+      var keep = (mode === 'off')
+        ? null
+        : document.getElementById('execution-funded-badge');
+      statusText.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+      if (keep) {
+        statusText.appendChild(document.createTextNode(' '));
+        statusText.appendChild(keep);
+      }
+      // Restart the swap-in animation cleanly even on rapid re-clicks.
+      statusText.classList.remove('execution-status-swap');
+      void statusText.offsetWidth;
+      statusText.classList.add('execution-status-swap');
+    }
+
     function applyMode(mode) {
       setBusy(true);
       clearFeedback();
@@ -577,6 +599,11 @@
           finalize();
           var resp = vals[0];
           if (resp.ok && resp.body && resp.body.ok) {
+            // Order matters: update the visible label FIRST, then apply
+            // setState (which adds the check ::before and armed-enter
+            // flash). Otherwise the check briefly renders next to the
+            // OLD label — e.g. "Off ✓" before "Armed" appears.
+            swapStatusModeText(mode);
             setState(mode);
             card.dataset.executionMode = mode;
             refreshBadgeForMode(mode);
