@@ -710,3 +710,165 @@ def test_sbctl_audit_runs_and_masks_secrets(tmp_path, monkeypatch):
     # make sure the audit doesn't dump fields it shouldn't.
     for forbidden in ("BEGIN PRIVATE", "Bearer "):
         assert forbidden not in out, f"audit leaked: {forbidden!r}"
+
+
+# ----------------------------------------------------------------------
+# Phase 2 — /settings/risk surfaces for the four live-execution
+# safety knobs. The risk form now accepts:
+#   * LIVE_MAX_CONTRACTS_PER_TRADE (audit Section 1 critical 1)
+#   * LIVE_ALLOWED_SYMBOLS         (audit Section 1 critical 2)
+#   * LIVE_REQUIRE_KILL_SWITCH_OFF (audit Section 1 critical 3)
+#   * ENABLE_TOPSTEP_ORDER_DRY_RUN (audit Section 1 high finding)
+#
+# These tests confirm the round-trip (form post → coerce → SQLite →
+# in-memory Settings) plus the cross-field check that keeps the live
+# cap below the general cap.
+# ----------------------------------------------------------------------
+
+
+def _risk_form_payload(**overrides: str) -> dict[str, str]:
+    """Baseline /settings/risk POST body matching the rendered form.
+
+    The defaults reproduce what the page would submit if the operator
+    just clicked Save without changing anything against a freshly
+    bootstrapped app.
+    """
+    base: dict[str, str] = {
+        "max_contracts_per_trade": "1",
+        "strategy_managed_risk": "true",
+        "fixed_contracts_per_trade": "1",
+        "max_daily_loss": "250",
+        "max_open_positions": "1",
+        "duplicate_order_cooldown_seconds": "60",
+        "enable_longs": "true",
+        "enable_shorts": "true",
+        "enable_timeframe_lock": "false",
+        "allowed_timeframes": "1",
+        "live_max_contracts_per_trade": "1",
+        "live_allowed_symbols": "MES1!,MNQ1!",
+        "live_require_kill_switch_off": "true",
+        "enable_topstep_order_dry_run": "true",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_settings_risk_renders_live_cap_inputs(tmp_path, monkeypatch):
+    """GET /settings/risk must render all four Phase 2 inputs with the
+    expected ``name`` attributes so the operator can save them."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        r = c.get("/settings/risk")
+    assert r.status_code == 200
+    body = r.text
+    assert 'name="live_max_contracts_per_trade"' in body
+    assert 'name="live_allowed_symbols"' in body
+    assert 'name="live_require_kill_switch_off"' in body
+    assert 'name="enable_topstep_order_dry_run"' in body
+    # The intro copy must explain that these only matter under live
+    # execution — operators landing on /settings/risk shouldn't think
+    # these affect paper.
+    assert "Live execution caps" in body
+
+
+def test_settings_risk_persists_live_caps(tmp_path, monkeypatch):
+    """POST values for all four Phase 2 fields and assert they land in
+    SQLite + the in-memory Settings."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        r = c.post(
+            "/settings/risk",
+            data=_risk_form_payload(
+                max_contracts_per_trade="5",
+                live_max_contracts_per_trade="3",
+                live_allowed_symbols="MES1!,MNQ1!,NQ1!",
+                live_require_kill_switch_off="false",
+                enable_topstep_order_dry_run="false",
+            ),
+            follow_redirects=False,
+        )
+    assert r.status_code == 303, r.text
+    assert "Risk+settings+saved" in r.headers.get("location", "")
+
+    s = app.state.settings
+    assert s.live_max_contracts_per_trade == 3
+    assert s.live_allowed_symbols == ["MES1!", "MNQ1!", "NQ1!"]
+    assert s.live_require_kill_switch_off is False
+    assert s.enable_topstep_order_dry_run is False
+
+    # Persisted in SQLite too — these survive a restart.
+    stored = app.state.settings_store.get_all_settings()
+    assert stored["LIVE_MAX_CONTRACTS_PER_TRADE"] == "3"
+    assert stored["LIVE_ALLOWED_SYMBOLS"] == "MES1!,MNQ1!,NQ1!"
+    assert stored["LIVE_REQUIRE_KILL_SWITCH_OFF"] == "false"
+    assert stored["ENABLE_TOPSTEP_ORDER_DRY_RUN"] == "false"
+
+
+def test_settings_risk_rejects_live_cap_above_general(tmp_path, monkeypatch):
+    """Cross-field check: LIVE_MAX_CONTRACTS_PER_TRADE > MAX_CONTRACTS_PER_TRADE
+    is dead config because live signals still pass through the general
+    cap first. The handler must refuse and leave settings untouched."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    s = app.state.settings
+    starting_live_cap = s.live_max_contracts_per_trade
+    starting_general_cap = s.max_contracts_per_trade
+    with TestClient(app) as c:
+        r = c.post(
+            "/settings/risk",
+            data=_risk_form_payload(
+                max_contracts_per_trade="5",
+                live_max_contracts_per_trade="10",
+            ),
+            follow_redirects=False,
+        )
+    assert r.status_code == 303
+    location = r.headers.get("location", "")
+    assert "flash_kind=error" in location
+    assert "LIVE_MAX_CONTRACTS_PER_TRADE" in location
+    # In-memory settings unchanged on rejection.
+    assert s.live_max_contracts_per_trade == starting_live_cap
+    assert s.max_contracts_per_trade == starting_general_cap
+
+
+def test_settings_risk_live_cap_equal_to_general_is_allowed(tmp_path, monkeypatch):
+    """The cross-field check rejects strictly-greater. Equal is fine —
+    the live cap can match the general cap, the live submission path
+    just doesn't introduce a tighter constraint."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        r = c.post(
+            "/settings/risk",
+            data=_risk_form_payload(
+                max_contracts_per_trade="4",
+                live_max_contracts_per_trade="4",
+            ),
+            follow_redirects=False,
+        )
+    assert r.status_code == 303
+    assert "Risk+settings+saved" in r.headers.get("location", "")
+    s = app.state.settings
+    assert s.live_max_contracts_per_trade == 4
+    assert s.max_contracts_per_trade == 4
+
+
+def test_settings_risk_unchecked_live_kill_switch_persists_false(tmp_path, monkeypatch):
+    """An unchecked checkbox sends no value with the form, which the
+    handler defaults to ``"false"``. Confirm that the false value
+    survives coerce + apply for both new boolean settings."""
+    app = _build_topstep_app(tmp_path, monkeypatch)
+    payload = _risk_form_payload()
+    # Simulate a browser submit where the operator unchecked both
+    # toggles — the form keys are absent.
+    payload.pop("live_require_kill_switch_off")
+    payload.pop("enable_topstep_order_dry_run")
+    with TestClient(app) as c:
+        r = c.post(
+            "/settings/risk",
+            data=payload,
+            follow_redirects=False,
+        )
+    assert r.status_code == 303
+    assert "Risk+settings+saved" in r.headers.get("location", "")
+    s = app.state.settings
+    assert s.live_require_kill_switch_off is False
+    assert s.enable_topstep_order_dry_run is False

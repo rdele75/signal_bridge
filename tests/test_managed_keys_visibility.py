@@ -41,6 +41,8 @@ instead.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -103,28 +105,12 @@ EXPECTED_UI_INVISIBLE: dict[str, str] = {
         "adapter-managed auth token expiry; never user-editable"
     ),
 
-    # ---- audit Section 1 CRITICAL findings ----
-    # These three gate real live-money execution and currently have no
-    # form. Removing an entry below without first landing a template
-    # surface will fail this test.
-    "LIVE_MAX_CONTRACTS_PER_TRADE": (
-        "awaiting Phase 2 UI surface (audit Section 1 critical 1: "
-        "live-money contract cap with no form)"
-    ),
-    "LIVE_ALLOWED_SYMBOLS": (
-        "awaiting Phase 2 UI surface (audit Section 1 critical 2: "
-        "live-allowed symbol list with no form)"
-    ),
-    "LIVE_REQUIRE_KILL_SWITCH_OFF": (
-        "awaiting Phase 2 UI surface (audit Section 1 critical 3: "
-        "kill-switch live gate with no form)"
-    ),
-
-    # ---- audit Section 1 HIGH findings ----
-    "ENABLE_TOPSTEP_ORDER_DRY_RUN": (
-        "awaiting Phase 2 UI surface (audit Section 1 high finding: "
-        "dry-run master switch with no form)"
-    ),
+    # Phase 2 surfaced LIVE_MAX_CONTRACTS_PER_TRADE,
+    # LIVE_ALLOWED_SYMBOLS, LIVE_REQUIRE_KILL_SWITCH_OFF, and
+    # ENABLE_TOPSTEP_ORDER_DRY_RUN on /settings/risk (audit Section 1
+    # critical 1-3 and the high finding). Their EXPECTED_UI_INVISIBLE
+    # entries were removed accordingly — the property test now asserts
+    # they appear in rendered HTML.
 
     # ---- audit Section 1: settings driven by armed-flow endpoints ----
     # The dashboard execution card + live-arming modal are the
@@ -210,16 +196,25 @@ def _render_all_pages(client: TestClient) -> str:
     return "\n".join(chunks)
 
 
-def _visibility_tokens(key: str) -> list[str]:
-    """Substrings whose presence in the rendered HTML counts as
-    ``key`` being surfaced to the operator."""
-    tokens: list[str] = []
+def _key_is_visible(key: str, html: str) -> bool:
+    """True when ``key`` is surfaced in the rendered HTML.
+
+    The snake_case Pydantic field name and the uppercase MANAGED_KEY
+    name are matched with word boundaries so a longer key that
+    *contains* the target as a substring (e.g. ``LIVE_ALLOWED_SYMBOLS``
+    embedding ``ALLOWED_SYMBOLS``) does not falsely advertise the
+    shorter key as visible. ``EXTRA_TOKENS`` entries stay as literal
+    substring matches — they're typically punctuation-bracketed labels
+    like ``>host</dt>`` that benefit from raw substring lookup.
+    """
     attr = _KEY_TO_ATTR.get(key)
-    if attr:
-        tokens.append(attr)
-    tokens.append(key)
-    tokens.extend(EXTRA_TOKENS.get(key, []))
-    return [t for t in tokens if t]
+    for word_token in filter(None, (attr, key)):
+        if re.search(rf"\b{re.escape(word_token)}\b", html):
+            return True
+    for extra in EXTRA_TOKENS.get(key, []):
+        if extra and extra in html:
+            return True
+    return False
 
 
 @pytest.fixture
@@ -241,8 +236,7 @@ class TestManagedKeysVisibility:
     def test_no_unaccounted_managed_keys(self, rendered_html: str) -> None:
         unaccounted: list[str] = []
         for key in MANAGED_KEYS:
-            tokens = _visibility_tokens(key)
-            surfaced = any(t in rendered_html for t in tokens)
+            surfaced = _key_is_visible(key, rendered_html)
             invisible = key in EXPECTED_UI_INVISIBLE
             if surfaced and invisible:
                 unaccounted.append(

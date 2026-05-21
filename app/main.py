@@ -3404,6 +3404,11 @@ def create_app() -> FastAPI:
             "enable_timeframe_lock": settings.enable_timeframe_lock,
             "allowed_timeframes": list(settings.allowed_timeframes),
             "allowed_timeframes_csv": ",".join(settings.allowed_timeframes),
+            "live_max_contracts_per_trade": settings.live_max_contracts_per_trade,
+            "live_allowed_symbols": list(settings.live_allowed_symbols),
+            "live_allowed_symbols_csv": ",".join(settings.live_allowed_symbols),
+            "live_require_kill_switch_off": settings.live_require_kill_switch_off,
+            "enable_topstep_order_dry_run": settings.enable_topstep_order_dry_run,
         }
         return templates.TemplateResponse(request, "settings_risk.html", ctx)
 
@@ -3427,6 +3432,13 @@ def create_app() -> FastAPI:
         # own it later). Accept the field optionally so legacy clients +
         # tests can still update it.
         allowed_symbols: Optional[str] = Form(None),
+        # ``live_max_contracts_per_trade`` defaults to the safe baseline
+        # ``"1"`` so legacy curl POSTs that omit the field don't 422 —
+        # real browser submissions always include the input value.
+        live_max_contracts_per_trade: str = Form("1"),
+        live_allowed_symbols: str = Form(""),
+        live_require_kill_switch_off: str = Form("false"),
+        enable_topstep_order_dry_run: str = Form("false"),
     ):
         # Coerce + validate every field individually first so a bad input
         # surfaces a typed error before we touch SQLite.
@@ -3441,6 +3453,10 @@ def create_app() -> FastAPI:
             ("ENABLE_SHORTS", enable_shorts),
             ("ENABLE_TIMEFRAME_LOCK", enable_timeframe_lock),
             ("ALLOWED_TIMEFRAMES", allowed_timeframes),
+            ("LIVE_MAX_CONTRACTS_PER_TRADE", live_max_contracts_per_trade),
+            ("LIVE_ALLOWED_SYMBOLS", live_allowed_symbols),
+            ("LIVE_REQUIRE_KILL_SWITCH_OFF", live_require_kill_switch_off),
+            ("ENABLE_TOPSTEP_ORDER_DRY_RUN", enable_topstep_order_dry_run),
         ]
         if allowed_symbols is not None:
             raw_updates.append(("ALLOWED_SYMBOLS", allowed_symbols))
@@ -3463,6 +3479,21 @@ def create_app() -> FastAPI:
             return _flash_redirect(
                 "/settings/risk",
                 "FIXED_CONTRACTS_PER_TRADE cannot exceed MAX_CONTRACTS_PER_TRADE",
+                kind="error",
+            )
+
+        # Cross-field: LIVE_MAX_CONTRACTS_PER_TRADE must not exceed
+        # MAX_CONTRACTS_PER_TRADE. Live signals still pass through the
+        # general cap first, so allowing live > general would mean the
+        # live cap can never fire — confusing dead config.
+        if (
+            coerced["LIVE_MAX_CONTRACTS_PER_TRADE"]
+            > coerced["MAX_CONTRACTS_PER_TRADE"]
+        ):
+            return _flash_redirect(
+                "/settings/risk",
+                "LIVE_MAX_CONTRACTS_PER_TRADE cannot exceed MAX_CONTRACTS_PER_TRADE — "
+                "live orders are still bounded by the general cap.",
                 kind="error",
             )
 

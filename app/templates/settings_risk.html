@@ -176,6 +176,55 @@
         <code>60</code> for 1-hour, <code>D</code> for daily.
       </p>
     </div>
+
+    <h3 class="mt-6">Live execution caps</h3>
+    <p class="muted mb-4">
+      These settings cap the broker adapter's live-execution path. They
+      have no effect on paper or demo mode. To arm live execution, use
+      the Dashboard's live-engagement flow.
+    </p>
+    <div class="grid grid-2">
+      <div class="form-row">
+        <label for="live_max_contracts_per_trade">Live max contracts per trade</label>
+        <input type="number" min="1" step="1" id="live_max_contracts_per_trade"
+               name="live_max_contracts_per_trade"
+               value="{{ risk.live_max_contracts_per_trade }}">
+        <p class="muted mt-1">
+          Hard cap on contracts per live order. Independent of "Max
+          contracts / trade" above. Must be ≥ 1.
+        </p>
+      </div>
+      <div class="form-row">
+        <label for="live_allowed_symbols">Live allowed symbols</label>
+        <input type="text" id="live_allowed_symbols" name="live_allowed_symbols"
+               value="{{ risk.live_allowed_symbols_csv }}"
+               placeholder="MES1!,MNQ1!">
+        <p class="muted mt-1">
+          Comma-separated. Only signals matching these symbols can
+          submit live orders. Default: <code>MES1!,MNQ1!</code>.
+        </p>
+      </div>
+    </div>
+    <div class="form-row toggles">
+      <label>
+        <input type="checkbox" name="live_require_kill_switch_off" value="true"
+               {% if risk.live_require_kill_switch_off %}checked{% endif %}>
+        Require kill switch off for live
+      </label>
+      <label>
+        <input type="checkbox" name="enable_topstep_order_dry_run" value="true"
+               {% if risk.enable_topstep_order_dry_run %}checked{% endif %}>
+        Topstep dry-run mode (preview only, no orders)
+      </label>
+    </div>
+    <p class="muted mt-1">
+      <strong>Require kill switch off:</strong> when on, live execution
+      is blocked while the kill switch is active. Recommended.<br>
+      <strong>Topstep dry-run:</strong> when on, Topstep builds order
+      payloads and journals them but does not submit. Turn off only
+      after testing the demo path.
+    </p>
+
     <div class="btn-row">
       <button type="submit" class="btn btn-primary">Save risk settings</button>
     </div>
