@@ -48,6 +48,7 @@ from .risk_engine import RiskEngine
 from .schemas import StatusResponse, WebhookResponse
 from .settings_store import (
     COLLAPSED_LEGACY_KEYS,
+    RESTART_REQUIRED,
     SettingsStore,
     SettingsValidationError,
     detect_legacy_collapsed_keys,
@@ -301,7 +302,11 @@ def create_app() -> FastAPI:
             "active_broker_provider": broker.provider,
             "kill_switch_active": kill_switch.is_active(),
             "flash": flash,
-            "flash_kind": flash_kind if flash_kind in {"ok", "error", "info"} else "info",
+            "flash_kind": (
+                flash_kind
+                if flash_kind in {"ok", "error", "info", "warn"}
+                else "info"
+            ),
             "auth_enabled": settings.admin_auth_enabled,
         }
 
@@ -309,6 +314,25 @@ def create_app() -> FastAPI:
         from urllib.parse import urlencode
         qs = urlencode({"flash": message, "flash_kind": kind})
         return RedirectResponse(url=f"{path}?{qs}", status_code=303)
+
+    def _settings_save_flash(
+        path: str, success_message: str, changed_keys: list[str]
+    ) -> RedirectResponse:
+        """Flash redirect for settings POST handlers.
+
+        Surfaces a "restart required" warn banner when any
+        ``RESTART_REQUIRED`` key is in ``changed_keys``; otherwise emits
+        the green success banner. Operator sees a single, honest line
+        about what their save did or did not take effect.
+        """
+        restart_keys = [k for k in changed_keys if k in RESTART_REQUIRED]
+        if restart_keys:
+            joined = ", ".join(sorted(restart_keys))
+            message = (
+                f"{success_message} Restart required for: {joined}."
+            )
+            return _flash_redirect(path, message, kind="warn")
+        return _flash_redirect(path, success_message, kind="ok")
 
     # ------------------------------------------------------------------
     # JSON endpoints
@@ -1446,8 +1470,10 @@ def create_app() -> FastAPI:
         # account context.
         refresh_topstep_credentials(broker, settings)
 
-        return _flash_redirect(
-            "/settings/broker", "Broker settings saved.", kind="ok"
+        return _settings_save_flash(
+            "/settings/broker",
+            "Broker settings saved.",
+            list(coerced.keys()),
         )
 
     @app.get(
@@ -1669,8 +1695,10 @@ def create_app() -> FastAPI:
         # only structural knobs, so this is a no-op guard.
         if any(key.startswith("TOPSTEP_") for key in coerced):
             refresh_topstep_credentials(broker, settings)
-        return _flash_redirect(
-            "/settings/risk", "Risk settings saved.", kind="ok"
+        return _settings_save_flash(
+            "/settings/risk",
+            "Risk settings saved.",
+            list(coerced.keys()),
         )
 
     @app.get(

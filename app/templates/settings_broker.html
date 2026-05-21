@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import mask_value %}
+{% from "_macros.html" import mask_value, flash_banner %}
 {% block title %}Broker · SignalBridge{% endblock %}
 {% block page_title %}Broker{% endblock %}
 {% block content %}
@@ -7,9 +7,7 @@
 <p class="subtitle">Configure broker provider credentials and selected account. Execution controls live on the <a href="/">Dashboard</a>.</p>
 
 {% if flash %}
-  <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
-    <span class="t">{{ 'Error' if flash_kind == 'error' else 'Saved' }}:</span> {{ flash }}
-  </div>
+  {{ flash_banner(flash, flash_kind) }}
 {% endif %}
 
 {# ---- Top status card. Execution state lives on the Dashboard. ---- #}

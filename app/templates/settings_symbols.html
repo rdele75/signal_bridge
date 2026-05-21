@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import flash_banner %}
 {% block title %}Symbols · SignalBridge{% endblock %}
 {% block page_title %}Symbols{% endblock %}
 {% block content %}
@@ -6,9 +7,7 @@
 <p class="subtitle">TradingView ticker → broker-specific symbol mappings. Saved to <code>config/symbols.json</code>.</p>
 
 {% if flash %}
-  <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
-    <span class="t">{{ 'Error' if flash_kind == 'error' else 'Saved' }}:</span> {{ flash }}
-  </div>
+  {{ flash_banner(flash, flash_kind) }}
 {% endif %}
 
 <div class="banner">

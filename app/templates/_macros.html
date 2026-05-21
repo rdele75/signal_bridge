@@ -18,3 +18,22 @@
     ><span class="masked-reveal-icon" aria-hidden="true">👁</span
   ></span>
 {%- endmacro %}
+
+{# Render the standard flash banner. ``kind`` is the flash_kind value
+   passed from the controller: ok / info / warn / error. Yellow warn
+   variant is used when a save succeeded but a setting requires a
+   restart to fully take effect — operator must not miss it. #}
+{% macro flash_banner(message, kind) -%}
+  {%- if kind == 'error' -%}
+    {%- set css = 'bad' -%}{%- set label = 'Error' -%}
+  {%- elif kind == 'warn' -%}
+    {%- set css = 'warn' -%}{%- set label = 'Saved' -%}
+  {%- elif kind == 'ok' -%}
+    {%- set css = 'good' -%}{%- set label = 'Saved' -%}
+  {%- else -%}
+    {%- set css = '' -%}{%- set label = 'Info' -%}
+  {%- endif -%}
+  <div class="banner {{ css }}">
+    <span class="t">{{ label }}:</span> {{ message }}
+  </div>
+{%- endmacro %}

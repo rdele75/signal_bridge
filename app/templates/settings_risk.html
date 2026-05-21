@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import flash_banner %}
 {% block title %}Risk · SignalBridge{% endblock %}
 {% block page_title %}Risk{% endblock %}
 {% block content %}
@@ -6,9 +7,7 @@
 <p class="subtitle">Persisted in SQLite. Edits take effect on the next signal.</p>
 
 {% if flash %}
-  <div class="banner {{ 'warn' if flash_kind == 'error' else '' }}">
-    <span class="t">{{ 'Error' if flash_kind == 'error' else 'Saved' }}:</span> {{ flash }}
-  </div>
+  {{ flash_banner(flash, flash_kind) }}
 {% endif %}
 
 <section class="grid grid-4 section">
