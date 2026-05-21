@@ -155,8 +155,10 @@ def test_overview_removed_recent_paper_orders_section(client):
 
 def test_overview_keeps_per_day_counter_cards(client):
     body = client.get("/").text
-    # Post-collapse labels: cards filter to Armed-mode submissions.
-    assert "Armed trades today" in body
+    # The cards still filter to armed-mode submissions, but the labels
+    # drop the "(Armed)" / "Armed trades" verbiage — armed is a state,
+    # not a kind of trade.
+    assert "Trades today" in body
     assert "Accepted today" in body
     assert "Rejected today" in body
 

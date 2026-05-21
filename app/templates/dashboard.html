@@ -235,19 +235,19 @@
    stat cards by design. #}
 <section class="grid grid-3 section">
   <div class="card">
-    <div class="card-label">Armed trades today</div>
+    <div class="card-label">Trades today</div>
     <div class="card-value lg">{{ trades_today }}</div>
-    <div class="card-sub">accepted Armed signals</div>
+    <div class="card-sub">accepted signals</div>
   </div>
   <div class="card">
     <div class="card-label">Accepted today</div>
     <div class="card-value lg good">{{ accepted_today }}</div>
-    <div class="card-sub">passed risk + broker (Armed)</div>
+    <div class="card-sub">passed risk + broker</div>
   </div>
   <div class="card">
     <div class="card-label">Rejected today</div>
     <div class="card-value lg {{ 'bad' if rejected_today else 'muted' }}">{{ rejected_today }}</div>
-    <div class="card-sub">blocked by risk (Armed)</div>
+    <div class="card-sub">blocked by risk</div>
   </div>
 </section>
 
