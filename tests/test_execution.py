@@ -469,6 +469,31 @@ def test_settings_broker_post_hot_reloads_credentials_onto_live_broker(
     assert broker._can_trade_cache == {}
 
 
+# ----------------------------------------------------------------------
+# Apply-handler wiring: badge refresh + loading animation
+# ----------------------------------------------------------------------
+
+
+def test_dashboard_apply_wires_badge_refresh(tmp_path, monkeypatch):
+    """The Apply handler must re-fetch broker status after a successful
+    mode change so the Funded/Eval/Unknown badge appears without a page
+    reload. Animation/UI behaviour can't be unit-tested in Python — but
+    the JS-string contract IS testable: assert the rendered dashboard
+    contains the wiring."""
+    _write_topstep_symbol_map(tmp_path)
+    app = _build_app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        body = c.get("/").text
+
+    # The Apply success path calls refreshBadgeForMode, which fetches
+    # broker status and rebuilds the badge from selected_account_is_funded.
+    assert "refreshBadgeForMode" in body
+    assert "/api/broker/status" in body
+    assert "selected_account_is_funded" in body
+    # The Off state has no account context — the helper must short-circuit.
+    assert "'off'" in body or '"off"' in body
+
+
 def test_off_state_skips_broker(tmp_path, monkeypatch):
     """A valid webhook in Off state is journaled as accepted but the
     broker is never asked to execute. The result.message identifies

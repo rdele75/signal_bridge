@@ -1048,6 +1048,24 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   }
 }
 
+/* Funded/Eval/Unknown badge fade-in. Only applied to badge nodes built
+   by the dashboard JS after Apply — server-rendered badges on full
+   page load skip the class and appear at full opacity immediately. */
+.execution-funded-badge-fadein {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.execution-funded-badge-fadein.execution-funded-badge-visible {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .execution-funded-badge-fadein,
+  .execution-funded-badge-fadein.execution-funded-badge-visible {
+    opacity: 1;
+    transition: none;
+  }
+}
+
 .execution-mode-form {
   display: flex;
   align-items: center;

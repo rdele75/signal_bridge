@@ -474,6 +474,76 @@
       }
     }
 
+    // Funded/Eval/Unknown badge — rebuilt client-side after Apply so the
+    // operator sees fresh broker context without a page reload. A
+    // monotonically increasing token guards against rapid re-clicks: if
+    // an in-flight broker-status response is no longer the latest, it's
+    // dropped on the floor so stale data can't overwrite a newer badge.
+    var brokerStatusGen = 0;
+    var UNKNOWN_BADGE_TITLE = "Account type couldn't be determined from "
+      + "the name. Verify on TopstepX before arming for real money.";
+    var UNKNOWN_BADGE_ERR_TITLE = "Couldn't fetch account status — "
+      + "refresh the page.";
+
+    function buildFundedBadge(isFunded, errorTooltip) {
+      var el = document.createElement('span');
+      el.id = 'execution-funded-badge';
+      el.className = 'badge plain ml-1 execution-funded-badge-fadein';
+      if (errorTooltip || (isFunded !== true && isFunded !== false)) {
+        el.classList.add('badge-unknown');
+        el.title = errorTooltip || UNKNOWN_BADGE_TITLE;
+        el.appendChild(document.createTextNode('Unknown '));
+        var qm = document.createElement('span');
+        qm.setAttribute('aria-hidden', 'true');
+        qm.textContent = '?';
+        el.appendChild(qm);
+      } else if (isFunded === true) {
+        el.classList.add('badge-warn');
+        el.textContent = 'Funded';
+      } else {
+        el.classList.add('badge-info');
+        el.textContent = 'Eval';
+      }
+      return el;
+    }
+
+    function setStatusLabel(mode, badge) {
+      if (!statusText) return;
+      statusText.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+      if (badge) {
+        statusText.appendChild(document.createTextNode(' '));
+        statusText.appendChild(badge);
+        // Force one frame of opacity:0 before flipping to visible so
+        // the CSS transition has something to interpolate from.
+        window.requestAnimationFrame(function () {
+          badge.classList.add('execution-funded-badge-visible');
+        });
+      }
+    }
+
+    function refreshBadgeForMode(mode) {
+      // Off has no account context — drop any existing badge.
+      if (mode === 'off') {
+        setStatusLabel(mode, null);
+        return Promise.resolve();
+      }
+      var token = ++brokerStatusGen;
+      return fetch('/api/broker/status', { credentials: 'same-origin' })
+        .then(function (r) {
+          if (!r.ok) throw new Error('http ' + r.status);
+          return r.json();
+        })
+        .then(function (body) {
+          if (token !== brokerStatusGen) return;
+          var isFunded = body ? body.selected_account_is_funded : null;
+          setStatusLabel(mode, buildFundedBadge(isFunded, null));
+        })
+        .catch(function () {
+          if (token !== brokerStatusGen) return;
+          setStatusLabel(mode, buildFundedBadge(null, UNKNOWN_BADGE_ERR_TITLE));
+        });
+    }
+
     function applyMode(mode) {
       setBusy(true);
       clearFeedback();
@@ -488,16 +558,8 @@
           setBusy(false);
           if (resp.ok && resp.body && resp.body.ok) {
             setState(mode);
-            if (statusText) {
-              // Preserve any funded/eval badge already in the label
-              var badge = document.getElementById('execution-funded-badge');
-              statusText.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
-              if (badge && mode === 'armed') {
-                statusText.appendChild(document.createTextNode(' '));
-                statusText.appendChild(badge);
-              }
-            }
             card.dataset.executionMode = mode;
+            refreshBadgeForMode(mode);
             return;
           }
           var reason = (resp.body && (resp.body.message || resp.body.status))
