@@ -56,7 +56,11 @@ from .settings_store import (
 )
 from .execution.topstep import TopstepBroker
 from .execution.topstep_order_builder import _generate_custom_tag
-from .signal_router import _topstep_token_sink, build_broker
+from .signal_router import (
+    _topstep_token_sink,
+    build_broker,
+    refresh_topstep_credentials,
+)
 from .symbol_map import SymbolMap, parse_form_mappings
 from .webhook import WebhookHandler
 
@@ -1435,11 +1439,12 @@ def create_app() -> FastAPI:
 
         for key, value in coerced.items():
             settings_store.apply_to_settings(settings, key, value)
-        # Mirror the new account id onto the live broker.
-        if isinstance(broker, TopstepBroker):
-            broker.account_id = (
-                coerced.get("TOPSTEP_ACCOUNT_ID") or broker.account_id
-            )
+        # Mirror the saved credentials onto the live broker so the next
+        # /api/broker/test-connection sees the new values without a
+        # restart. ``refresh_topstep_credentials`` also clears the
+        # cached auth token and canTrade cache — new creds imply a new
+        # account context.
+        refresh_topstep_credentials(broker, settings)
 
         return _flash_redirect(
             "/settings/broker", "Broker settings saved.", kind="ok"
@@ -1658,6 +1663,12 @@ def create_app() -> FastAPI:
                 coerced["ALLOWED_SYMBOLS_ARMED"]
             )
             broker.max_contracts_per_trade = coerced["MAX_CONTRACTS_PER_TRADE"]
+        # Defensive: if any future risk-form field starts writing a
+        # TOPSTEP_* credential key, refresh the broker so the change
+        # takes effect without restart. Today the risk form touches
+        # only structural knobs, so this is a no-op guard.
+        if any(key.startswith("TOPSTEP_") for key in coerced):
+            refresh_topstep_credentials(broker, settings)
         return _flash_redirect(
             "/settings/risk", "Risk settings saved.", kind="ok"
         )

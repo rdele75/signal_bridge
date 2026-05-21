@@ -371,6 +371,56 @@ def test_armed_kill_switch_active_rejects_via_risk_engine(
     assert decision.reason == "kill_switch_active"
 
 
+def test_settings_broker_post_hot_reloads_credentials_onto_live_broker(
+    tmp_path, monkeypatch
+):
+    """Saving credentials via /settings/broker must update the running
+    broker without a restart. The cached auth token is cleared because
+    the new credentials imply a new auth context.
+
+    Regression: pre-polish the broker cached username/api_key at
+    construction and ignored later DB writes, so test-connection kept
+    reporting missing_credentials until restart.
+    """
+    # Build the app with empty Topstep credentials so the POST is a
+    # real "first time saving credentials" interaction.
+    monkeypatch.setenv("TOPSTEP_USERNAME", "")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "")
+    monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "")
+    monkeypatch.setenv("SELECTED_ACCOUNT_ID", "")
+    app = _build_app(tmp_path, monkeypatch)
+    broker = app.state.broker
+    assert broker.provider == "topstep"
+    assert broker.username == ""
+    assert broker.api_key == ""
+
+    # Seed a stale token so we can confirm the refresh wipes the cache.
+    broker.token = "STALE.JWT"
+    broker.token_expires_at = "2099-01-01T00:00:00+00:00"
+    broker._can_trade_cache["old"] = True
+
+    with TestClient(app) as c:
+        r = c.post(
+            "/settings/broker",
+            data={
+                "selected_account_id": "12345",
+                "topstep_username": "new_user@example.com",
+                "topstep_api_key": "new_api_key_value_0000",
+                "topstep_env": "demo",
+            },
+            follow_redirects=False,
+        )
+    assert r.status_code == 303, r.text
+
+    assert broker.username == "new_user@example.com"
+    assert broker.api_key == "new_api_key_value_0000"
+    assert broker.account_id == "12345"
+    # New creds → invalidate cached auth artifacts.
+    assert broker.token == ""
+    assert broker.token_expires_at == ""
+    assert broker._can_trade_cache == {}
+
+
 def test_off_state_skips_broker(tmp_path, monkeypatch):
     """A valid webhook in Off state is journaled as accepted but the
     broker is never asked to execute. The result.message identifies
