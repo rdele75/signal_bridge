@@ -185,6 +185,14 @@
 // /api/tradingview/test-webhook endpoint, which forwards into the
 // real WebhookHandler short-circuit. Result lands inline below the
 // button. Never places orders.
+//
+// Expected response shape from /api/tradingview/test-webhook:
+//   {ok: bool, http_status: int, response_body: str, message: str}
+//
+// If the response is shaped differently (e.g. an auth 401 returning
+// FastAPI's default {"detail": ...}) we log the raw body to console
+// rather than silently showing "unknown" — that was the original bug
+// here.
 (function () {
   var testBtn = document.getElementById('btn-test-webhook');
   var resultEl = document.getElementById('test-webhook-result');
@@ -193,6 +201,19 @@
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function renderResult(kind, message, responseBody) {
+    var icon = kind === 'ok' ? '✓' : '✗';
+    var badge = kind === 'ok' ? 'badge-good' : 'badge-bad';
+    var html = '<p><span class="badge ' + badge + ' plain">' + icon
+      + '</span> ' + escapeHTML(message) + '</p>';
+    if (responseBody) {
+      html += '<details class="webhook-test-detail">'
+        + '<summary>raw response</summary>'
+        + '<pre class="output">' + escapeHTML(responseBody) + '</pre>'
+        + '</details>';
+    }
+    resultEl.innerHTML = html;
   }
   testBtn.addEventListener('click', function () {
     testBtn.disabled = true;
@@ -204,21 +225,37 @@
     })
       .then(function (r) { return r.json(); })
       .then(function (body) {
-        var icon = body && body.ok ? '✓' : '✗';
-        var badge = body && body.ok ? 'badge-good' : 'badge-bad';
-        var html = '<p><span class="badge ' + badge + ' plain">' + icon
-          + '</span> ' + escapeHTML((body && body.message) || 'unknown') + '</p>';
-        if (body && body.response_body) {
-          html += '<details class="webhook-test-detail">'
-            + '<summary>raw response</summary>'
-            + '<pre class="output">' + escapeHTML(body.response_body) + '</pre>'
-            + '</details>';
+        // The endpoint always returns ``ok`` as a boolean when it
+        // reaches our handler. Anything else means the response came
+        // from somewhere upstream (auth gate, framework error) — log
+        // the raw body so the next debug session can see it.
+        if (!body || typeof body.ok !== 'boolean') {
+          console.error('Unexpected /api/tradingview/test-webhook response:', body);
+          renderResult(
+            'error',
+            'Unexpected response shape — see browser console',
+            body ? JSON.stringify(body) : null
+          );
+          return;
         }
-        resultEl.innerHTML = html;
+        if (body.ok) {
+          renderResult(
+            'ok',
+            body.message || 'Webhook reachable',
+            body.response_body || null
+          );
+        } else {
+          renderResult(
+            'error',
+            body.message || 'Webhook test rejected',
+            body.response_body || null
+          );
+        }
       })
       .catch(function (err) {
+        console.error('Test-webhook request failed:', err);
         resultEl.innerHTML =
-          '<p class="banner warn">request failed: ' + escapeHTML(String(err)) + '</p>';
+          '<p class="banner warn">Request failed — see browser console</p>';
       })
       .then(function () { testBtn.disabled = false; });
   });

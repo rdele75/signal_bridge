@@ -154,6 +154,55 @@ def test_tradingview_page_renders_test_webhook_button(client):
     assert 'id="test-webhook-result"' in body
 
 
+def test_test_webhook_response_shape_has_all_frontend_fields(client):
+    """The frontend JS reads ``body.ok``, ``body.message``, and
+    ``body.response_body`` to render the result inline. This test
+    pins down those keys so a future backend refactor can't silently
+    break the UI (which previously fell through to a literal
+    'unknown' string)."""
+    r = client.post("/api/tradingview/test-webhook")
+    assert r.status_code == 200
+    body = r.json()
+    assert "ok" in body
+    assert isinstance(body["ok"], bool)
+    assert "message" in body
+    assert isinstance(body["message"], str)
+    assert body["message"]  # non-empty
+    assert "response_body" in body
+    assert isinstance(body["response_body"], str)
+    assert "http_status" in body
+
+
+def test_test_webhook_response_body_parses_as_webhook_test_envelope(client):
+    """When the test endpoint reports ok=true, the nested
+    ``response_body`` field must JSON-parse into the short-circuit
+    envelope (``status=webhook_test``). This proves the test really
+    exercised the WebhookHandler short-circuit and didn't just stub
+    a success at the endpoint layer."""
+    import json as _json
+    r = client.post("/api/tradingview/test-webhook").json()
+    assert r["ok"] is True, r
+    inner = _json.loads(r["response_body"])
+    assert inner.get("decision") == "webhook_test"
+    assert inner.get("accepted") is True
+
+
+def test_tradingview_page_test_webhook_js_has_no_unknown_fallback(client):
+    """The frontend must not fall back to a literal 'unknown' string
+    when the response shape is unexpected — it should log to the
+    browser console and show an explicit 'unexpected response shape'
+    message so the operator can debug. The 'unknown' literal was the
+    bug operators kept seeing."""
+    body = client.get("/tradingview").text
+    # No silent fallback that renders 'unknown' as if it were a real
+    # status message.
+    assert "|| 'unknown'" not in body
+    # The defensive path explicitly says what to do next.
+    assert "Unexpected response shape" in body
+    # Frontend logs to console.error for forensics.
+    assert "console.error" in body
+
+
 def test_test_webhook_endpoint_clean_when_secret_unset(tmp_path, monkeypatch):
     """If no real secret is configured, the endpoint must NOT attempt
     a test that would always succeed — it returns a clear refusal
