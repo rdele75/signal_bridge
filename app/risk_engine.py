@@ -165,21 +165,11 @@ class RiskEngine:
         if execution_mode == "armed" and self.kill_switch.is_active():
             return RiskDecision(False, "kill_switch_active")
 
-        # General symbol allow-list applies in every state.
+        # Single symbol allowlist applies in every state. The
+        # pre-merge "stricter armed subset" idea was confusing the
+        # operator — one box, one list, enforced uniformly.
         if signal.symbol not in s.allowed_symbols:
             return RiskDecision(False, f"symbol_not_allowed: {signal.symbol}")
-
-        # In Armed state, the stricter ``ALLOWED_SYMBOLS_ARMED`` subset
-        # also applies. Off / Test only need the general list.
-        if execution_mode == "armed":
-            armed = [
-                str(sym).strip() for sym in s.allowed_symbols_armed
-                if sym and str(sym).strip()
-            ]
-            if signal.symbol not in armed:
-                return RiskDecision(
-                    False, f"symbol_not_allowed_armed: {signal.symbol}"
-                )
 
         # Timeframe lock — optional. When off we don't even look at the
         # field, so older alerts that predate the lock keep working.

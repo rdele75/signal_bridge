@@ -83,7 +83,7 @@ stricter armed-symbol allowlist does not apply.
    unknown flag emits a one-shot WARNING and lets the trade through —
    the operator may not have clicked Fetch Accounts yet).
 4. Kill switch is off, when `ENABLE_KILL_SWITCH=true`.
-5. Signal symbol is in `ALLOWED_SYMBOLS_ARMED`.
+5. Signal symbol is in `ALLOWED_SYMBOLS`.
 6. Signal contracts ≤ `MAX_CONTRACTS_PER_TRADE`.
 
 On pass, the adapter POSTs `/api/Order/place` (with the H5 auth-retry
@@ -211,8 +211,7 @@ In order, fastest first:
 | `TOPSTEP_WS_URL` | `https://rtc.topstepx.com` | SignalR hub URL; client not wired yet. |
 | `TOPSTEP_TOKEN` | *(empty, written by adapter)* | cached JWT; masked everywhere. |
 | `TOPSTEP_TOKEN_EXPIRES_AT` | *(empty, written by adapter)* | ISO-8601 expiry. |
-| `ALLOWED_SYMBOLS` | `MNQ1!,MES1!,NQ1!,ES1!` | general allowlist; applied in every execution state. |
-| `ALLOWED_SYMBOLS_ARMED` | `MES1!,MNQ1!` | stricter allowlist applied only when armed. Entries must also appear in `ALLOWED_SYMBOLS`. |
+| `ALLOWED_SYMBOLS` | `MNQ1!,MES1!,NQ1!,ES1!` | symbol allowlist; applied in every execution state. |
 | `MAX_CONTRACTS_PER_TRADE` | `1` | hard cap, applied uniformly in Test and Armed. |
 | `ENABLE_KILL_SWITCH` | `true` | when false the kill-switch feature is disabled entirely (the Dashboard button is decorative). |
 | `ORDER_HISTORY_LOOKBACK_DAYS` | `7` | default lookback for the Past Orders table. |
@@ -247,7 +246,7 @@ In order, fastest first:
 - **Off is the default state.** First boot and every restart land in
   Off; the operator has to deliberately switch to Test or Armed.
 - **Armed execution submits real orders to your Topstep account.**
-  Verify `MAX_CONTRACTS_PER_TRADE`, `ALLOWED_SYMBOLS_ARMED`, and the
+  Verify `MAX_CONTRACTS_PER_TRADE`, `ALLOWED_SYMBOLS`, and the
   selected account before arming. The Dashboard surfaces blockers
   inline so a missing knob shows up before you click Apply.
 - The copier, MCP server, bracket orders, and the SignalR user hub

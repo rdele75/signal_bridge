@@ -26,10 +26,18 @@ from .config import Settings
 # ENABLE_TOPSTEP_ORDER_EXECUTION, TOPSTEP_EXECUTION_CONFIRM,
 # ENABLE_LIVE_TRADING, LIVE_TRADING_CONFIRM, LIVE_TRADING_ACCOUNT_ACK,
 # LIVE_MAX_CONTRACTS_PER_TRADE, LIVE_REQUIRE_KILL_SWITCH_OFF) and
-# renamed LIVE_ALLOWED_SYMBOLS → ALLOWED_SYMBOLS_ARMED.
+# renamed LIVE_ALLOWED_SYMBOLS → ALLOWED_SYMBOLS_ARMED. The
+# post-collapse polish pass (round 2) then merged the two symbol
+# allowlists back into a single ALLOWED_SYMBOLS list — operators
+# wanted "one cap, one allowlist" rather than a strict-subset
+# distinction.
 # ``app.main`` refuses to boot if any of the deleted keys is still in
 # the SQLite ``settings`` table — the operator must delete
 # ``data/signalbridge.db`` after upgrading past the collapse.
+# ALLOWED_SYMBOLS_ARMED is intentionally NOT in COLLAPSED_LEGACY_KEYS:
+# stale rows in the settings table after the merge are silently
+# ignored (the bootstrap only iterates MANAGED_KEYS) so the operator
+# doesn't have to wipe the database a second time.
 MANAGED_KEYS: tuple[str, ...] = (
     "APP_HOST",
     "APP_PORT",
@@ -38,7 +46,6 @@ MANAGED_KEYS: tuple[str, ...] = (
     "SELECTED_ACCOUNT_ID",
     "TRADINGVIEW_WEBHOOK_SECRET",
     "ALLOWED_SYMBOLS",
-    "ALLOWED_SYMBOLS_ARMED",
     "MAX_CONTRACTS_PER_TRADE",
     "STRATEGY_MANAGED_RISK",
     "FIXED_CONTRACTS_PER_TRADE",
@@ -119,13 +126,11 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "SELECTED_ACCOUNT_ID",
         # Read per-webhook in app/webhook.py:217 (`self.settings.webhook_secret`).
         "TRADINGVIEW_WEBHOOK_SECRET",
-        # Read per-signal in app/risk_engine.py:169 (`s.allowed_symbols`).
+        # Read per-signal in app/risk_engine.py (`s.allowed_symbols`).
+        # Post-merge this is the single symbol allowlist — applies in
+        # every execution state (off / test / armed).
         "ALLOWED_SYMBOLS",
-        # Read per-signal in app/risk_engine.py:176
-        # (`s.allowed_symbols_armed`); also mirrored onto the live broker
-        # by the /settings/risk POST handler.
-        "ALLOWED_SYMBOLS_ARMED",
-        # Read per-signal in app/risk_engine.py:210
+        # Read per-signal in app/risk_engine.py
         # (`s.max_contracts_per_trade`); also mirrored onto the broker.
         "MAX_CONTRACTS_PER_TRADE",
         # Read per-signal in app/webhook.py:311 (`self.settings.strategy_managed_risk`).
@@ -359,9 +364,6 @@ def coerce(key: str, raw: Any) -> Any:
     if key == "ALLOWED_SYMBOLS":
         return parse_symbols(raw)
 
-    if key == "ALLOWED_SYMBOLS_ARMED":
-        return parse_symbols(raw)
-
     if key in {
         "MAX_CONTRACTS_PER_TRADE",
         "MAX_OPEN_POSITIONS",
@@ -503,7 +505,6 @@ _KEY_TO_ATTR: dict[str, str] = {
     "SELECTED_ACCOUNT_ID": "selected_account_id",
     "TRADINGVIEW_WEBHOOK_SECRET": "webhook_secret",
     "ALLOWED_SYMBOLS": "allowed_symbols",
-    "ALLOWED_SYMBOLS_ARMED": "allowed_symbols_armed",
     "MAX_CONTRACTS_PER_TRADE": "max_contracts_per_trade",
     "STRATEGY_MANAGED_RISK": "strategy_managed_risk",
     "FIXED_CONTRACTS_PER_TRADE": "fixed_contracts_per_trade",

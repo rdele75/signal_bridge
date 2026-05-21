@@ -27,7 +27,7 @@ Execution states (post-collapse, 2026-05-21):
                 POSTs. Gates: credentials present, account numeric +
                 ``canTrade`` (when known), kill switch off (when
                 ``ENABLE_KILL_SWITCH`` is true), signal symbol in
-                ``allowed_symbols_armed``, contracts ≤
+                ``allowed_symbols``, contracts ≤
                 ``max_contracts_per_trade``.
 
 Confirmation tokens and the multi-step arming ceremony from the
@@ -137,7 +137,7 @@ class TopstepBroker(BrokerBase):
         # plus the structural caps. The pre-collapse arming-token plumbing
         # is gone.
         execution_mode: str = "off",
-        allowed_symbols_armed: Optional[list[str]] = None,
+        allowed_symbols: Optional[list[str]] = None,
         max_contracts_per_trade: int = 1,
         kill_switch_active: bool = False,
         kill_switch_enabled: bool = True,
@@ -168,9 +168,9 @@ class TopstepBroker(BrokerBase):
         self._token_sink = token_sink
         self._http_timeout = http_timeout
         self.execution_mode = (execution_mode or "off").lower()
-        self.allowed_symbols_armed = list(
-            allowed_symbols_armed if allowed_symbols_armed is not None
-            else ["MES1!", "MNQ1!"]
+        self.allowed_symbols = list(
+            allowed_symbols if allowed_symbols is not None
+            else ["MES1!", "MNQ1!", "NQ1!", "ES1!"]
         )
         self.max_contracts_per_trade = int(max_contracts_per_trade or 1)
         self.kill_switch_active = bool(kill_switch_active)
@@ -1062,7 +1062,7 @@ class TopstepBroker(BrokerBase):
         return {
             "broker_provider": self.provider,
             "execution_mode": self.execution_mode,
-            "allowed_symbols_armed": list(self.allowed_symbols_armed),
+            "allowed_symbols": list(self.allowed_symbols),
             "max_contracts_per_trade": self.max_contracts_per_trade,
             "kill_switch_active": self.kill_switch_active,
             "kill_switch_enabled": self.kill_switch_enabled,
@@ -1106,13 +1106,13 @@ class TopstepBroker(BrokerBase):
             return "kill_switch_active"
         if signal is not None:
             allowed = [
-                s.strip() for s in self.allowed_symbols_armed
+                s.strip() for s in self.allowed_symbols
                 if s and s.strip()
             ]
             if not allowed:
-                return "symbol_not_allowed_armed"
+                return "symbol_not_allowed"
             if signal.symbol not in allowed:
-                return "symbol_not_allowed_armed"
+                return "symbol_not_allowed"
             cap = max(int(self.max_contracts_per_trade or 0), 0)
             if cap <= 0:
                 return "contracts_above_max"

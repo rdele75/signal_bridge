@@ -43,7 +43,6 @@ def _build_app(
     monkeypatch.setenv("BROKER_PROVIDER", "topstep")
     monkeypatch.setenv("TRADINGVIEW_WEBHOOK_SECRET", SECRET)
     monkeypatch.setenv("ALLOWED_SYMBOLS", "MES1!,MNQ1!,NQ1!,ES1!")
-    monkeypatch.setenv("ALLOWED_SYMBOLS_ARMED", "MES1!,MNQ1!")
     monkeypatch.setenv("MAX_CONTRACTS_PER_TRADE", "1")
     monkeypatch.setenv("MAX_DAILY_LOSS", "250")
     monkeypatch.setenv("MAX_OPEN_POSITIONS", "1")

@@ -103,8 +103,8 @@ def _execution_card_view(
         armed_blockers.append("selected account canTrade=false")
     if settings.enable_kill_switch and kill_switch.is_active():
         armed_blockers.append("kill switch is active")
-    if not settings.allowed_symbols_armed:
-        armed_blockers.append("allowed_symbols_armed is empty")
+    if not settings.allowed_symbols:
+        armed_blockers.append("allowed_symbols is empty")
 
     state_label = state.capitalize()
     if state == "armed":
@@ -129,7 +129,7 @@ def _execution_card_view(
         "kill_switch_enabled": settings.enable_kill_switch,
         "armed_blockers": armed_blockers,
         "can_arm": state != "armed" and not armed_blockers,
-        "allowed_symbols_armed": list(settings.allowed_symbols_armed),
+        "allowed_symbols": list(settings.allowed_symbols),
         "max_contracts_per_trade": settings.max_contracts_per_trade,
     }
 
@@ -356,7 +356,6 @@ def create_app() -> FastAPI:
             broker_connected=broker_snapshot["broker_connected"],
             broker_message=broker_snapshot["broker_message"],
             allowed_symbols=list(settings.allowed_symbols),
-            allowed_symbols_armed=list(settings.allowed_symbols_armed),
             kill_switch_active=kill_switch.is_active(),
             open_positions=journal.list_open_positions(),
             database_path=str(settings.database_abs_path),
@@ -496,9 +495,7 @@ def create_app() -> FastAPI:
         """
         if isinstance(broker, TopstepBroker):
             broker.execution_mode = settings.execution_mode
-            broker.allowed_symbols_armed = list(
-                settings.allowed_symbols_armed
-            )
+            broker.allowed_symbols = list(settings.allowed_symbols)
             broker.max_contracts_per_trade = settings.max_contracts_per_trade
             broker.kill_switch_enabled = settings.enable_kill_switch
             broker.kill_switch_active = kill_switch.is_active()
@@ -517,7 +514,7 @@ def create_app() -> FastAPI:
             token_expires_at=settings.topstep_token_expires_at,
             token_sink=_topstep_token_sink(settings, settings_store),
             execution_mode=settings.execution_mode,
-            allowed_symbols_armed=settings.allowed_symbols_armed,
+            allowed_symbols=settings.allowed_symbols,
             max_contracts_per_trade=settings.max_contracts_per_trade,
             kill_switch_enabled=settings.enable_kill_switch,
             kill_switch_active=kill_switch.is_active(),
@@ -926,7 +923,7 @@ def create_app() -> FastAPI:
 
         Runs the gate stack first — no selected account, kill switch
         on (when ENABLE_KILL_SWITCH=true), or an empty
-        ALLOWED_SYMBOLS_ARMED all refuse the flip with the failing
+        ALLOWED_SYMBOLS all refuse the flip with the failing
         gate label.
         """
         selected_account_id = settings.resolved_account_id or ""
@@ -954,16 +951,15 @@ def create_app() -> FastAPI:
                     ),
                 },
             )
-        if not settings.allowed_symbols_armed:
+        if not settings.allowed_symbols:
             return JSONResponse(
                 status_code=400,
                 content={
                     "ok": False,
-                    "status": "no_armed_symbols",
+                    "status": "no_allowed_symbols",
                     "message": (
-                        "ALLOWED_SYMBOLS_ARMED is empty — set the "
-                        "armed-symbol allowlist on /settings/risk before "
-                        "arming"
+                        "ALLOWED_SYMBOLS is empty — set the symbol "
+                        "allowlist on /settings/risk before arming"
                     ),
                 },
             )
@@ -973,7 +969,7 @@ def create_app() -> FastAPI:
         log.warning(
             "EXECUTION ARMED account=%s allowed_symbols=%s max_contracts=%s",
             settings.resolved_account_id,
-            ",".join(settings.allowed_symbols_armed),
+            ",".join(settings.allowed_symbols),
             settings.max_contracts_per_trade,
         )
         try:
@@ -995,9 +991,7 @@ def create_app() -> FastAPI:
                     "max_contracts_per_trade": (
                         settings.max_contracts_per_trade
                     ),
-                    "allowed_symbols_armed": list(
-                        settings.allowed_symbols_armed
-                    ),
+                    "allowed_symbols": list(settings.allowed_symbols),
                 },
                 broker_provider=broker.provider,
                 broker_symbol=None,
@@ -1014,9 +1008,7 @@ def create_app() -> FastAPI:
                 "status": "execution_armed",
                 "execution_mode": coerced,
                 "selected_account_id": settings.resolved_account_id or None,
-                "allowed_symbols_armed": list(
-                    settings.allowed_symbols_armed
-                ),
+                "allowed_symbols": list(settings.allowed_symbols),
                 "max_contracts_per_trade": settings.max_contracts_per_trade,
                 "message": (
                     "Armed. Subsequent signals submit to the selected "
@@ -1601,8 +1593,6 @@ def create_app() -> FastAPI:
             "enable_kill_switch": settings.enable_kill_switch,
             "allowed_symbols": list(settings.allowed_symbols),
             "allowed_symbols_csv": ",".join(settings.allowed_symbols),
-            "allowed_symbols_armed": list(settings.allowed_symbols_armed),
-            "allowed_symbols_armed_csv": ",".join(settings.allowed_symbols_armed),
             "enable_timeframe_lock": settings.enable_timeframe_lock,
             "allowed_timeframes": list(settings.allowed_timeframes),
             "allowed_timeframes_csv": ",".join(settings.allowed_timeframes),
@@ -1625,7 +1615,6 @@ def create_app() -> FastAPI:
         enable_timeframe_lock: str = Form("false"),
         allowed_timeframes: str = Form(""),
         allowed_symbols: str = Form(""),
-        allowed_symbols_armed: str = Form(""),
     ):
         # Coerce + validate every field individually first so a bad input
         # surfaces a typed error before we touch SQLite.
@@ -1641,7 +1630,6 @@ def create_app() -> FastAPI:
             ("ENABLE_TIMEFRAME_LOCK", enable_timeframe_lock),
             ("ALLOWED_TIMEFRAMES", allowed_timeframes),
             ("ALLOWED_SYMBOLS", allowed_symbols),
-            ("ALLOWED_SYMBOLS_ARMED", allowed_symbols_armed),
         ]
         from .settings_store import coerce as _coerce_key, serialize as _serialize_key
 
@@ -1665,29 +1653,12 @@ def create_app() -> FastAPI:
                 kind="error",
             )
 
-        # Cross-field: every armed-symbol must also appear in the general
-        # ALLOWED_SYMBOLS list. The risk engine checks ALLOWED_SYMBOLS
-        # first; an armed-only symbol would be rejected before its
-        # armed-list entry could ever fire.
-        general_set = {s.strip() for s in coerced["ALLOWED_SYMBOLS"] if s}
-        for sym in coerced["ALLOWED_SYMBOLS_ARMED"]:
-            if sym and sym not in general_set:
-                return _flash_redirect(
-                    "/settings/risk",
-                    f"ALLOWED_SYMBOLS_ARMED entry {sym!r} is not in "
-                    "ALLOWED_SYMBOLS — add it to the general allowlist "
-                    "first.",
-                    kind="error",
-                )
-
         for key, value in coerced.items():
             settings_store.set_setting(key, _serialize_key(key, value))
             settings_store.apply_to_settings(settings, key, value)
-        # Mirror the new armed-symbol list onto the live broker.
+        # Mirror the new symbol list onto the live broker.
         if isinstance(broker, TopstepBroker):
-            broker.allowed_symbols_armed = list(
-                coerced["ALLOWED_SYMBOLS_ARMED"]
-            )
+            broker.allowed_symbols = list(coerced["ALLOWED_SYMBOLS"])
             broker.max_contracts_per_trade = coerced["MAX_CONTRACTS_PER_TRADE"]
         # Defensive: if any future risk-form field starts writing a
         # TOPSTEP_* credential key, refresh the broker so the change

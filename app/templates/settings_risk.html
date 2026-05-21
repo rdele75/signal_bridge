@@ -178,32 +178,18 @@
 
     <h3 class="mt-6">Allowed symbols</h3>
     <p class="muted mb-4">
-      Two allowlists. The general list is checked in every execution
-      state (Off / Test / Armed). The Armed list is a stricter subset
-      checked only when execution is Armed — its entries must also
-      appear in the general list.
+      Symbols allowed for any execution state. Signals for symbols
+      outside this list are rejected before they reach the broker.
     </p>
-    <div class="grid grid-2">
-      <div class="form-row">
-        <label for="allowed_symbols">Allowed symbols (all states)</label>
-        <input type="text" id="allowed_symbols" name="allowed_symbols"
-               value="{{ risk.allowed_symbols_csv }}"
-               placeholder="MES1!,MNQ1!,NQ1!,ES1!">
-        <p class="muted mt-1">
-          Comma-separated TradingView tickers. Signals for symbols
-          outside this list are rejected before they reach the broker.
-        </p>
-      </div>
-      <div class="form-row">
-        <label for="allowed_symbols_armed">Allowed symbols when armed</label>
-        <input type="text" id="allowed_symbols_armed" name="allowed_symbols_armed"
-               value="{{ risk.allowed_symbols_armed_csv }}"
-               placeholder="MES1!,MNQ1!">
-        <p class="muted mt-1">
-          Symbols allowed when execution is Armed. Strict subset of the
-          general allowed-symbols list. Default: <code>MES1!,MNQ1!</code>.
-        </p>
-      </div>
+    <div class="form-row">
+      <label for="allowed_symbols">Allowed symbols</label>
+      <input type="text" id="allowed_symbols" name="allowed_symbols"
+             value="{{ risk.allowed_symbols_csv }}"
+             placeholder="MES1!,MNQ1!,NQ1!,ES1!">
+      <p class="muted mt-1">
+        Comma-separated TradingView tickers (e.g. <code>MES1!,MNQ1!</code>).
+        Applied uniformly in Off / Test / Armed.
+      </p>
     </div>
 
     <div class="btn-row">

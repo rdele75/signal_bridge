@@ -146,7 +146,6 @@ class StatusResponse(BaseModel):
     broker_connected: bool = False
     broker_message: str = ""
     allowed_symbols: list[str]
-    allowed_symbols_armed: list[str] = Field(default_factory=list)
     kill_switch_active: bool
     open_positions: list[dict[str, Any]]
     database_path: str

@@ -222,16 +222,18 @@ def test_risk_page_enables_fixed_contracts_when_strategy_not_managed(client):
     assert "disabled" not in snippet
 
 
-def test_risk_page_renders_both_symbol_inputs(client):
-    """Post-collapse the risk page surfaces both ALLOWED_SYMBOLS and
-    the stricter ALLOWED_SYMBOLS_ARMED list."""
+def test_risk_page_renders_single_symbol_input(client):
+    """Post-merge the risk page surfaces a SINGLE allowlist that
+    applies in every state — the old armed-only stricter subset was
+    confusing operators and is gone."""
     body = client.get("/settings/risk").text
     assert 'name="allowed_symbols"' in body
-    assert 'name="allowed_symbols_armed"' in body
+    assert 'name="allowed_symbols_armed"' not in body
+    assert 'id="allowed_symbols_armed"' not in body
 
 
-def test_risk_post_round_trips_armed_symbols(client):
-    """Submitting the form preserves the ALLOWED_SYMBOLS_ARMED list."""
+def test_risk_post_round_trips_symbols(client):
+    """Submitting the form preserves the single ALLOWED_SYMBOLS list."""
     r = client.post(
         "/settings/risk",
         data={
@@ -244,14 +246,12 @@ def test_risk_post_round_trips_armed_symbols(client):
             "enable_longs": "true",
             "enable_shorts": "true",
             "allowed_symbols": "MES1!,MNQ1!,NQ1!",
-            "allowed_symbols_armed": "MES1!,MNQ1!",
         },
         follow_redirects=False,
     )
     assert r.status_code == 303
     s = client.app.state.settings
     assert s.allowed_symbols == ["MES1!", "MNQ1!", "NQ1!"]
-    assert s.allowed_symbols_armed == ["MES1!", "MNQ1!"]
 
 
 # ---------------------------------------------------------------------------

@@ -180,16 +180,6 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("TOPSTEP_TOKEN_EXPIRES_AT", "")
     )
 
-    # Stricter subset of ``allowed_symbols`` applied only when execution
-    # state is ``armed``. Symbols here must also appear in
-    # ``allowed_symbols`` (the general allowlist) — the risk engine
-    # checks both. Defaults to micros only.
-    allowed_symbols_armed: List[str] = Field(
-        default_factory=lambda: _csv(
-            "ALLOWED_SYMBOLS_ARMED", ["MES1!", "MNQ1!"]
-        )
-    )
-
     # Order history defaults used by /api/broker/order-history when the
     # caller does not specify a window. The lookback window is interpreted
     # as days, the limit caps the number of rows returned to the client.

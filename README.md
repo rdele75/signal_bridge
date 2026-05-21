@@ -13,7 +13,7 @@ It runs on your own machine, exposes a small web UI you open in a browser, accep
 - **Armed** — orders submit to `/api/Order/place` against the selected Topstep account. The kill switch, the armed-symbol allowlist, the contracts cap, and the account-canTrade flag all gate each submission.
 
 > [!WARNING]
-> **Armed execution is real.** Switching to Armed and clicking Apply flips a single setting; subsequent TradingView alerts route through `submit_market_order` to the selected Topstep account. Verify the selected account, the `ALLOWED_SYMBOLS_ARMED` list, and `MAX_CONTRACTS_PER_TRADE` before you arm.
+> **Armed execution is real.** Switching to Armed and clicking Apply flips a single setting; subsequent TradingView alerts route through `submit_market_order` to the selected Topstep account. Verify the selected account, the `ALLOWED_SYMBOLS` list, and `MAX_CONTRACTS_PER_TRADE` before you arm.
 
 > Not SaaS. Not multi-user. Not packaged for distribution.
 
@@ -119,7 +119,7 @@ from your browser, or just open the dashboard.
 6. **Execution dispatch** branches on the state set in the Dashboard:
    - **Off** — no broker call. The signal is journaled as accepted with `message="execution_off_no_submission"` and SignalBridge returns.
    - **Test** — Topstep adapter builds the `/api/Order/place` payload, validates the contract id, logs the build, returns `submitted=false, mode="test"`. Never POSTs.
-   - **Armed** — Topstep adapter runs its armed gate stack (credentials, numeric account id, canTrade, kill switch, ALLOWED_SYMBOLS_ARMED, MAX_CONTRACTS_PER_TRADE) and POSTs `/api/Order/place`. The ProjectX response is journaled and surfaced in the dashboard.
+   - **Armed** — Topstep adapter runs its armed gate stack (credentials, numeric account id, canTrade, kill switch, ALLOWED_SYMBOLS, MAX_CONTRACTS_PER_TRADE) and POSTs `/api/Order/place`. The ProjectX response is journaled and surfaced in the dashboard.
 7. **Journal** writes one row per signal (accepted or rejected) to SQLite. The Mode column on `/journal` distinguishes Off / Test / Armed entries.
 8. **Dashboard** picks up the new row on the next page load.
 
@@ -137,17 +137,20 @@ deleting it and restarting).
 
 > [!IMPORTANT]
 > The execution-model-collapse (2026-05-21) rework removed every pre-collapse
-> `paper` / `demo` / `live` setting and renamed `LIVE_ALLOWED_SYMBOLS` to
-> `ALLOWED_SYMBOLS_ARMED`. The boot-time schema check refuses to start
-> against a SQLite database that still carries any of the removed keys —
-> if you see `pre-collapse SQLite schema detected` in the log, delete
-> `data/signalbridge.db` and restart so a fresh database can be
-> bootstrapped from `.env`. The operator's journal export from the
-> pre-flight checklist is the source of truth for prior history.
+> `paper` / `demo` / `live` setting. The post-collapse polish pass then
+> merged `ALLOWED_SYMBOLS_ARMED` back into `ALLOWED_SYMBOLS` — one
+> allowlist applies in every state. The boot-time schema check refuses
+> to start against a SQLite database that still carries any of the
+> removed keys — if you see `pre-collapse SQLite schema detected` in
+> the log, delete `data/signalbridge.db` and restart so a fresh
+> database can be bootstrapped from `.env`. Stale
+> `ALLOWED_SYMBOLS_ARMED` rows from the pre-merge build are silently
+> ignored, so no second wipe is required after upgrading past the
+> merge.
 
 Dashboard-editable keys today: `EXECUTION_MODE` (via the Dashboard mode
 dropdown), `SELECTED_ACCOUNT_ID`, `TRADINGVIEW_WEBHOOK_SECRET`,
-`ALLOWED_SYMBOLS`, `ALLOWED_SYMBOLS_ARMED`, `MAX_CONTRACTS_PER_TRADE`,
+`ALLOWED_SYMBOLS`, `MAX_CONTRACTS_PER_TRADE`,
 `STRATEGY_MANAGED_RISK`, `FIXED_CONTRACTS_PER_TRADE`, `MAX_DAILY_LOSS`,
 `MAX_OPEN_POSITIONS`, `ENABLE_LONGS`, `ENABLE_SHORTS`,
 `DUPLICATE_ORDER_COOLDOWN_SECONDS`, `ENABLE_TIMEFRAME_LOCK`,
@@ -177,7 +180,6 @@ All env defaults (see `.env.example` for the full list):
 | `BROKER_PROVIDER`                   | pinned to `topstep`; other values rejected |
 | `TRADINGVIEW_WEBHOOK_SECRET`        | shared secret in the alert body |
 | `ALLOWED_SYMBOLS`                   | comma-separated allowlist (applies in every state) |
-| `ALLOWED_SYMBOLS_ARMED`             | stricter subset applied only when execution is Armed |
 | `MAX_CONTRACTS_PER_TRADE`           | hard cap per trade; applies uniformly in Test and Armed |
 | `STRATEGY_MANAGED_RISK`             | `true` (default) → sizing comes from the alert's `contracts`; `false` → use `FIXED_CONTRACTS_PER_TRADE`. See [docs/risk.md](docs/risk.md). |
 | `FIXED_CONTRACTS_PER_TRADE`         | quantity used when `STRATEGY_MANAGED_RISK=false` (must be ≤ `MAX_CONTRACTS_PER_TRADE`) |
@@ -355,7 +357,7 @@ startup (and no `ADMIN_PASSWORD_HASH` has been saved), the app logs a
 
 - **Armed execution submits real orders to your Topstep account.** Eval (Combine / Practice / Express) accounts behave the same as funded for SignalBridge's purposes — both are real ProjectX orders, both fill against your real account state, both deserve the same care. The Dashboard renders a `Funded` or `Eval` badge next to the Armed state so you always see which one is wired up.
 - **Default state is Off.** First boot and every restart land in Off; the operator has to deliberately switch to Test or Armed.
-- **Verify the safety knobs before arming.** `MAX_CONTRACTS_PER_TRADE` (hard cap), `ALLOWED_SYMBOLS_ARMED` (which symbols can submit when Armed — defaults to micros only), and the selected Topstep account all gate live submissions. The Dashboard's "Cannot Arm" line surfaces blockers before you click.
+- **Verify the safety knobs before arming.** `MAX_CONTRACTS_PER_TRADE` (hard cap), `ALLOWED_SYMBOLS` (which symbols can submit — applies in every state), and the selected Topstep account all gate live submissions. The Dashboard's "Cannot Arm" line surfaces blockers before you click.
 - `TOPSTEP_USERNAME` and `TOPSTEP_API_KEY` can be saved from the UI. `TOPSTEP_PASSWORD` stays env-only. The UI never echoes raw API-key values back; it only shows the last four characters.
 - The kill switch is on by default — create `data/kill_switch.active`, click the top-bar button, or click Activate on `/settings/risk` to halt new Armed orders. The kill switch is consulted only when execution is Armed (Off and Test ignore it).
 - The webhook secret is the only check on `/webhooks/tradingview` — use a long random string and never commit it.

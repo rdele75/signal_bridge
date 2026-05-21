@@ -65,7 +65,7 @@ def build_broker(
         token_expires_at=settings.topstep_token_expires_at,
         token_sink=token_sink,
         execution_mode=settings.execution_mode,
-        allowed_symbols_armed=settings.allowed_symbols_armed,
+        allowed_symbols=settings.allowed_symbols,
         max_contracts_per_trade=settings.max_contracts_per_trade,
         kill_switch_enabled=settings.enable_kill_switch,
     )

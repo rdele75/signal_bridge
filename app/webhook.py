@@ -946,9 +946,7 @@ class WebhookHandler:
         # Mirror runtime settings onto the broker so the gate evaluation
         # sees the latest state (no restart needed for these flips).
         broker.execution_mode = execution_mode
-        broker.allowed_symbols_armed = list(
-            self.settings.allowed_symbols_armed
-        )
+        broker.allowed_symbols = list(self.settings.allowed_symbols)
         broker.max_contracts_per_trade = self.settings.max_contracts_per_trade
         broker.kill_switch_enabled = self.settings.enable_kill_switch
         broker.kill_switch_active = self.risk.kill_switch.is_active()

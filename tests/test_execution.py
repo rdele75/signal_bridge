@@ -10,9 +10,9 @@ execution-model-collapse-2026-05-21 brief:
      passes.
   3. The funded badge classification ("funded" / "eval" / "unknown")
      fires from the account name heuristic.
-  4. ``ALLOWED_SYMBOLS_ARMED`` is enforced only when armed — Test
-     signals using a non-armed-but-generally-allowed symbol pass; the
-     same symbol in Armed mode is rejected.
+  4. ``ALLOWED_SYMBOLS`` is the only symbol allowlist — enforced
+     uniformly in Off / Test / Armed. Signals for symbols outside
+     it are rejected in every state.
 """
 from __future__ import annotations
 
@@ -307,35 +307,35 @@ def test_eval_badge_classification_via_dashboard_context(
 
 
 # ----------------------------------------------------------------------
-# Invariant 4: ALLOWED_SYMBOLS_ARMED enforced only when armed
+# Invariant 4: ALLOWED_SYMBOLS is the single allowlist, enforced everywhere
 # ----------------------------------------------------------------------
 
 
-def test_armed_symbol_allowlist_blocks_non_armed_symbol(tmp_path, monkeypatch):
-    """A symbol in ALLOWED_SYMBOLS but NOT in ALLOWED_SYMBOLS_ARMED
-    passes risk in Test (where only the general allowlist applies) and
-    is rejected by the risk engine in Armed."""
+def test_symbol_allowlist_enforced_in_every_state(tmp_path, monkeypatch):
+    """A symbol outside ``ALLOWED_SYMBOLS`` is rejected in Off, Test,
+    and Armed alike. A symbol inside it passes risk in all three.
+    Post-merge there is no separate armed-only subset."""
     _write_topstep_symbol_map(tmp_path)
     app = _build_app(tmp_path, monkeypatch)
     settings = app.state.settings
-    # NQ1! is in the general allowlist (test fixture) but NOT in
-    # allowed_symbols_armed (which is MES1!,MNQ1! only).
-    assert "NQ1!" in settings.allowed_symbols
-    assert "NQ1!" not in settings.allowed_symbols_armed
     risk = app.state.risk
 
-    signal = _signal(symbol="NQ1!")
+    # YM1! is intentionally not in the test fixture's ALLOWED_SYMBOLS.
+    assert "YM1!" not in settings.allowed_symbols
+    assert "MES1!" in settings.allowed_symbols
 
-    settings.execution_mode = "test"
-    decision = risk.evaluate(signal)
-    assert decision.accepted is True, decision
+    blocked = _signal(symbol="YM1!")
+    allowed = _signal(symbol="MES1!")
 
-    settings.execution_mode = "armed"
-    decision = risk.evaluate(signal)
-    assert decision.accepted is False
-    assert decision.reason and decision.reason.startswith(
-        "symbol_not_allowed_armed"
-    )
+    for state in ("off", "test", "armed"):
+        settings.execution_mode = state
+        d_blocked = risk.evaluate(blocked)
+        assert d_blocked.accepted is False, (state, d_blocked)
+        assert d_blocked.reason and d_blocked.reason.startswith(
+            "symbol_not_allowed"
+        ), (state, d_blocked)
+        d_allowed = risk.evaluate(allowed)
+        assert d_allowed.accepted is True, (state, d_allowed)
 
 
 # ----------------------------------------------------------------------

@@ -825,7 +825,6 @@ def broker_status_payload(
         # consumes these to render the execution card and decide which
         # buttons to expose.
         "execution_state": (settings.execution_mode or "off").lower(),
-        "allowed_symbols_armed": list(settings.allowed_symbols_armed),
         # Risk sizing knobs so the dashboard/JS can render which mode
         # is active and what the hard cap is.
         "strategy_managed_risk": settings.strategy_managed_risk,
