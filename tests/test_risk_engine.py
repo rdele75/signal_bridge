@@ -170,8 +170,149 @@ def test_max_open_positions(tmp_path):
 
 
 def test_daily_loss_limit(tmp_path):
+    """MAX_DAILY_LOSS is enforced in DOLLARS — the engine converts
+    today's closed-trade points P&L per instrument before comparing."""
     risk, journal, _, _ = _build(tmp_path, max_daily_loss=100.0)
-    journal.add_daily_pnl(-150.0)
+    # ES1! @ $12.50/pt × -10 pts = -$125 → trips the $100 cap.
+    journal.record_closed_trade(
+        symbol="ES1!", side="long", contracts=1,
+        entry_price=5000.0, exit_price=4990.0,
+        realized_pnl_points=-10.0,
+    )
     d = risk.evaluate(_signal())
     assert d.accepted is False
     assert d.reason == "daily_loss_limit_reached"
+
+
+def test_daily_loss_limit_uses_dollars_not_points(tmp_path):
+    """A -50 points loss on MNQ1! ($0.50/pt = -$25) must NOT trip a
+    $100 daily-loss cap. The pre-merge code compared points-to-points,
+    which silently fired too early on the small contract."""
+    risk, journal, _, _ = _build(tmp_path, max_daily_loss=100.0)
+    journal.record_closed_trade(
+        symbol="MNQ1!", side="long", contracts=1,
+        entry_price=20000.0, exit_price=19950.0,
+        realized_pnl_points=-50.0,
+    )
+    d = risk.evaluate(_signal(symbol="MES1!", order_id="post_loss_1"))
+    assert d.accepted is True, d
+
+
+def test_points_to_dollars_known_and_unknown_symbols():
+    """``points_to_dollars`` returns the symbol's $ value × points for
+    known instruments and 0.0 for unknown — the caller is expected to
+    handle the unknown branch (typically with a WARNING log)."""
+    from app.risk_engine import INSTRUMENT_POINT_VALUES_USD, points_to_dollars
+
+    assert "ES1!" in INSTRUMENT_POINT_VALUES_USD
+    assert points_to_dollars("ES1!", -10.0) == -125.0
+    assert points_to_dollars("MES1!", 4.0) == 5.0
+    assert points_to_dollars("MNQ1!", 100.0) == 50.0
+    # Unknown symbols contribute 0.0.
+    assert points_to_dollars("WHEAT1!", -5.0) == 0.0
+
+
+def test_get_daily_pnl_dollars_sums_per_instrument(tmp_path):
+    """``Journal.get_daily_pnl_dollars`` multiplies each closed trade's
+    points by its instrument's dollar value and sums."""
+    journal = Journal(tmp_path / "pnl.db")
+    journal.record_closed_trade(
+        symbol="MES1!", side="long", contracts=1,
+        entry_price=5000.0, exit_price=4990.0,
+        realized_pnl_points=-10.0,  # -$12.50
+    )
+    journal.record_closed_trade(
+        symbol="ES1!", side="short", contracts=2,
+        entry_price=5050.0, exit_price=5045.0,
+        realized_pnl_points=5.0,  # +$62.50 (12.50 * 5)
+    )
+    # MNQ1! at +20 pts = $10
+    journal.record_closed_trade(
+        symbol="MNQ1!", side="long", contracts=1,
+        entry_price=20000.0, exit_price=20020.0,
+        realized_pnl_points=20.0,
+    )
+    pnl = journal.get_daily_pnl_dollars()
+    # -12.50 + 62.50 + 10.00 = 60.00
+    assert pnl == pytest.approx(60.0)
+
+
+def test_max_daily_loss_unit_migration_resets_legacy_db(tmp_path, caplog):
+    """A legacy DB carrying a points-semantic MAX_DAILY_LOSS gets reset
+    to 0.0 on boot with a CRITICAL log — the operator must re-enter
+    the cap in dollars before the gate re-engages."""
+    import logging
+    from app.settings_store import (
+        MAX_DAILY_LOSS_UNIT_VERSION_CURRENT,
+        SettingsStore,
+        migrate_max_daily_loss_units,
+    )
+
+    store = SettingsStore(tmp_path / "legacy.db")
+    store.set_setting("MAX_DAILY_LOSS", "250")  # legacy points value
+    settings = Settings(max_daily_loss=250.0)
+
+    caplog.set_level(logging.CRITICAL, logger="signalbridge.settings_store")
+    reset = migrate_max_daily_loss_units(
+        store, settings,
+        logging.getLogger("signalbridge.settings_store"),
+    )
+
+    assert reset is True
+    assert settings.max_daily_loss == 0.0
+    assert store.get_setting("MAX_DAILY_LOSS") == "0.0"
+    assert (
+        store.get_setting("MAX_DAILY_LOSS_UNIT_VERSION")
+        == str(MAX_DAILY_LOSS_UNIT_VERSION_CURRENT)
+    )
+    # CRITICAL log must contain the per-instrument cheat sheet so the
+    # operator knows what to re-enter.
+    critical_messages = [r.message for r in caplog.records if r.levelno >= logging.CRITICAL]
+    assert any("DOLLARS" in m and "MES" in m for m in critical_messages), critical_messages
+
+
+def test_max_daily_loss_unit_migration_fresh_install_just_stamps(tmp_path):
+    """A fresh DB (no MAX_DAILY_LOSS row yet) stamps the version
+    without firing a reset — first boot should not look like an
+    upgrade."""
+    from app.settings_store import (
+        MAX_DAILY_LOSS_UNIT_VERSION_CURRENT,
+        SettingsStore,
+        migrate_max_daily_loss_units,
+    )
+
+    store = SettingsStore(tmp_path / "fresh.db")
+    settings = Settings(max_daily_loss=0.0)
+
+    reset = migrate_max_daily_loss_units(store, settings)
+
+    assert reset is False
+    assert settings.max_daily_loss == 0.0
+    assert (
+        store.get_setting("MAX_DAILY_LOSS_UNIT_VERSION")
+        == str(MAX_DAILY_LOSS_UNIT_VERSION_CURRENT)
+    )
+
+
+def test_max_daily_loss_unit_migration_idempotent(tmp_path):
+    """Once stamped, the migration is a no-op — re-running it does not
+    touch an already-dollarized MAX_DAILY_LOSS."""
+    from app.settings_store import (
+        MAX_DAILY_LOSS_UNIT_VERSION_CURRENT,
+        SettingsStore,
+        migrate_max_daily_loss_units,
+    )
+
+    store = SettingsStore(tmp_path / "stamped.db")
+    store.set_setting("MAX_DAILY_LOSS", "1500.0")  # already in dollars
+    store.set_internal_setting(
+        "MAX_DAILY_LOSS_UNIT_VERSION",
+        str(MAX_DAILY_LOSS_UNIT_VERSION_CURRENT),
+    )
+    settings = Settings(max_daily_loss=1500.0)
+
+    reset = migrate_max_daily_loss_units(store, settings)
+
+    assert reset is False
+    assert store.get_setting("MAX_DAILY_LOSS") == "1500.0"
+    assert settings.max_daily_loss == 1500.0

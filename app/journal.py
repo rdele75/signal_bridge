@@ -286,6 +286,54 @@ class Journal:
             row = cur.fetchone()
             return float(row["realized_pnl"]) if row else 0.0
 
+    def get_daily_pnl_dollars(self) -> float:
+        """Return today's realized P&L converted to dollars per
+        instrument's point value.
+
+        Iterates today's ``closed_trades`` (UTC window aligned to the
+        configured trading-day timezone), multiplies each row's
+        ``realized_pnl_points`` by the per-instrument dollar value
+        from ``INSTRUMENT_POINT_VALUES_USD``, and returns the sum.
+
+        Symbols missing from the table contribute ``0.0`` and emit a
+        single WARNING per unknown symbol per call — the daily-loss
+        cap will under-count for those instruments, which is the safe
+        direction for the operator to notice in the logs and fix by
+        extending the table rather than for the cap to enforce the
+        wrong number silently.
+        """
+        from .risk_engine import INSTRUMENT_POINT_VALUES_USD
+
+        start_utc, end_utc = self._today_utc_window()
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                """
+                SELECT symbol, COALESCE(SUM(realized_pnl_points), 0.0) AS pts
+                FROM closed_trades
+                WHERE closed_at >= ? AND closed_at < ?
+                GROUP BY symbol
+                """,
+                (start_utc, end_utc),
+            )
+            rows = [(r["symbol"], float(r["pts"] or 0.0)) for r in cur.fetchall()]
+
+        total_dollars = 0.0
+        for symbol, points in rows:
+            multiplier = INSTRUMENT_POINT_VALUES_USD.get(symbol, 0.0)
+            if multiplier == 0.0 and points != 0.0:
+                log.warning(
+                    "get_daily_pnl_dollars: no point value for symbol %r — "
+                    "today's %.4f points contributes $0 to the daily loss "
+                    "cap. Add %r to INSTRUMENT_POINT_VALUES_USD in "
+                    "app/risk_engine.py if you trade it.",
+                    symbol,
+                    points,
+                    symbol,
+                )
+                continue
+            total_dollars += points * multiplier
+        return total_dollars
+
     def add_daily_pnl(self, amount: float, trade_date: Optional[str] = None) -> None:
         if trade_date is None:
             trade_date = self._today_iso()

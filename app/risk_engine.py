@@ -14,6 +14,39 @@ from .schemas import NormalizedSignal
 log = logging.getLogger("signalbridge.risk_engine")
 
 
+# Dollar value per 1.00 price-point for each TradingView ticker
+# SignalBridge can size trades for. The realized-PnL points stored in
+# the journal aren't comparable across instruments (1 pt of MES is
+# $1.25; 1 pt of ES is $12.50), so the daily-loss cap must convert
+# points to dollars before checking against MAX_DAILY_LOSS.
+#
+# Extend this table when adding a new instrument. Symbols not in the
+# table are treated as a 0.0 multiplier — the daily-loss cap will
+# under-count rather than enforce the wrong number; ``points_to_dollars``
+# returns 0.0 and ``get_daily_pnl_dollars`` logs a WARNING per
+# unknown symbol so the operator can see it's missing.
+INSTRUMENT_POINT_VALUES_USD: dict[str, float] = {
+    # CME micros
+    "MES1!": 1.25,    # Micro E-mini S&P 500
+    "MNQ1!": 0.50,    # Micro E-mini NASDAQ-100
+    "M2K1!": 0.50,    # Micro E-mini Russell 2000
+    "MYM1!": 0.50,    # Micro E-mini Dow
+    # CME e-minis
+    "ES1!": 12.50,    # E-mini S&P 500
+    "NQ1!": 5.00,     # E-mini NASDAQ-100
+    "RTY1!": 5.00,    # E-mini Russell 2000
+    "YM1!": 5.00,     # E-mini Dow
+}
+
+
+def points_to_dollars(symbol: str, points: float) -> float:
+    """Convert price-points P&L to dollar P&L using the symbol's
+    point value. Returns 0.0 when the symbol isn't in
+    ``INSTRUMENT_POINT_VALUES_USD`` (caller should surface a warning)."""
+    multiplier = INSTRUMENT_POINT_VALUES_USD.get(symbol, 0.0)
+    return points * multiplier
+
+
 # Map of incoming TradingView action -> internal normalized action.
 ACTION_MAP = {
     "buy": "BUY",
@@ -209,11 +242,13 @@ class RiskEngine:
         if signal.action in SHORT_ACTIONS and not s.enable_shorts:
             return RiskDecision(False, "shorts_disabled")
 
-        # Daily loss limit.
+        # Daily loss limit. MAX_DAILY_LOSS is in dollars (USD); today's
+        # realized P&L from the journal is in points and gets converted
+        # per-instrument before comparison so 100 pts of MES ($125) and
+        # 100 pts of ES ($1,250) aren't treated as the same loss.
         if s.max_daily_loss > 0:
-            pnl = self.journal.get_daily_pnl()
-            # Loss is a negative number; compare absolute.
-            if pnl <= -abs(s.max_daily_loss):
+            pnl_usd = self.journal.get_daily_pnl_dollars()
+            if pnl_usd <= -abs(s.max_daily_loss):
                 return RiskDecision(False, "daily_loss_limit_reached")
 
         # Duplicate order_id within cooldown.

@@ -213,6 +213,24 @@ ALLOWED_EXECUTION_MODES: tuple[str, ...] = ("off", "test", "armed")
 ALLOWED_TOPSTEP_ENVS: tuple[str, ...] = ("demo", "live")
 
 
+# Internal schema/migration markers — read/written by the migration
+# code, never exposed to the dashboard. Distinct from MANAGED_KEYS so
+# the env-bootstrap loop doesn't try to read them off Settings (which
+# has no matching attribute).
+INTERNAL_SCHEMA_KEYS: frozenset[str] = frozenset({
+    "MAX_DAILY_LOSS_UNIT_VERSION",
+})
+
+# Current unit semantics for MAX_DAILY_LOSS.
+#   1 — points (pre-polish; never enforced as $ — meaningless across
+#       instruments with different point values)
+#   2 — dollars (current). A DB stamped with anything < 2 has its
+#       MAX_DAILY_LOSS reset to 0.0 on boot with a CRITICAL log so the
+#       operator must re-enter the value in dollars before the cap
+#       re-engages.
+MAX_DAILY_LOSS_UNIT_VERSION_CURRENT: int = 2
+
+
 class SettingsValidationError(ValueError):
     """Raised when an incoming setting value can't be coerced or violates
     a domain rule (e.g. EXECUTION_MODE=live)."""
@@ -595,6 +613,18 @@ class SettingsStore:
     def set_setting(self, key: str, value: str) -> None:
         if key not in MANAGED_KEYS:
             raise SettingsValidationError(f"unknown setting: {key}")
+        self._set_setting_raw(key, value)
+
+    def set_internal_setting(self, key: str, value: str) -> None:
+        """Write an internal schema/migration marker (e.g. unit-version
+        stamps). Bypasses MANAGED_KEYS validation. Restricted to keys
+        in ``INTERNAL_SCHEMA_KEYS`` so this can't be used to slip
+        unmanaged user-facing settings into the store."""
+        if key not in INTERNAL_SCHEMA_KEYS:
+            raise SettingsValidationError(f"unknown internal setting: {key}")
+        self._set_setting_raw(key, value)
+
+    def _set_setting_raw(self, key: str, value: str) -> None:
         with self._lock:
             conn = self._connect()
             try:
@@ -700,6 +730,83 @@ class SettingsStore:
         change is persisted but a restart is needed for full effect."""
         _write_settings_attr(settings, key, value)
         return key in RUNTIME_APPLICABLE
+
+
+def migrate_max_daily_loss_units(
+    store: "SettingsStore",
+    settings: Settings,
+    log: "logging.Logger | None" = None,
+) -> bool:
+    """One-shot migration when the MAX_DAILY_LOSS unit semantics change.
+
+    Returns True when a reset actually fired (operator action required),
+    False otherwise.
+
+    Called from ``app.main.create_app`` after the SQLite store is
+    constructed and before ``initialize_settings_from_env`` overlays
+    DB values onto the Settings object — so when this function resets
+    the stored value, the live ``settings.max_daily_loss`` reflects
+    the safe default for the rest of boot.
+
+    Detection logic:
+    * If the version stamp is missing AND a MAX_DAILY_LOSS row exists,
+      the DB was bootstrapped under the points-semantic schema — reset
+      to 0.0 (disabled), log CRITICAL, and stamp the current version.
+    * If the stamp is present and < current, ditto (covers future
+      version bumps).
+    * If the stamp is current OR no MAX_DAILY_LOSS row exists yet
+      (fresh install), just stamp the current version and continue.
+
+    The CRITICAL log is the operator's only notification — they must
+    re-enter the loss cap in dollars via /settings/risk before the
+    daily-loss gate re-engages.
+    """
+    import logging as _logging
+
+    if log is None:
+        log = _logging.getLogger("signalbridge.settings_store")
+
+    stored_version_raw = store.get_setting("MAX_DAILY_LOSS_UNIT_VERSION")
+    try:
+        stored_version = (
+            int(stored_version_raw) if stored_version_raw not in (None, "") else 0
+        )
+    except (TypeError, ValueError):
+        stored_version = 0
+
+    if stored_version >= MAX_DAILY_LOSS_UNIT_VERSION_CURRENT:
+        return False
+
+    existing_loss = store.get_setting("MAX_DAILY_LOSS")
+    if existing_loss is None:
+        # Fresh install — nothing to migrate, just stamp the version.
+        store.set_internal_setting(
+            "MAX_DAILY_LOSS_UNIT_VERSION",
+            str(MAX_DAILY_LOSS_UNIT_VERSION_CURRENT),
+        )
+        return False
+
+    # Pre-rework DB: the stored MAX_DAILY_LOSS was set under the points
+    # semantic. Reset to 0.0 so the cap is disabled until the operator
+    # explicitly re-enters a dollar value. DO NOT auto-convert — points
+    # → dollars depends on which instrument they were imagining when
+    # they set the number.
+    log.critical(
+        "MAX_DAILY_LOSS unit semantics changed from POINTS to DOLLARS. "
+        "The stored value (%r) was set under the old points-based "
+        "semantic — it has been reset to 0.0 (disabled) to prevent "
+        "silent mis-enforcement. RE-ENTER MAX_DAILY_LOSS in dollars "
+        "via /settings/risk before arming. Per-instrument values: "
+        "MES=$1.25/pt, MNQ=$0.50/pt, NQ=$5/pt, ES=$12.50/pt.",
+        existing_loss,
+    )
+    store.set_setting("MAX_DAILY_LOSS", serialize("MAX_DAILY_LOSS", 0.0))
+    settings.max_daily_loss = 0.0
+    store.set_internal_setting(
+        "MAX_DAILY_LOSS_UNIT_VERSION",
+        str(MAX_DAILY_LOSS_UNIT_VERSION_CURRENT),
+    )
+    return True
 
 
 def detect_legacy_collapsed_keys(store: "SettingsStore") -> list[str]:

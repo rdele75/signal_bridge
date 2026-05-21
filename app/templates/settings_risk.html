@@ -39,7 +39,7 @@
   </div>
   <div class="card">
     <div class="card-label">Max daily loss</div>
-    <div class="card-value lg">{{ '%.2f' % risk.max_daily_loss }}<span class="unit">pts</span></div>
+    <div class="card-value lg"><span class="unit">$</span>{{ '%.2f' % risk.max_daily_loss }}</div>
   </div>
 </section>
 
@@ -135,10 +135,16 @@
                value="{{ risk.max_open_positions }}">
       </div>
       <div class="form-row">
-        <label for="max_daily_loss">Max daily loss (pts)</label>
+        <label for="max_daily_loss">Max daily loss (USD)</label>
         <input type="number" min="0" step="0.01" id="max_daily_loss"
                name="max_daily_loss"
                value="{{ '%.2f' % risk.max_daily_loss }}">
+        <p class="muted mt-1">
+          Hard floor on today's realized P&amp;L, in dollars. Includes
+          commissions/fees only if the broker reports them. Per-instrument
+          dollar values: MES=$1.25/pt, MNQ=$0.50/pt, NQ=$5/pt,
+          ES=$12.50/pt. Set to 0 to disable the cap.
+        </p>
       </div>
       <div class="form-row">
         <label for="duplicate_order_cooldown_seconds">Duplicate cooldown (sec)</label>

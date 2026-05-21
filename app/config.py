@@ -134,7 +134,13 @@ class Settings(BaseModel):
     fixed_contracts_per_trade: int = Field(
         default_factory=lambda: _int("FIXED_CONTRACTS_PER_TRADE", 1)
     )
-    max_daily_loss: float = Field(default_factory=lambda: _float("MAX_DAILY_LOSS", 250.0))
+    # MAX_DAILY_LOSS is the hard floor on today's realized P&L, in
+    # dollars (USD). The risk engine converts the journal's per-trade
+    # points to dollars using INSTRUMENT_POINT_VALUES_USD before
+    # comparing. Default 0.0 (disabled) — first-boot operators must
+    # set this explicitly; the unit-version migration also resets
+    # this to 0 on upgrade from the points-semantic schema.
+    max_daily_loss: float = Field(default_factory=lambda: _float("MAX_DAILY_LOSS", 0.0))
     max_open_positions: int = Field(
         default_factory=lambda: _int("MAX_OPEN_POSITIONS", 1)
     )

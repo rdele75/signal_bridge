@@ -53,6 +53,7 @@ from .settings_store import (
     SettingsValidationError,
     detect_legacy_collapsed_keys,
     generate_secret,
+    migrate_max_daily_loss_units,
     webhook_secret_preview,
 )
 from .execution.topstep import TopstepBroker
@@ -219,6 +220,13 @@ def create_app() -> FastAPI:
             "instructions. Delete "
             f"{settings.database_abs_path} and restart."
         )
+    # MAX_DAILY_LOSS semantics changed from POINTS to DOLLARS post-collapse.
+    # If the stored value was written under the old schema, reset it to 0
+    # (disabled) with a CRITICAL log so the operator must re-enter it in
+    # dollars before the cap re-engages. Runs before
+    # initialize_settings_from_env so the reset wins on the in-memory
+    # overlay.
+    migrate_max_daily_loss_units(settings_store, settings, log)
     settings_store.initialize_settings_from_env(settings)
     kill_switch = KillSwitch(
         settings.database_abs_path.parent / "kill_switch.active",
