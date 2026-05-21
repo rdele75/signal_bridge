@@ -432,9 +432,42 @@
     function clearFeedback() { showFeedback('', null, null); }
 
     function setState(state) {
+      var prev = card.dataset.executionState || '';
       STATE_CLASSES.forEach(function (c) { card.classList.remove(c); });
       card.classList.add('execution-' + state);
       card.dataset.executionState = state;
+      // Brief cross-fade between states; class is auto-removed.
+      card.classList.add('execution-transitioning');
+      window.setTimeout(function () {
+        card.classList.remove('execution-transitioning');
+      }, 400);
+      // One-shot enter cue when entering armed (red flash on status text)
+      // or test (green border swell). Skip on initial render — that's
+      // when prev is empty and the steady-state pulse already conveys it.
+      if (prev && prev !== state) {
+        if (state === 'armed' && statusText) {
+          statusText.classList.add('execution-armed-enter');
+          statusText.classList.add('execution-status-check-visible');
+          window.setTimeout(function () {
+            statusText.classList.remove('execution-armed-enter');
+          }, 1500);
+        } else if (state === 'test') {
+          card.classList.add('execution-test-enter');
+          window.setTimeout(function () {
+            card.classList.remove('execution-test-enter');
+          }, 1500);
+          if (statusText) {
+            statusText.classList.remove('execution-armed-enter');
+            statusText.classList.remove('execution-status-check-visible');
+          }
+        } else if (statusText) {
+          statusText.classList.remove('execution-armed-enter');
+          statusText.classList.remove('execution-status-check-visible');
+        }
+      } else if (state === 'armed' && statusText) {
+        // Initial render in armed: persist the check without re-flashing.
+        statusText.classList.add('execution-status-check-visible');
+      }
     }
 
     function applyMode(mode) {
@@ -481,6 +514,14 @@
         e.preventDefault();
         applyMode(modeSelect.value);
       });
+    }
+
+    // Initial render: if the card boots in armed state, persist the
+    // green check on the status text. The infinite pulse animations
+    // on the card itself fire automatically from the server-rendered
+    // class — no JS needed for those.
+    if (card.dataset.executionState === 'armed' && statusText) {
+      statusText.classList.add('execution-status-check-visible');
     }
 
     // Flatten flow. Lifts open positions via /api/broker/positions,

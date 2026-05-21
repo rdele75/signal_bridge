@@ -1009,17 +1009,17 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   opacity: 0;
   transform: translateY(-3px);
 }
-/* Live-armed status text gets a brief checkmark + flash on enter and
+/* Armed status text gets a brief checkmark + flash on enter and
    then SETTLES SOLID GREEN — not red. The red card-border-pulse is the
    "be careful" signal; the status text staying solid green communicates
    "armed and healthy". An infinite color pulse on the text itself
    reads as anxious; one flash + steady state is calmer. */
-.execution-status-text.execution-live-armed-enter {
+.execution-status-text.execution-armed-enter {
   color: var(--good);
   font-weight: 600;
   animation: execution-status-armed-flash 1.4s ease-out 1 both;
 }
-.execution-status-text.execution-live-armed-enter::before {
+.execution-status-text.execution-armed-enter::before {
   content: "✓";
   font-size: 13px;
   color: var(--good);
@@ -1042,7 +1042,7 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   100% { opacity: 1; transform: scale(1.0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .execution-status-text.execution-live-armed-enter {
+  .execution-status-text.execution-armed-enter {
     animation: none;
   }
 }
@@ -1251,24 +1251,30 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   to { transform: rotate(360deg); }
 }
 
-/* ----- Border styling per state ----- */
+/* ----- Border styling per state -----
+   Post-collapse vocabulary:
+     execution-off              — neutral grey, no animation
+     execution-test             — soft green breathing pulse (safe state)
+     execution-armed            — full red pulse (live order submission)
+     execution-kill-switch-active — solid red border, bg tint
+*/
 /* Smooth transitions between any two states. The transition runs
    automatically on class swap; the temporary ``.execution-transitioning``
-   class extends the duration for a clean fade away from live. */
+   class extends the duration for a clean fade away from armed. */
 .execution-card.execution-transitioning {
   transition: border-color 0.35s ease, box-shadow 0.35s ease,
     background 0.35s ease;
 }
 
-/* Dry-run: slow safe-state breathing. Deliberately gentle — the card
+/* Test: slow safe-state breathing. Deliberately gentle — the card
    should look alive without ever feeling urgent. ~6.5s so it's clearly
-   slower than the 1.6s live-armed pulse. */
-.execution-dry-run {
+   slower than the 1.6s armed pulse. */
+.execution-test {
   border-color: rgba(52, 211, 153, 0.45);
   box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.10);
-  animation: execution-dry-run-pulse 6.5s ease-in-out infinite;
+  animation: execution-test-pulse 6.5s ease-in-out infinite;
 }
-@keyframes execution-dry-run-pulse {
+@keyframes execution-test-pulse {
   0%, 100% {
     box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.12),
       0 0 12px rgba(52, 211, 153, 0.08);
@@ -1280,17 +1286,12 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
     border-color: rgba(96, 165, 250, 0.55);
   }
 }
-/* Marker class JS adds after a transition into dry-run completes. The
-   shared ``execution-dry-run`` rule above is what actually animates;
-   ``execution-dryrun-active`` is just a hook the tests/style guide can
-   target if they need the post-transition steady state. */
-.execution-dryrun-active { /* paired with .execution-dry-run for steady state */ }
-/* One-shot dry-run enter cue when fading down from live. Plays once,
-   then the steady ``execution-dry-run-pulse`` rule takes over. */
-.execution-card.execution-dryrun-enter {
-  animation: execution-dryrun-enter 1.4s ease-out 1 both;
+/* One-shot test enter cue when fading down from armed. Plays once,
+   then the steady ``execution-test-pulse`` rule takes over. */
+.execution-card.execution-test-enter {
+  animation: execution-test-enter 1.4s ease-out 1 both;
 }
-@keyframes execution-dryrun-enter {
+@keyframes execution-test-enter {
   0%   {
     box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
     border-color: rgba(52, 211, 153, 0);
@@ -1307,30 +1308,22 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   }
 }
 
-.execution-disabled {
+.execution-off {
   border-color: var(--border-2);
-}
-.execution-demo {
-  border-color: rgba(251, 191, 36, 0.55);
-  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.18);
-}
-.execution-live-locked {
-  border-color: rgba(248, 113, 113, 0.5);
-  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.12);
 }
 .execution-kill-switch-active {
   border-color: var(--bad);
   background: rgba(248, 113, 113, 0.04);
 }
 
-/* ----- Live armed: full red, subtle pulse ----- */
-.execution-live-armed {
+/* ----- Armed: full red, subtle pulse ----- */
+.execution-armed {
   border-color: var(--bad);
   box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.35),
     0 0 22px rgba(248, 113, 113, 0.20);
-  animation: execution-live-armed-pulse 1.6s ease-in-out infinite;
+  animation: execution-armed-pulse 1.6s ease-in-out infinite;
 }
-@keyframes execution-live-armed-pulse {
+@keyframes execution-armed-pulse {
   0%, 100% {
     box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.35),
       0 0 18px rgba(248, 113, 113, 0.18);
@@ -1341,95 +1334,10 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   }
 }
 
-/* ----- Live engaging: red border lines travel from top + bottom
-   edges around the card and meet at the midpoints. Driven by two
-   pseudo-element overlays running mirrored width animations. ----- */
-.execution-live-engaging {
-  border-color: rgba(248, 113, 113, 0.35);
-}
-.execution-live-engaging::before,
-.execution-live-engaging::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  height: 2px;
-  width: 0;
-  background: var(--bad);
-  box-shadow: 0 0 8px rgba(248, 113, 113, 0.55);
-  z-index: 2;
-  animation: execution-live-engage-travel 3.6s ease-in-out forwards;
-}
-.execution-live-engaging::before { top: 0; }
-.execution-live-engaging::after  { bottom: 0; }
-@keyframes execution-live-engage-travel {
-  0%   { width: 0;    left: 50%; opacity: 1; }
-  100% { width: 100%; left: 0;   opacity: 1; }
-}
-
-/* ----- Live disengaging: mirror of live-engaging. Red bars retreat
-   from the edges toward the centre and fade as the card transitions
-   back to dry-run. JS removes the class once the fade settles. ----- */
-.execution-live-disengaging {
-  border-color: rgba(248, 113, 113, 0.45);
-  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.22),
-    0 0 14px rgba(248, 113, 113, 0.12);
-  animation: execution-live-disengage-fade 1.6s ease-out forwards;
-}
-@keyframes execution-live-disengage-fade {
-  0% {
-    border-color: rgba(248, 113, 113, 0.85);
-    box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.35),
-      0 0 20px rgba(248, 113, 113, 0.22);
-  }
-  100% {
-    border-color: rgba(248, 113, 113, 0);
-    box-shadow: 0 0 0 1px rgba(248, 113, 113, 0),
-      0 0 0 rgba(248, 113, 113, 0);
-  }
-}
-.execution-live-disengaging::before,
-.execution-live-disengaging::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  height: 2px;
-  width: 100%;
-  background: var(--bad);
-  box-shadow: 0 0 8px rgba(248, 113, 113, 0.55);
-  z-index: 2;
-  animation: execution-live-disengage-travel 1.5s ease-in-out forwards;
-}
-.execution-live-disengaging::before { top: 0; }
-.execution-live-disengaging::after  { bottom: 0; }
-@keyframes execution-live-disengage-travel {
-  0%   { width: 100%; left: 0;   opacity: 1; }
-  100% { width: 0;    left: 50%; opacity: 0; }
-}
-
-/* One-shot success flash around the card when live engagement
-   completes — subtle green shimmer/glow as the red border settles. */
-.execution-card.execution-live-success-flash::after {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: var(--radius);
-  pointer-events: none;
-  z-index: 2;
-  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.55),
-    0 0 30px rgba(52, 211, 153, 0.40);
-  animation: execution-live-success-flash 1.2s ease-out 1 both;
-  opacity: 0;
-}
-@keyframes execution-live-success-flash {
-  0%   { opacity: 0; }
-  18%  { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-/* Persistent checkmark on the status text — added once live is armed
-   and held there for the lifetime of the armed state. The pre-existing
-   ``.execution-live-armed-enter::before`` plays the entry animation;
-   this class keeps the check visible afterwards without re-animating. */
+/* Persistent checkmark on the status text — added once armed and held
+   there for the lifetime of the armed state. The ``.execution-armed-enter``
+   pseudo-element plays the one-shot entry animation; this class keeps the
+   check visible afterwards without re-animating. */
 .execution-status-text.execution-status-check-visible::before {
   content: "✓";
   font-size: 13px;
