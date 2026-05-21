@@ -565,11 +565,17 @@
     }
 
     function pickApplyAnimClass(fromMode, toMode) {
-      if (toMode === fromMode) {
+      // State hierarchy: off=0, test=1, armed=2.
+      // Moving up the hierarchy expands; moving down retracts.
+      // Class names are historical - both animations are now purple.
+      var rank = { off: 0, test: 1, armed: 2 };
+      var from = rank[fromMode];
+      var to = rank[toMode];
+      if (from === to) {
         return toMode === 'armed' ? ['apply-reapply', 'reapply-armed']
                                   : ['apply-reapply'];
       }
-      if (toMode === 'armed') return ['apply-to-armed'];
+      if (to > from) return ['apply-to-armed'];
       return ['apply-to-safe'];
     }
 
