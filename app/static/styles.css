@@ -1349,36 +1349,94 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   background: rgba(248, 113, 113, 0.04);
 }
 
-/* ----- Apply in-flight: top + bottom border lines slide from center
-   outward to the edges and back. Lifted from the pre-collapse
-   execution-live-engaging effect (commit dbb0c6b) — the original was
-   a one-shot 3.6s travel scoped to the live engagement modal. Here
-   we loop it on a 1.2s cadence with the accent color so it reads as
-   "operation in progress" for any /api/execution/{mode} POST. The
-   ``.execution-card`` already has ``overflow: hidden`` so the slide
-   stays clipped to the card. ----- */
-.execution-card.execution-loading::before,
-.execution-card.execution-loading::after {
+/* ----- Apply in-flight: directional, color-meaningful border animation.
+   The destination state picks one of three patterns:
+   - apply-to-armed: red lines expand from horizontal center outward to
+     both edges (ease-out, 1000ms) — feels like a controlled release into
+     a more dangerous state.
+   - apply-to-safe: green lines start at full width and retract inward
+     toward the center (ease-in, 1000ms) — feels like settling/deescalating.
+   - apply-reapply: brief opacity pulse on full-width borders (~300ms) when
+     reapplying the same state. Adds .reapply-armed for the red variant.
+   The ``.execution-card`` already has ``overflow: hidden`` so the lines
+   stay clipped. ----- */
+.execution-card.apply-to-armed::before,
+.execution-card.apply-to-armed::after {
   content: "";
   position: absolute;
   left: 50%;
   height: 2px;
   width: 0;
-  background: var(--accent);
-  box-shadow: 0 0 8px rgba(124, 140, 255, 0.55);
+  background: var(--bad);
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.55);
+  transform: translateX(-50%);
   z-index: 2;
-  /* 0.6s matches APPLY_MIN_DURATION_MS in dashboard.html so even an
-     instant response shows one complete grow-and-retract pulse. Longer
-     responses keep cycling. Was 1.2s when the min was 300ms — at that
-     ratio only ~25% of one cycle played, reading as a flicker. */
-  animation: execution-loading-slide 0.6s ease-in-out infinite;
+  animation: apply-armed-expand 1000ms ease-out forwards;
 }
-.execution-card.execution-loading::before { top: 0; }
-.execution-card.execution-loading::after  { bottom: 0; }
-@keyframes execution-loading-slide {
-  0%   { width: 0;    left: 50%; opacity: 0.55; }
-  50%  { width: 100%; left: 0;   opacity: 1; }
-  100% { width: 0;    left: 50%; opacity: 0.55; }
+.execution-card.apply-to-armed::before { top: 0; }
+.execution-card.apply-to-armed::after  { bottom: 0; }
+@keyframes apply-armed-expand {
+  from { width: 0; }
+  to   { width: 100%; }
+}
+
+.execution-card.apply-to-safe::before,
+.execution-card.apply-to-safe::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  height: 2px;
+  width: 100%;
+  background: var(--good);
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.55);
+  transform: translateX(-50%);
+  z-index: 2;
+  animation: apply-safe-retract 1000ms ease-in forwards;
+}
+.execution-card.apply-to-safe::before { top: 0; }
+.execution-card.apply-to-safe::after  { bottom: 0; }
+@keyframes apply-safe-retract {
+  from { width: 100%; }
+  to   { width: 0; }
+}
+
+.execution-card.apply-reapply::before,
+.execution-card.apply-reapply::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--good);
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.55);
+  opacity: 0;
+  z-index: 2;
+  animation: apply-reapply-pulse 300ms ease-out forwards;
+}
+.execution-card.apply-reapply::before { top: 0; }
+.execution-card.apply-reapply::after  { bottom: 0; }
+.execution-card.apply-reapply.reapply-armed::before,
+.execution-card.apply-reapply.reapply-armed::after {
+  background: var(--bad);
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.55);
+}
+@keyframes apply-reapply-pulse {
+  0%   { opacity: 0; }
+  50%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Error-flash: brief red outline on the whole card when an Apply request
+   returns an error. Applied after the directional animation is yanked. */
+.execution-card.apply-error-flash {
+  outline: 1px solid var(--bad);
+  outline-offset: -1px;
+  animation: apply-error-flash 150ms ease-out forwards;
+}
+@keyframes apply-error-flash {
+  0%   { outline-color: rgba(248, 113, 113, 0); }
+  40%  { outline-color: var(--bad); }
+  100% { outline-color: rgba(248, 113, 113, 0); }
 }
 
 /* ----- Armed: full red, subtle pulse ----- */
@@ -1465,7 +1523,9 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
 }
 
 /* Honour prefers-reduced-motion — keep the colours but drop the
-   keyframe animations. */
+   keyframe animations. Covers the directional Apply animations
+   (.apply-to-armed, .apply-to-safe, .apply-reapply, .apply-error-flash)
+   via the ::before/::after rules and the bare .execution-card rule. */
 @media (prefers-reduced-motion: reduce) {
   .execution-card,
   .execution-card::before,
@@ -1476,6 +1536,14 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   .execution-toast {
     animation: none !important;
     transition: none !important;
+  }
+  .execution-card.apply-to-armed::before,
+  .execution-card.apply-to-armed::after,
+  .execution-card.apply-to-safe::before,
+  .execution-card.apply-to-safe::after,
+  .execution-card.apply-reapply::before,
+  .execution-card.apply-reapply::after {
+    content: none;
   }
 }
 
