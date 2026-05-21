@@ -23,22 +23,27 @@ def _build_app(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    provider: str = "paper",
+    provider: str = "topstep",
     admin_auth_enabled: bool = False,
 ):
-    """Construct a fresh FastAPI app bound to a temp DB/log under the given
-    BROKER_PROVIDER. Admin auth is off by default so most tests don't need
-    to log in — tests that exercise auth set admin_auth_enabled=True."""
+    """Construct a fresh FastAPI app bound to a temp DB/log.
+
+    Post-collapse only ``topstep`` is supported. The ``provider``
+    parameter is preserved for tests that still pass it explicitly
+    (it's coerced to topstep regardless). Admin auth is off by default
+    so most tests don't need to log in.
+    """
+    del provider  # post-collapse: pinned to topstep
     db_path = tmp_path / "sb_test.db"
     log_path = tmp_path / "sb_test.log"
 
     monkeypatch.setenv("APP_HOST", "127.0.0.1")
     monkeypatch.setenv("APP_PORT", "8000")
-    monkeypatch.setenv("EXECUTION_MODE", "paper")
-    monkeypatch.setenv("BROKER_PROVIDER", provider)
-    monkeypatch.setenv("BROKER", provider)
+    monkeypatch.setenv("EXECUTION_MODE", "off")
+    monkeypatch.setenv("BROKER_PROVIDER", "topstep")
     monkeypatch.setenv("TRADINGVIEW_WEBHOOK_SECRET", SECRET)
-    monkeypatch.setenv("ALLOWED_SYMBOLS", "MES1!,MNQ1!")
+    monkeypatch.setenv("ALLOWED_SYMBOLS", "MES1!,MNQ1!,NQ1!,ES1!")
+    monkeypatch.setenv("ALLOWED_SYMBOLS_ARMED", "MES1!,MNQ1!")
     monkeypatch.setenv("MAX_CONTRACTS_PER_TRADE", "1")
     monkeypatch.setenv("MAX_DAILY_LOSS", "250")
     monkeypatch.setenv("MAX_OPEN_POSITIONS", "1")
@@ -55,6 +60,18 @@ def _build_app(
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", ADMIN_PASSWORD)
     monkeypatch.setenv("SESSION_SECRET", SESSION_SECRET)
+    # Stub Topstep credentials so build_broker doesn't trip on missing
+    # values. Tests that exercise auth paths override these BEFORE
+    # calling _build_app; check os.environ so we don't clobber an
+    # explicit per-test override.
+    if "TOPSTEP_USERNAME" not in os.environ:
+        monkeypatch.setenv("TOPSTEP_USERNAME", "test_user@example.com")
+    if "TOPSTEP_API_KEY" not in os.environ:
+        monkeypatch.setenv("TOPSTEP_API_KEY", "test_api_key_abcd1234")
+    if "TOPSTEP_ACCOUNT_ID" not in os.environ:
+        monkeypatch.setenv("TOPSTEP_ACCOUNT_ID", "5001")
+    if "SELECTED_ACCOUNT_ID" not in os.environ:
+        monkeypatch.setenv("SELECTED_ACCOUNT_ID", "5001")
     # Point the symbol map at a non-existent file so tests don't depend on
     # whatever the user has in config/symbols.json.
     monkeypatch.setenv("SYMBOLS_MAP_PATH", str(tmp_path / "missing_symbols.json"))
@@ -73,15 +90,18 @@ def _build_app(
 
 @pytest.fixture
 def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Default app fixture — paper provider, auth disabled."""
-    yield _build_app(tmp_path, monkeypatch, provider="paper")
+    """Default app fixture — topstep provider, off mode, auth disabled."""
+    yield _build_app(tmp_path, monkeypatch)
 
 
 @pytest.fixture
 def make_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Factory fixture for picking the broker provider (and toggling auth)
-    per-test."""
-    def _factory(provider: str = "paper", admin_auth_enabled: bool = False):
+    """Factory fixture for toggling auth per-test.
+
+    The ``provider`` argument is accepted for backward compatibility
+    with pre-collapse tests but is coerced to topstep.
+    """
+    def _factory(provider: str = "topstep", admin_auth_enabled: bool = False):
         return _build_app(
             tmp_path,
             monkeypatch,
@@ -102,9 +122,7 @@ def client(app_env):
 @pytest.fixture
 def auth_app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """App fixture with ADMIN_AUTH_ENABLED=true."""
-    yield _build_app(
-        tmp_path, monkeypatch, provider="paper", admin_auth_enabled=True
-    )
+    yield _build_app(tmp_path, monkeypatch, admin_auth_enabled=True)
 
 
 def login_as_admin(client, *, password: str = ADMIN_PASSWORD, expect_ok: bool = True):

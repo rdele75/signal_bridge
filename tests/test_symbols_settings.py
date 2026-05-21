@@ -317,9 +317,10 @@ def test_contract_search_calls_projectx_with_search_text_and_live_false(
     make_app, tmp_path, monkeypatch
 ):
     _seed_default_symbols(tmp_path / "missing_symbols.json")
-    app = make_app(provider="paper")
+    app = make_app()
     # Configure Topstep creds + a cached valid token so the endpoint
-    # skips authenticate().
+    # skips authenticate(). Mirror onto the live broker too — the
+    # admin endpoint reuses it and reads its in-memory token state.
     settings = app.state.settings
     store = app.state.settings_store
     for key, value in [
@@ -329,6 +330,11 @@ def test_contract_search_calls_projectx_with_search_text_and_live_false(
         ("TOPSTEP_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00+00:00"),
     ]:
         store.apply_to_settings(settings, key, store.update_typed(key, value))
+    broker = app.state.broker
+    broker.username = "trader42"
+    broker.api_key = "abcd1234efgh5678"
+    broker.token = "JWT.PRE.CACHED"
+    broker.token_expires_at = "2099-01-01T00:00:00+00:00"
 
     captured: dict = {}
 
@@ -389,10 +395,15 @@ def test_contract_search_missing_search_text_returns_envelope(make_app, tmp_path
     assert body["contracts"] == []
 
 
-def test_contract_search_missing_credentials_envelope(make_app, tmp_path):
+def test_contract_search_missing_credentials_envelope(
+    make_app, tmp_path, monkeypatch
+):
     _seed_default_symbols(tmp_path / "missing_symbols.json")
-    app = make_app(provider="paper")
-    # Default fixture has blank Topstep creds — verify graceful refusal.
+    # Clear credentials so the contract-search endpoint reports the
+    # missing-credentials envelope rather than trying to authenticate.
+    monkeypatch.setenv("TOPSTEP_USERNAME", "")
+    monkeypatch.setenv("TOPSTEP_API_KEY", "")
+    app = make_app()
     with TestClient(app) as c:
         r = c.post(
             "/api/topstep/contracts/search",

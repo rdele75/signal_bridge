@@ -43,9 +43,9 @@ def test_xiznit_entry_with_query_secret_accepted(client):
     body = r.json()
     assert body["accepted"] is True
     assert body["decision"] == "accepted"
-    # Paper broker should have filled at the supplied entry price.
-    assert body["execution"]["broker"] == "paper"
-    assert body["execution"]["fill_price"] == 5000.25
+    # Off-state webhook: journaled but no broker submission.
+    assert body["execution"]["broker"] == "topstep"
+    assert body["execution"]["execution_mode"] == "off"
     assert body["execution"]["contracts"] == 1
 
 

@@ -1,4 +1,10 @@
-"""End-to-end webhook tests against a temp-DB FastAPI app."""
+"""End-to-end webhook tests against a temp-DB FastAPI app.
+
+Post-collapse: every test uses Topstep as the provider. Most exercise
+risk-engine rejection paths (which apply uniformly across off/test/
+armed) plus the off-state broker bypass. Order-submission paths are
+covered in detail in test_execution.py.
+"""
 from __future__ import annotations
 
 from .conftest import make_alert
@@ -17,51 +23,24 @@ def test_status(client):
     assert r.status_code == 200
     body = r.json()
     assert body["app_name"] == "SignalBridge"
-    assert body["execution_mode"] == "paper"
-    assert body["broker_provider"] == "paper"
-    assert body["broker"] == "paper"
-    assert body["selected_account_id"] == "PAPER-001"
-    assert body["broker_connected"] is True
-    assert isinstance(body["broker_message"], str)
+    assert body["execution_mode"] == "off"
+    assert body["broker_provider"] == "topstep"
+    assert body["selected_account_id"] == "5001"
     assert "MES1!" in body["allowed_symbols"]
     assert body["kill_switch_active"] is False
     assert body["open_positions"] == []
 
 
-def test_status_topstep_provider_does_not_crash(make_app):
-    """Switching the active provider to topstep must keep /status JSON-able
-    and the dashboard reachable."""
-    from fastapi.testclient import TestClient
-
-    app = make_app(provider="topstep")
-    with TestClient(app) as c:
-        status_body = c.get("/status").json()
-        api_status_body = c.get("/api/status").json()
-        dash = c.get("/")
-    assert status_body["broker_provider"] == "topstep"
-    assert status_body["broker_connected"] is False
-    assert api_status_body["broker_provider"] == "topstep"
-    assert dash.status_code == 200
-
-
-def test_status_shows_topstep_provider(make_app):
-    from fastapi.testclient import TestClient
-
-    app = make_app(provider="topstep")
-    with TestClient(app) as c:
-        body = c.get("/status").json()
-    assert body["broker_provider"] == "topstep"
-
-
-def test_valid_alert_accepted(client):
+def test_valid_alert_accepted_in_off_state(client):
+    """Off state journals as accepted with no broker submission."""
     r = client.post("/webhooks/tradingview", json=make_alert())
     assert r.status_code == 200
     body = r.json()
     assert body["accepted"] is True
     assert body["decision"] == "accepted"
-    assert body["execution"]["broker"] == "paper"
-    assert body["execution"]["fill_price"] == 5000.25
-    assert body["execution"]["position_after"]["quantity"] == 1
+    assert body["execution"]["broker"] == "topstep"
+    assert body["execution"]["execution_mode"] == "off"
+    assert body["execution"]["message"] == "execution_off_no_submission"
 
 
 def test_bad_secret_rejected(client):
@@ -106,9 +85,7 @@ def test_duplicate_order_id_rejected(client):
     assert body["rejection_reason"] == "duplicate_order_id"
 
 
-def test_disabled_shorts_rejected(client, monkeypatch, tmp_path):
-    # Flip the flag on the live app's settings to simulate a restart with
-    # ENABLE_SHORTS=false, without rebuilding the whole app.
+def test_disabled_shorts_rejected(client):
     client.app.state.settings.enable_shorts = False
 
     r = client.post(
@@ -129,17 +106,6 @@ def test_missing_required_field_rejected(client):
     assert "missing_required_field" in body["rejection_reason"]
 
 
-def test_missing_price_rejected_by_broker(client):
-    # Broker requires price; risk engine doesn't.
-    r = client.post(
-        "/webhooks/tradingview",
-        json=make_alert(price="", order_id="noprice"),
-    )
-    body = r.json()
-    assert body["accepted"] is False
-    assert "missing_or_invalid_price" in body["rejection_reason"]
-
-
 def test_quoted_numeric_payload_accepted(client):
     # Classic TradingView shape: numeric fields arrive as quoted strings.
     r = client.post(
@@ -148,7 +114,6 @@ def test_quoted_numeric_payload_accepted(client):
     )
     body = r.json()
     assert body["accepted"] is True
-    assert body["execution"]["fill_price"] == 5000.25
     assert body["execution"]["contracts"] == 1
 
 
@@ -160,7 +125,6 @@ def test_unquoted_numeric_payload_accepted(client):
     )
     body = r.json()
     assert body["accepted"] is True
-    assert body["execution"]["fill_price"] == 5000.25
     assert body["execution"]["contracts"] == 1
 
 
@@ -182,36 +146,3 @@ def test_non_numeric_price_rejected(client):
     body = r.json()
     assert body["accepted"] is False
     assert "malformed_payload" in body["rejection_reason"]
-
-
-# ---------- Broker adapter selection ----------
-
-
-def test_paper_provider_executes(make_app):
-    from fastapi.testclient import TestClient
-
-    app = make_app(provider="paper")
-    with TestClient(app) as c:
-        r = c.post("/webhooks/tradingview", json=make_alert(order_id="paper_sel"))
-    body = r.json()
-    assert body["accepted"] is True
-    assert body["execution"]["broker"] == "paper"
-
-
-def test_topstep_provider_does_not_place_real_order(make_app):
-    """BROKER_PROVIDER=topstep with default safety settings (execution
-    off) must NOT place a real order — the handler returns a dry-run
-    result and no paper position is created either way."""
-    from fastapi.testclient import TestClient
-
-    app = make_app(provider="topstep")
-    with TestClient(app) as c:
-        r = c.post("/webhooks/tradingview", json=make_alert(order_id="topstep_sel"))
-        body = r.json()
-        # Whether build succeeded or rejected (account id / symbol map
-        # not configured here), no paper fill should have happened.
-        assert body["execution"]["broker"] == "topstep"
-        positions = c.get("/api/positions").json()["open_positions"]
-        assert positions == []
-
-

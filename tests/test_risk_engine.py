@@ -120,9 +120,20 @@ def test_shorts_disabled(tmp_path):
     assert d2.reason == "shorts_disabled"
 
 
-def test_kill_switch_blocks(tmp_path):
-    risk, _, ks, _ = _build(tmp_path)
+def test_kill_switch_blocks_only_when_armed(tmp_path):
+    """Post-collapse: kill switch is consulted only when execution is
+    Armed. Off and Test states ignore it so the operator can verify
+    plumbing while the switch is hot."""
+    risk, _, ks, settings = _build(tmp_path)
     ks.activate("manual halt")
+
+    settings.execution_mode = "off"
+    assert risk.evaluate(_signal()).accepted is True
+
+    settings.execution_mode = "test"
+    assert risk.evaluate(_signal()).accepted is True
+
+    settings.execution_mode = "armed"
     d = risk.evaluate(_signal())
     assert d.accepted is False
     assert d.reason == "kill_switch_active"

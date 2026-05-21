@@ -560,17 +560,14 @@ def test_password_change_does_not_leak_hash_or_password_to_logs(
 
 
 def test_broker_page_has_collapsible_indicator(client):
-    """The Broker / Execution Selection card must give a visible
-    affordance that it's collapsible."""
+    """The Topstep credentials card must remain collapsible with a
+    visible affordance."""
     body = client.get("/settings/broker").text
-    # The collapsible <details> must be present...
     assert '<details class="collapsible"' in body
-    # ...with the explicit "click to expand" hint so the user sees it.
-    # Located inside the Broker / Execution selection summary block.
     summary_block = re.search(
-        r"<summary[^>]*>\s*<h3>Broker / execution selection</h3>.*?</summary>",
+        r"<summary[^>]*>\s*<h3>Topstep account &amp; credentials</h3>.*?</summary>",
         body,
         re.DOTALL,
     )
-    assert summary_block, "broker selection summary not found"
+    assert summary_block, "Topstep credentials summary not found"
     assert "click to expand" in summary_block.group(0)

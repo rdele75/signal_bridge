@@ -155,7 +155,8 @@ def test_overview_removed_recent_paper_orders_section(client):
 
 def test_overview_keeps_per_day_counter_cards(client):
     body = client.get("/").text
-    assert "Trades today" in body
+    # Post-collapse labels: cards filter to Armed-mode submissions.
+    assert "Armed trades today" in body
     assert "Accepted today" in body
     assert "Rejected today" in body
 
@@ -221,18 +222,16 @@ def test_risk_page_enables_fixed_contracts_when_strategy_not_managed(client):
     assert "disabled" not in snippet
 
 
-def test_risk_page_no_allowed_symbols_input(client):
+def test_risk_page_renders_both_symbol_inputs(client):
+    """Post-collapse the risk page surfaces both ALLOWED_SYMBOLS and
+    the stricter ALLOWED_SYMBOLS_ARMED list."""
     body = client.get("/settings/risk").text
-    assert 'name="allowed_symbols"' not in body
-    # Settings still hold the symbols list — confirm backend untouched.
-    assert client.app.state.settings.allowed_symbols
+    assert 'name="allowed_symbols"' in body
+    assert 'name="allowed_symbols_armed"' in body
 
 
-def test_risk_page_post_without_allowed_symbols_preserves_setting(client):
-    """Submitting the cleaned-up form (no allowed_symbols field) must
-    not wipe the persisted ALLOWED_SYMBOLS list."""
-    before = list(client.app.state.settings.allowed_symbols)
-    assert before, "fixture should preconfigure allowed symbols"
+def test_risk_post_round_trips_armed_symbols(client):
+    """Submitting the form preserves the ALLOWED_SYMBOLS_ARMED list."""
     r = client.post(
         "/settings/risk",
         data={
@@ -244,11 +243,15 @@ def test_risk_page_post_without_allowed_symbols_preserves_setting(client):
             "duplicate_order_cooldown_seconds": "60",
             "enable_longs": "true",
             "enable_shorts": "true",
+            "allowed_symbols": "MES1!,MNQ1!,NQ1!",
+            "allowed_symbols_armed": "MES1!,MNQ1!",
         },
         follow_redirects=False,
     )
     assert r.status_code == 303
-    assert client.app.state.settings.allowed_symbols == before
+    s = client.app.state.settings
+    assert s.allowed_symbols == ["MES1!", "MNQ1!", "NQ1!"]
+    assert s.allowed_symbols_armed == ["MES1!", "MNQ1!"]
 
 
 # ---------------------------------------------------------------------------
