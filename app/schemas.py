@@ -142,12 +142,11 @@ class StatusResponse(BaseModel):
     app_name: str
     execution_mode: str
     broker_provider: str
-    # Kept for backwards compatibility with anything that scrapes /status.
-    broker: str
     selected_account_id: Optional[str] = None
     broker_connected: bool = False
     broker_message: str = ""
     allowed_symbols: list[str]
+    allowed_symbols_armed: list[str] = Field(default_factory=list)
     kill_switch_active: bool
     open_positions: list[dict[str, Any]]
     database_path: str

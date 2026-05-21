@@ -20,6 +20,16 @@ from .config import Settings
 
 # Keys the dashboard is allowed to read/write. Everything else stays
 # env-only.
+#
+# Post-collapse (2026-05-21): execution-mode-collapse-2026-05-21
+# removed eight keys (ENABLE_TOPSTEP_ORDER_DRY_RUN,
+# ENABLE_TOPSTEP_ORDER_EXECUTION, TOPSTEP_EXECUTION_CONFIRM,
+# ENABLE_LIVE_TRADING, LIVE_TRADING_CONFIRM, LIVE_TRADING_ACCOUNT_ACK,
+# LIVE_MAX_CONTRACTS_PER_TRADE, LIVE_REQUIRE_KILL_SWITCH_OFF) and
+# renamed LIVE_ALLOWED_SYMBOLS → ALLOWED_SYMBOLS_ARMED.
+# ``app.main`` refuses to boot if any of the deleted keys is still in
+# the SQLite ``settings`` table — the operator must delete
+# ``data/signalbridge.db`` after upgrading past the collapse.
 MANAGED_KEYS: tuple[str, ...] = (
     "APP_HOST",
     "APP_PORT",
@@ -28,6 +38,7 @@ MANAGED_KEYS: tuple[str, ...] = (
     "SELECTED_ACCOUNT_ID",
     "TRADINGVIEW_WEBHOOK_SECRET",
     "ALLOWED_SYMBOLS",
+    "ALLOWED_SYMBOLS_ARMED",
     "MAX_CONTRACTS_PER_TRADE",
     "STRATEGY_MANAGED_RISK",
     "FIXED_CONTRACTS_PER_TRADE",
@@ -50,19 +61,6 @@ MANAGED_KEYS: tuple[str, ...] = (
     "TOPSTEP_WS_URL",
     "TOPSTEP_TOKEN",
     "TOPSTEP_TOKEN_EXPIRES_AT",
-    # Order routing safety switches. False by default. Live/funded
-    # execution requires every live gate below to be flipped via the
-    # /api/topstep/live-execution/enable endpoint — the broker form
-    # cannot arm it.
-    "ENABLE_TOPSTEP_ORDER_DRY_RUN",
-    "ENABLE_TOPSTEP_ORDER_EXECUTION",
-    "TOPSTEP_EXECUTION_CONFIRM",
-    "ENABLE_LIVE_TRADING",
-    "LIVE_TRADING_CONFIRM",
-    "LIVE_TRADING_ACCOUNT_ACK",
-    "LIVE_MAX_CONTRACTS_PER_TRADE",
-    "LIVE_ALLOWED_SYMBOLS",
-    "LIVE_REQUIRE_KILL_SWITCH_OFF",
     # Order history defaults.
     "ORDER_HISTORY_LOOKBACK_DAYS",
     "ORDER_HISTORY_LIMIT",
@@ -77,6 +75,29 @@ MANAGED_KEYS: tuple[str, ...] = (
     "ADMIN_PASSWORD_HASH",
 )
 
+
+# Keys removed in the execution-model-collapse rework. ``app.main``
+# checks the SQLite ``settings`` table at boot and refuses to start if
+# any are present, prompting the operator to delete the database. The
+# wipe is acceptable because the operator already exports the journal
+# to CSV before running the rework.
+COLLAPSED_LEGACY_KEYS: frozenset[str] = frozenset(
+    {
+        "ENABLE_TOPSTEP_ORDER_DRY_RUN",
+        "ENABLE_TOPSTEP_ORDER_EXECUTION",
+        "TOPSTEP_EXECUTION_CONFIRM",
+        "ENABLE_LIVE_TRADING",
+        "LIVE_TRADING_CONFIRM",
+        "LIVE_TRADING_ACCOUNT_ACK",
+        "LIVE_MAX_CONTRACTS_PER_TRADE",
+        "LIVE_REQUIRE_KILL_SWITCH_OFF",
+        # LIVE_ALLOWED_SYMBOLS isn't strictly deleted — it's renamed —
+        # but the old key being present means the DB was bootstrapped
+        # against the pre-collapse model.
+        "LIVE_ALLOWED_SYMBOLS",
+    }
+)
+
 # Keys whose change can be applied to the in-memory Settings instance
 # without a restart. Provider switches and bind-address changes do not
 # take effect until the app restarts, because the broker adapter and
@@ -87,6 +108,7 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "SELECTED_ACCOUNT_ID",
         "TRADINGVIEW_WEBHOOK_SECRET",
         "ALLOWED_SYMBOLS",
+        "ALLOWED_SYMBOLS_ARMED",
         "MAX_CONTRACTS_PER_TRADE",
         "STRATEGY_MANAGED_RISK",
         "FIXED_CONTRACTS_PER_TRADE",
@@ -100,7 +122,8 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         # Topstep credentials are read by the adapter on each call, so
         # changes don't need a restart to take effect on the next test
         # connection / API call. The active broker instance still needs
-        # a restart if BROKER_PROVIDER changes.
+        # a restart if BROKER_PROVIDER changes (which post-collapse it
+        # never should).
         "TOPSTEP_USERNAME",
         "TOPSTEP_API_KEY",
         "TOPSTEP_ACCOUNT_ID",
@@ -109,15 +132,6 @@ RUNTIME_APPLICABLE: frozenset[str] = frozenset(
         "TOPSTEP_WS_URL",
         "TOPSTEP_TOKEN",
         "TOPSTEP_TOKEN_EXPIRES_AT",
-        "ENABLE_TOPSTEP_ORDER_DRY_RUN",
-        "ENABLE_TOPSTEP_ORDER_EXECUTION",
-        "TOPSTEP_EXECUTION_CONFIRM",
-        "ENABLE_LIVE_TRADING",
-        "LIVE_TRADING_CONFIRM",
-        "LIVE_TRADING_ACCOUNT_ACK",
-        "LIVE_MAX_CONTRACTS_PER_TRADE",
-        "LIVE_ALLOWED_SYMBOLS",
-        "LIVE_REQUIRE_KILL_SWITCH_OFF",
         "ORDER_HISTORY_LOOKBACK_DAYS",
         "ORDER_HISTORY_LIMIT",
         "ENABLE_TOPSTEP_REALTIME",
@@ -138,8 +152,8 @@ RESTART_REQUIRED: frozenset[str] = frozenset(
 _TRUE_STRINGS = {"1", "true", "yes", "on"}
 _FALSE_STRINGS = {"0", "false", "no", "off"}
 
-ALLOWED_PROVIDERS: tuple[str, ...] = ("paper", "topstep")
-ALLOWED_EXECUTION_MODES: tuple[str, ...] = ("paper", "demo", "live")
+ALLOWED_PROVIDERS: tuple[str, ...] = ("topstep",)
+ALLOWED_EXECUTION_MODES: tuple[str, ...] = ("off", "test", "armed")
 ALLOWED_TOPSTEP_ENVS: tuple[str, ...] = ("demo", "live")
 
 
@@ -294,6 +308,9 @@ def coerce(key: str, raw: Any) -> Any:
     if key == "ALLOWED_SYMBOLS":
         return parse_symbols(raw)
 
+    if key == "ALLOWED_SYMBOLS_ARMED":
+        return parse_symbols(raw)
+
     if key in {
         "MAX_CONTRACTS_PER_TRADE",
         "MAX_OPEN_POSITIONS",
@@ -373,41 +390,6 @@ def coerce(key: str, raw: Any) -> Any:
             raise SettingsValidationError("TOPSTEP_TOKEN_EXPIRES_AT is too long")
         return text
 
-    if key in {"ENABLE_TOPSTEP_ORDER_DRY_RUN", "ENABLE_TOPSTEP_ORDER_EXECUTION"}:
-        return parse_bool(raw)
-
-    if key == "ENABLE_LIVE_TRADING":
-        # The master live-trading switch. Accepting True at the settings
-        # layer is necessary but not sufficient — the runtime live-gate
-        # check (LIVE_TRADING_CONFIRM, LIVE_TRADING_ACCOUNT_ACK, account
-        # validation, symbol/contract caps, kill switch off) still has
-        # to pass. The arm endpoint flips everything together; the
-        # broker settings form refuses to set this true on its own.
-        return parse_bool(raw)
-
-    if key == "LIVE_TRADING_CONFIRM":
-        text = (str(raw) if raw is not None else "").strip()
-        if not text:
-            return "disabled"
-        if text not in {"disabled", "I_UNDERSTAND_LIVE_ORDERS"}:
-            raise SettingsValidationError(
-                "LIVE_TRADING_CONFIRM must be 'disabled' or "
-                "'I_UNDERSTAND_LIVE_ORDERS'"
-            )
-        return text
-
-    if key == "LIVE_TRADING_ACCOUNT_ACK":
-        return parse_bool(raw)
-
-    if key == "LIVE_MAX_CONTRACTS_PER_TRADE":
-        return parse_int(raw, min_value=1)
-
-    if key == "LIVE_ALLOWED_SYMBOLS":
-        return parse_symbols(raw)
-
-    if key == "LIVE_REQUIRE_KILL_SWITCH_OFF":
-        return parse_bool(raw)
-
     if key == "ORDER_HISTORY_LOOKBACK_DAYS":
         return parse_int(raw, min_value=1)
 
@@ -427,17 +409,6 @@ def coerce(key: str, raw: Any) -> Any:
 
     if key == "TOPSTEP_REALTIME_POLL_SECONDS":
         return parse_int(raw, min_value=1)
-
-    if key == "TOPSTEP_EXECUTION_CONFIRM":
-        text = (str(raw) if raw is not None else "").strip()
-        if not text:
-            return "disabled"
-        if text not in {"disabled", "DEMO_ONLY", "LIVE_CONFIRMED"}:
-            raise SettingsValidationError(
-                "TOPSTEP_EXECUTION_CONFIRM must be 'disabled', 'DEMO_ONLY', "
-                "or 'LIVE_CONFIRMED'"
-            )
-        return text
 
     if key == "ADMIN_USERNAME":
         text = (str(raw) if raw is not None else "").strip()
@@ -479,6 +450,7 @@ _KEY_TO_ATTR: dict[str, str] = {
     "SELECTED_ACCOUNT_ID": "selected_account_id",
     "TRADINGVIEW_WEBHOOK_SECRET": "webhook_secret",
     "ALLOWED_SYMBOLS": "allowed_symbols",
+    "ALLOWED_SYMBOLS_ARMED": "allowed_symbols_armed",
     "MAX_CONTRACTS_PER_TRADE": "max_contracts_per_trade",
     "STRATEGY_MANAGED_RISK": "strategy_managed_risk",
     "FIXED_CONTRACTS_PER_TRADE": "fixed_contracts_per_trade",
@@ -497,15 +469,6 @@ _KEY_TO_ATTR: dict[str, str] = {
     "TOPSTEP_WS_URL": "topstep_ws_url",
     "TOPSTEP_TOKEN": "topstep_token",
     "TOPSTEP_TOKEN_EXPIRES_AT": "topstep_token_expires_at",
-    "ENABLE_TOPSTEP_ORDER_DRY_RUN": "enable_topstep_order_dry_run",
-    "ENABLE_TOPSTEP_ORDER_EXECUTION": "enable_topstep_order_execution",
-    "TOPSTEP_EXECUTION_CONFIRM": "topstep_execution_confirm",
-    "ENABLE_LIVE_TRADING": "enable_live_trading",
-    "LIVE_TRADING_CONFIRM": "live_trading_confirm",
-    "LIVE_TRADING_ACCOUNT_ACK": "live_trading_account_ack",
-    "LIVE_MAX_CONTRACTS_PER_TRADE": "live_max_contracts_per_trade",
-    "LIVE_ALLOWED_SYMBOLS": "live_allowed_symbols",
-    "LIVE_REQUIRE_KILL_SWITCH_OFF": "live_require_kill_switch_off",
     "ORDER_HISTORY_LOOKBACK_DAYS": "order_history_lookback_days",
     "ORDER_HISTORY_LIMIT": "order_history_limit",
     "ENABLE_TOPSTEP_REALTIME": "enable_topstep_realtime",
@@ -618,12 +581,54 @@ class SettingsStore:
         """For every managed key, if it's missing from SQLite, write the
         current env-driven value. Then overlay all stored values back
         onto `settings` so runtime reflects what the dashboard last
-        saved."""
+        saved.
+
+        Env values are coerced before being written — a stale `.env`
+        carrying a value the new schema rejects (e.g. a pre-collapse
+        ``EXECUTION_MODE=paper`` after the rework) is logged as a
+        WARNING and skipped, leaving the model's Pydantic default in
+        place. This prevents a stale env from poisoning a freshly
+        bootstrapped database.
+        """
+        import logging as _logging
+        log = _logging.getLogger("signalbridge.settings_store")
+        # Safe-fallback values used when an env-supplied default fails
+        # the new schema (typically a pre-collapse value like
+        # EXECUTION_MODE=paper). Used for both the SQLite write and the
+        # in-memory Settings overwrite so the rest of the app never
+        # sees a stale-env value at runtime.
+        _SAFE_FALLBACKS = {
+            "EXECUTION_MODE": "off",
+            "BROKER_PROVIDER": "topstep",
+        }
         for key in MANAGED_KEYS:
             stored = self.get_setting(key)
             if stored is None:
                 env_value = _read_settings_attr(settings, key)
-                self.set_setting(key, serialize(key, env_value))
+                try:
+                    coerced_env = coerce(key, env_value)
+                except SettingsValidationError as exc:
+                    fallback = _SAFE_FALLBACKS.get(key)
+                    if fallback is None:
+                        log.warning(
+                            "env value for %s is invalid under the "
+                            "current schema (%s) — skipping bootstrap. "
+                            "Update .env to fix.",
+                            key,
+                            exc,
+                        )
+                        continue
+                    log.warning(
+                        "env value for %s is invalid under the current "
+                        "schema (%s) — substituting safe default %r and "
+                        "persisting. Update .env to fix.",
+                        key,
+                        exc,
+                        fallback,
+                    )
+                    coerced_env = coerce(key, fallback)
+                self.set_setting(key, serialize(key, coerced_env))
+                _write_settings_attr(settings, key, coerced_env)
                 continue
             # Already in SQLite — overlay onto the live Settings object.
             try:
@@ -640,11 +645,20 @@ class SettingsStore:
         when the value can be honored without a restart, False if the
         change is persisted but a restart is needed for full effect."""
         _write_settings_attr(settings, key, value)
-        # Update the legacy `broker` mirror so resolved_provider stays
-        # consistent if anyone reads it.
-        if key == "BROKER_PROVIDER":
-            settings.broker = value
         return key in RUNTIME_APPLICABLE
+
+
+def detect_legacy_collapsed_keys(store: "SettingsStore") -> list[str]:
+    """Return any pre-collapse keys still present in the SQLite settings
+    table.
+
+    Used by the boot-time schema check (``app.main.create_app``). When
+    the list is non-empty the operator is running against a database
+    that was bootstrapped against the pre-collapse model — the safe
+    move is to refuse to boot and tell them to delete the database.
+    """
+    stored = store.get_all_settings()
+    return sorted(key for key in COLLAPSED_LEGACY_KEYS if key in stored)
 
 
 def webhook_secret_preview(secret: str) -> str:

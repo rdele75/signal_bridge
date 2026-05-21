@@ -86,16 +86,23 @@ class Settings(BaseModel):
     app_host: str = Field(default_factory=lambda: os.getenv("APP_HOST", "127.0.0.1"))
     app_port: int = Field(default_factory=lambda: _int("APP_PORT", 8000))
 
+    # Execution state. Three values:
+    #   off    — execution disengaged; signals are journaled but no orders
+    #            submit. (Risk checks still run, kill switch is irrelevant.)
+    #   test   — orders are built and validated against ProjectX schema
+    #            but NOT POSTed. Used for smoke-testing plumbing.
+    #   armed  — orders submit to ProjectX against the selected Topstep
+    #            account. Kill switch / canTrade / armed-symbol allowlist
+    #            apply.
     execution_mode: str = Field(
-        default_factory=lambda: os.getenv("EXECUTION_MODE", "paper").lower()
+        default_factory=lambda: os.getenv("EXECUTION_MODE", "off").lower()
     )
-    # `broker_provider` is the canonical selector. `broker` is kept for
-    # backwards compatibility — if `broker_provider` is unset, signal_router
-    # falls back to `broker`. Both default to "paper".
+    # Pinned to "topstep" — the only supported adapter post-collapse.
+    # The setting is kept for clarity in /system pages and for any
+    # future multi-provider work; coerce() rejects every other value.
     broker_provider: str = Field(
-        default_factory=lambda: os.getenv("BROKER_PROVIDER", "").lower()
+        default_factory=lambda: os.getenv("BROKER_PROVIDER", "topstep").lower()
     )
-    broker: str = Field(default_factory=lambda: os.getenv("BROKER", "paper").lower())
 
     webhook_secret: str = Field(
         default_factory=lambda: os.getenv(
@@ -109,6 +116,10 @@ class Settings(BaseModel):
         )
     )
 
+    # Hard cap on contracts per trade. Applied uniformly across Test
+    # and Armed states; the risk engine rejects signals that exceed it
+    # before the broker is touched. There is no separate live cap
+    # post-collapse — one number, one place.
     max_contracts_per_trade: int = Field(
         default_factory=lambda: _int("MAX_CONTRACTS_PER_TRADE", 1)
     )
@@ -169,60 +180,14 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("TOPSTEP_TOKEN_EXPIRES_AT", "")
     )
 
-    # Topstep order routing safety switches. By default the adapter only
-    # builds dry-run order previews — nothing reaches /api/Order/place.
-    # To enable demo/sim execution the operator must also set
-    # TOPSTEP_EXECUTION_CONFIRM=DEMO_ONLY, EXECUTION_MODE=demo, and
-    # BROKER_PROVIDER=topstep. Live/funded execution stays blocked.
-    enable_topstep_order_dry_run: bool = Field(
-        default_factory=lambda: _bool("ENABLE_TOPSTEP_ORDER_DRY_RUN", True)
-    )
-    enable_topstep_order_execution: bool = Field(
-        default_factory=lambda: _bool("ENABLE_TOPSTEP_ORDER_EXECUTION", False)
-    )
-    topstep_execution_confirm: str = Field(
-        default_factory=lambda: os.getenv(
-            "TOPSTEP_EXECUTION_CONFIRM", "disabled"
-        )
-    )
-    # Live/funded execution master switch. False by default. Flipping
-    # this to True is necessary but not sufficient — every gate below
-    # must also be satisfied (LIVE_TRADING_CONFIRM, LIVE_TRADING_ACCOUNT_ACK,
-    # symbol/contract caps, kill switch off, valid account). The
-    # /api/topstep/live-execution/enable endpoint is the only sanctioned
-    # way to flip every gate together.
-    enable_live_trading: bool = Field(
-        default_factory=lambda: _bool("ENABLE_LIVE_TRADING", False)
-    )
-    # Exact confirmation token. The arm endpoint requires the operator
-    # to type ``I_UNDERSTAND_LIVE_ORDERS`` literally; storing it as a
-    # setting means the runtime check can refuse to submit even if some
-    # other path flipped ``enable_live_trading`` true.
-    live_trading_confirm: str = Field(
-        default_factory=lambda: os.getenv("LIVE_TRADING_CONFIRM", "disabled")
-    )
-    # Operator-acknowledged ownership of the live account. Cleared on
-    # disarm so a re-arm requires a fresh acknowledgement.
-    live_trading_account_ack: bool = Field(
-        default_factory=lambda: _bool("LIVE_TRADING_ACCOUNT_ACK", False)
-    )
-    # Defense-in-depth: a per-live-trade cap that is independent of
-    # MAX_CONTRACTS_PER_TRADE. Live submissions are rejected if either
-    # cap is exceeded.
-    live_max_contracts_per_trade: int = Field(
-        default_factory=lambda: _int("LIVE_MAX_CONTRACTS_PER_TRADE", 1)
-    )
-    # Symbols allowed for live execution. Defaults to micros only, which
-    # match the documented Topstep contract mappings for MES1!/MNQ1!.
-    live_allowed_symbols: List[str] = Field(
+    # Stricter subset of ``allowed_symbols`` applied only when execution
+    # state is ``armed``. Symbols here must also appear in
+    # ``allowed_symbols`` (the general allowlist) — the risk engine
+    # checks both. Defaults to micros only.
+    allowed_symbols_armed: List[str] = Field(
         default_factory=lambda: _csv(
-            "LIVE_ALLOWED_SYMBOLS", ["MES1!", "MNQ1!"]
+            "ALLOWED_SYMBOLS_ARMED", ["MES1!", "MNQ1!"]
         )
-    )
-    # When true, the kill switch must be off before live execution will
-    # be honored. Defaults true (defense in depth).
-    live_require_kill_switch_off: bool = Field(
-        default_factory=lambda: _bool("LIVE_REQUIRE_KILL_SWITCH_OFF", True)
     )
 
     # Order history defaults used by /api/broker/order-history when the
@@ -325,24 +290,21 @@ class Settings(BaseModel):
 
     @property
     def resolved_provider(self) -> str:
-        """The provider to actually use. Prefers BROKER_PROVIDER, falls back
-        to BROKER (legacy), defaults to 'paper'."""
-        return (self.broker_provider or self.broker or "paper").lower()
+        """The active broker provider. Post-collapse this is always
+        ``topstep`` — the property is kept so existing callers don't
+        need to be rewritten."""
+        return (self.broker_provider or "topstep").lower()
 
     @property
     def resolved_account_id(self) -> str:
-        """The selected account id for the active provider.
+        """The selected Topstep account id.
 
-        Prefers SELECTED_ACCOUNT_ID. Otherwise falls back to the
-        per-provider account id (TOPSTEP_ACCOUNT_ID) or the paper default
-        'PAPER-001'.
-        """
+        Prefers SELECTED_ACCOUNT_ID; falls back to TOPSTEP_ACCOUNT_ID.
+        Empty string when neither is set — the dashboard surfaces that
+        as 'no account selected' and the Armed gate refuses to submit."""
         if self.selected_account_id:
             return self.selected_account_id
-        provider = self.resolved_provider
-        if provider == "topstep":
-            return self.topstep_account_id or ""
-        return "PAPER-001"
+        return self.topstep_account_id or ""
 
     @property
     def symbols_map_abs_path(self) -> Path:

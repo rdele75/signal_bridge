@@ -395,7 +395,12 @@ class Journal:
             row = cur.fetchone()
             return dict(row) if row else None
 
-    def count_today(self, *, decision: Optional[str] = None) -> int:
+    def count_today(
+        self,
+        *,
+        decision: Optional[str] = None,
+        execution_mode: Optional[str] = None,
+    ) -> int:
         # ``received_at`` is stored in UTC. Use the operator-local
         # trading-day window so this count matches the daily-PnL bucket.
         start_utc, end_utc = self._today_utc_window()
@@ -408,6 +413,9 @@ class Journal:
             if decision is not None:
                 sql += " AND decision = ?"
                 params.append(decision)
+            if execution_mode is not None:
+                sql += " AND execution_mode = ?"
+                params.append(execution_mode)
             cur = conn.execute(sql, params)
             return int(cur.fetchone()["c"])
 
