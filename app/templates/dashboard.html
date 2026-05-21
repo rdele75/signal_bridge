@@ -545,18 +545,43 @@
     }
 
     // Apply lifecycle:
-    //   click → add .execution-loading (border-slide pulse) + disable
-    //           button via setBusy → POST → wait for BOTH the response
-    //           and a 600ms floor (no flicker on instant responses) →
-    //           remove .execution-loading + re-enable button → on
-    //           success, refresh the badge inline.
+    //   click → pick a directional class based on from/to mode
+    //           (apply-to-armed / apply-to-safe / apply-reapply) +
+    //           disable button via setBusy → POST → wait for BOTH the
+    //           response and a 1000ms floor (operators always see the
+    //           full center↔edge travel) → drop the animation class +
+    //           re-enable button → on success, refresh the badge inline.
+    // On error: yank the animation immediately, flash a red outline on
+    // the card for ~150ms, and surface the inline message.
     // Rapid double-click is blocked by setBusy(true) disabling the
     // submit button; second click never reaches applyMode.
-    // 600ms reads as a deliberate "this is doing something" pulse;
-    // 300ms read as a flicker. Matches the CSS keyframe duration so
-    // the operator sees one complete grow-and-retract cycle even on
-    // an instant response.
-    var APPLY_MIN_DURATION_MS = 600;
+    var APPLY_MIN_DURATION_MS = 1000;
+    var APPLY_ANIM_CLASSES = [
+      'apply-to-armed', 'apply-to-safe', 'apply-reapply', 'reapply-armed',
+    ];
+
+    function clearApplyAnim() {
+      APPLY_ANIM_CLASSES.forEach(function (c) { card.classList.remove(c); });
+    }
+
+    function pickApplyAnimClass(fromMode, toMode) {
+      if (toMode === fromMode) {
+        return toMode === 'armed' ? ['apply-reapply', 'reapply-armed']
+                                  : ['apply-reapply'];
+      }
+      if (toMode === 'armed') return ['apply-to-armed'];
+      return ['apply-to-safe'];
+    }
+
+    function flashApplyError() {
+      card.classList.remove('apply-error-flash');
+      // Force reflow so the animation restarts on rapid repeats.
+      void card.offsetWidth;
+      card.classList.add('apply-error-flash');
+      window.setTimeout(function () {
+        card.classList.remove('apply-error-flash');
+      }, 200);
+    }
 
     // Swap the visible mode label synchronously so any subsequent
     // success cue (check icon, armed-enter flash) lands on the NEW
@@ -583,26 +608,42 @@
     function applyMode(mode) {
       setBusy(true);
       clearFeedback();
-      card.classList.add('execution-loading');
+      var fromMode = card.dataset.executionMode || 'off';
+      var animClasses = pickApplyAnimClass(fromMode, mode);
+      clearApplyAnim();
+      animClasses.forEach(function (c) { card.classList.add(c); });
       var minDelay = new Promise(function (resolve) {
         window.setTimeout(resolve, APPLY_MIN_DURATION_MS);
       });
       var path = '/api/execution/' + mode;
-      var req = fetch(path, { method: 'POST', credentials: 'same-origin' })
+      function handleError(reason, rawBody) {
+        // Errors snap the animation back immediately — don't wait for the
+        // 1000ms floor. Flash the red outline + surface the inline message.
+        clearApplyAnim();
+        setBusy(false);
+        flashApplyError();
+        showFeedback('Failed: ' + reason, 'bad', rawBody);
+        if (modeSelect) modeSelect.value = card.dataset.executionMode || 'off';
+      }
+      return fetch(path, { method: 'POST', credentials: 'same-origin' })
         .then(function (r) {
           return r.json().then(function (body) {
             return { ok: r.ok, body: body };
           });
-        });
-      function finalize() {
-        card.classList.remove('execution-loading');
-        setBusy(false);
-      }
-      return Promise.all([req, minDelay])
-        .then(function (vals) {
-          finalize();
-          var resp = vals[0];
-          if (resp.ok && resp.body && resp.body.ok) {
+        })
+        .then(function (resp) {
+          if (!(resp.ok && resp.body && resp.body.ok)) {
+            var reason = (resp.body && (resp.body.message || resp.body.status))
+              || 'apply failed';
+            handleError(reason, resp.body);
+            return;
+          }
+          // Success: hold the animation until the 1000ms floor so the
+          // operator always sees the full center↔edge travel even on an
+          // instant response.
+          return minDelay.then(function () {
+            clearApplyAnim();
+            setBusy(false);
             // Order matters: update the visible label FIRST, then apply
             // setState (which adds the check ::before and armed-enter
             // flash). Otherwise the check briefly renders next to the
@@ -611,18 +652,10 @@
             setState(mode);
             card.dataset.executionMode = mode;
             refreshBadgeForMode(mode);
-            return;
-          }
-          var reason = (resp.body && (resp.body.message || resp.body.status))
-            || 'apply failed';
-          showFeedback('Failed: ' + reason, 'bad', resp.body);
-          // Revert dropdown to the server's actual state.
-          if (modeSelect) modeSelect.value = card.dataset.executionMode || 'off';
+          });
         })
         .catch(function (err) {
-          finalize();
-          showFeedback('Failed: ' + err, 'bad', null);
-          if (modeSelect) modeSelect.value = card.dataset.executionMode || 'off';
+          handleError(String(err), null);
         });
     }
 
