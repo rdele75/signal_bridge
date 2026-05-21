@@ -1367,7 +1367,11 @@ details.collapsible > summary:hover h3 { color: var(--accent); }
   background: var(--accent);
   box-shadow: 0 0 8px rgba(124, 140, 255, 0.55);
   z-index: 2;
-  animation: execution-loading-slide 1.2s ease-in-out infinite;
+  /* 0.6s matches APPLY_MIN_DURATION_MS in dashboard.html so even an
+     instant response shows one complete grow-and-retract pulse. Longer
+     responses keep cycling. Was 1.2s when the min was 300ms — at that
+     ratio only ~25% of one cycle played, reading as a flicker. */
+  animation: execution-loading-slide 0.6s ease-in-out infinite;
 }
 .execution-card.execution-loading::before { top: 0; }
 .execution-card.execution-loading::after  { bottom: 0; }

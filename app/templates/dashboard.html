@@ -547,12 +547,16 @@
     // Apply lifecycle:
     //   click → add .execution-loading (border-slide pulse) + disable
     //           button via setBusy → POST → wait for BOTH the response
-    //           and a 300ms floor (no flicker on instant responses) →
+    //           and a 600ms floor (no flicker on instant responses) →
     //           remove .execution-loading + re-enable button → on
     //           success, refresh the badge inline.
     // Rapid double-click is blocked by setBusy(true) disabling the
     // submit button; second click never reaches applyMode.
-    var APPLY_MIN_DURATION_MS = 300;
+    // 600ms reads as a deliberate "this is doing something" pulse;
+    // 300ms read as a flicker. Matches the CSS keyframe duration so
+    // the operator sees one complete grow-and-retract cycle even on
+    // an instant response.
+    var APPLY_MIN_DURATION_MS = 600;
 
     // Swap the visible mode label synchronously so any subsequent
     // success cue (check icon, armed-enter flash) lands on the NEW
