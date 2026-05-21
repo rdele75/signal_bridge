@@ -144,8 +144,18 @@ def dashboard_summary(
     broker: BrokerBase,
 ) -> dict[str, Any]:
     open_positions = journal.list_open_positions()
-    accepted_today = journal.count_today(decision="accepted")
-    rejected_today = journal.count_today(decision="rejected")
+    # Post-collapse: dashboard stat cards reflect ONLY signals that
+    # were submitted in Armed state (real Topstep orders). Test fills
+    # land in the journal too but stay out of the dashboard summary
+    # so the operator's "today" view doesn't mix plumbing tests with
+    # production activity. The journal-wide counts remain available
+    # on /metrics and /journal.
+    accepted_today = journal.count_today(
+        decision="accepted", execution_mode="armed"
+    )
+    rejected_today = journal.count_today(
+        decision="rejected", execution_mode="armed"
+    )
     last_signal = journal.latest_signal()
     last_rejection = journal.latest_signal(decision="rejected")
     daily_pnl = journal.get_daily_pnl()
@@ -441,12 +451,7 @@ def past_orders_summary(
         }
 
     if broker_ok and not broker_rows:
-        if provider == "topstep":
-            message = "No broker orders yet."
-        elif provider == "paper":
-            message = "No past orders yet."
-        else:
-            message = "No broker orders yet."
+        message = "No broker orders yet."
         return {
             "rows": [],
             "source": f"broker_{provider}" if provider else "broker",
@@ -677,7 +682,45 @@ def _account_view(account: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]
         "balance": account.get("balance"),
         "can_trade": account.get("can_trade"),
         "is_visible": account.get("is_visible"),
+        "is_funded": _classify_funded(account),
     }
+
+
+# Substrings (case-insensitive) that, if present in the account name,
+# indicate a non-funded account. ProjectX doesn't expose a structured
+# "funded" flag on /api/Account/search, so a heuristic on the name is
+# the most reliable signal available today. The dashboard surfaces an
+# explicit "unknown" badge when we can't classify, so the operator
+# always sees confirmation of what they're trading even when the
+# heuristic abstains.
+_NON_FUNDED_NAME_HINTS: tuple[str, ...] = (
+    "PRACTICE",
+    "EVAL",
+    "TRIAL",
+    "DEMO",
+    "SIM",
+    "COMBINE",
+    "EXPRESS",
+)
+
+
+def _classify_funded(account: dict[str, Any]) -> Optional[bool]:
+    """Best-effort 'is this a funded account?' classification.
+
+    Returns ``True`` when the account name clearly does NOT match any
+    practice/eval/trial keyword; ``False`` when it does; ``None`` when
+    we have nothing to go on (no name, no usable hints). Phase 4 polish
+    should swap this for a real ProjectX field if one becomes
+    available.
+    """
+    name = account.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    upper = name.upper()
+    for hint in _NON_FUNDED_NAME_HINTS:
+        if hint in upper:
+            return False
+    return True
 
 
 def broker_status_payload(
@@ -711,6 +754,9 @@ def broker_status_payload(
     balance = selected_account.get("balance") if selected_account else None
     can_trade = selected_account.get("can_trade") if selected_account else None
     is_visible = selected_account.get("is_visible") if selected_account else None
+    selected_account_is_funded = (
+        selected_account.get("is_funded") if selected_account else None
+    )
 
     positions_resp = _safe_get_positions(broker)
     orders_resp = _safe_get_orders(broker)
@@ -727,6 +773,7 @@ def broker_status_payload(
         "selected_account_id": settings.resolved_account_id or None,
         "selected_account_name": selected_account_name,
         "selected_account": selected_account,
+        "selected_account_is_funded": selected_account_is_funded,
         "broker_connected": bool(probe.get("ok")),
         "broker_message": probe.get("message", ""),
         "not_implemented": bool(probe.get("not_implemented")),
@@ -751,15 +798,11 @@ def broker_status_payload(
         "open_orders_count": open_orders_count,
         "orders_not_implemented": bool(orders_resp.get("not_implemented")),
         "restart_required": settings.resolved_provider != broker.provider,
-        # Topstep safety / execution flags (None when the active
-        # adapter is something else). Surfaced so the dashboard can
-        # explain exactly why an order would or wouldn't be submitted.
-        "enable_topstep_order_dry_run": settings.enable_topstep_order_dry_run,
-        "enable_topstep_order_execution": (
-            settings.enable_topstep_order_execution
-        ),
-        "topstep_execution_confirm": settings.topstep_execution_confirm,
-        "enable_live_trading": settings.enable_live_trading,
+        # Execution state and the structural caps. The dashboard JS
+        # consumes these to render the execution card and decide which
+        # buttons to expose.
+        "execution_state": (settings.execution_mode or "off").lower(),
+        "allowed_symbols_armed": list(settings.allowed_symbols_armed),
         # Risk sizing knobs so the dashboard/JS can render which mode
         # is active and what the hard cap is.
         "strategy_managed_risk": settings.strategy_managed_risk,
