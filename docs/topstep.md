@@ -1,8 +1,8 @@
 # Topstep / TopstepX integration
 
 SignalBridge talks to Topstep through the
-[**ProjectX**](https://www.topstepx.com/) REST API. Three layers are
-wired up — only the first is on by default:
+[**ProjectX**](https://www.topstepx.com/) REST API. Four layers are
+wired up — only the first two are on by default:
 
 | Layer                                  | Default | Notes |
 |----------------------------------------|---------|-------|
@@ -11,9 +11,12 @@ wired up — only the first is on by default:
 | Demo/sim market-order *execution* (real POST `/api/Order/place`) | **off** | gated by four safety switches |
 | Live/funded market-order *execution* (real POST `/api/Order/place`) | **off** | gated by every demo switch + four additional live-only gates |
 
-Bracket orders, flatten/cancel via REST, and WebSocket streams are
-**not implemented** in this build. Both demo and live single-leg market
-orders are routable behind their respective gates.
+Flatten and cancel are wired through REST too: the Dashboard's
+*Flatten All Positions* button calls `flatten_position()` which posts
+to `/api/Position/closeContract` per leg, and the order-cancel helper
+posts to `/api/Order/cancel`. Bracket orders (OCO / bracketed
+stop+target) and the SignalR user hub remain on the TODO list — see
+the **SignalR user hub (TODO)** section below.
 
 ## Credentials
 
@@ -321,21 +324,24 @@ Behavior under each combination:
 
 ### Arming demo execution from the dashboard
 
-`/settings/broker` includes a **Topstep Demo Execution** card showing
-the current state plus arm/disarm forms. The card surfaces every
-safety switch (`BROKER_PROVIDER`, `EXECUTION_MODE`,
-`ENABLE_TOPSTEP_ORDER_EXECUTION`, `TOPSTEP_EXECUTION_CONFIRM`,
-`ENABLE_LIVE_TRADING`, selected account id, account name, `canTrade`)
-and labels the state as one of:
+The **Dashboard Execution card** (`/`) owns mode selection and the
+arming flow. The card surfaces every safety switch
+(`BROKER_PROVIDER`, `EXECUTION_MODE`, `ENABLE_TOPSTEP_ORDER_EXECUTION`,
+`TOPSTEP_EXECUTION_CONFIRM`, `ENABLE_LIVE_TRADING`, selected account
+id, account name, `canTrade`) and labels the state as one of:
 
-- **Dry Run Active** — default; webhooks build previews and never POST.
+- **Dry Run Active** / **Execution Test** — default; webhooks build
+  previews and never POST.
 - **Demo Execution Armed** — all preconditions met; demo signals POST
   to `/api/Order/place`.
-- **Live Locked** — `EXECUTION_MODE=live` or `ENABLE_LIVE_TRADING=true`
-  is set somehow; execution is blocked regardless of other switches.
+- **Live Armed** — full live gate stack satisfied; the Execution card
+  shows a warning border.
+- **Live Locked** — `EXECUTION_MODE=live` is set but at least one
+  live-only gate is failing; execution is blocked.
 
-The **Enable Demo Execution** button requires typing `DEMO_ONLY`
-verbatim. It only flips three settings:
+Apply the **demo** mode via the dropdown + Apply button on the
+Dashboard. The handler at `/api/execution/apply-mode` flips three
+settings together:
 
 ```
 ENABLE_TOPSTEP_ORDER_EXECUTION = true
@@ -345,7 +351,7 @@ EXECUTION_MODE                 = demo
 
 It **never** sets `ENABLE_LIVE_TRADING` or `EXECUTION_MODE=live`.
 
-The **Disable Demo Execution** button returns to dry-run by setting
+The **Disengage** button returns to dry-run by setting
 `ENABLE_TOPSTEP_ORDER_EXECUTION=false` and
 `TOPSTEP_EXECUTION_CONFIRM=disabled`. Provider and selected account
 stay where they are.
@@ -431,15 +437,22 @@ label identifying the specific failure.
 
 ### Arming live execution from the dashboard
 
-`/settings/broker` has a **Topstep LIVE Execution** card visually
-distinct from the demo card (warning styling, red border). To arm:
+The **Dashboard Execution card** (`/`) owns live arming through the
+live-engagement modal. Selecting `live` in the mode dropdown and
+clicking Apply opens the modal. To arm:
 
-1. Confirm the selected Topstep account is the funded account.
-2. Type `I_UNDERSTAND_LIVE_ORDERS` verbatim into the confirmation field.
+1. Confirm the selected Topstep account is the funded account
+   (the modal shows the masked account id and name).
+2. Type `engage` into the confirmation field (case-insensitive on the
+   UI side; the server still stores the long
+   `I_UNDERSTAND_LIVE_ORDERS` token).
 3. Tick the account-acknowledgement checkbox.
-4. Click **Arm LIVE execution**.
+4. Click **Engage Live Execution**.
 
-The arm action flips:
+The Execution card then runs an engagement animation while
+`/api/topstep/live-execution/verify` + `/api/topstep/live-execution/enable`
+settle. On success the card flips to **Live Armed** (warning border,
+red glow). The arm action flips:
 
 ```
 EXECUTION_MODE                 = live
@@ -580,13 +593,18 @@ Secrets are never returned in full.
 | `SELECTED_ACCOUNT_ID`             | *(empty)*                     | global override for the active account |
 | `TOPSTEP_ENV`                     | `demo`                        | `live` is blocked |
 | `TOPSTEP_BASE_URL`                | `https://api.topstepx.com`    | REST base URL |
-| `TOPSTEP_WS_URL`                  | `https://rtc.topstepx.com`    | reserved for a future phase |
+| `TOPSTEP_WS_URL`                  | `https://rtc.topstepx.com`    | SignalR user hub URL; client not wired yet (see SignalR TODO) |
 | `TOPSTEP_TOKEN`                   | *(empty, written by adapter)* | cached JWT; masked everywhere |
 | `TOPSTEP_TOKEN_EXPIRES_AT`        | *(empty, written by adapter)* | ISO-8601 expiry |
 | `ENABLE_TOPSTEP_ORDER_DRY_RUN`    | `true`                        | builds previews, never submits |
-| `ENABLE_TOPSTEP_ORDER_EXECUTION`  | `false`                       | required for demo submission |
-| `TOPSTEP_EXECUTION_CONFIRM`       | `disabled`                    | must be `DEMO_ONLY` to submit |
-| `ENABLE_LIVE_TRADING`             | `false`                       | locked; setting `true` is rejected |
+| `ENABLE_TOPSTEP_ORDER_EXECUTION`  | `false`                       | required for demo or live submission |
+| `TOPSTEP_EXECUTION_CONFIRM`       | `disabled`                    | `DEMO_ONLY` for demo, `LIVE_CONFIRMED` for live — flipped by the arming endpoints |
+| `ENABLE_LIVE_TRADING`             | `false`                       | live master switch; flipped to `true` only by `POST /api/topstep/live-execution/enable` |
+| `LIVE_TRADING_CONFIRM`            | `disabled`                    | live arming token (`I_UNDERSTAND_LIVE_ORDERS`); flipped by the live-arming endpoint |
+| `LIVE_TRADING_ACCOUNT_ACK`        | `false`                       | operator-acknowledged ownership of the funded account |
+| `LIVE_MAX_CONTRACTS_PER_TRADE`    | `1`                           | per-live-trade cap; **no UI surface today** — verify the SQLite value before arming live |
+| `LIVE_ALLOWED_SYMBOLS`            | `MES1!,MNQ1!`                 | symbols accepted for live submissions; **no UI surface today** |
+| `LIVE_REQUIRE_KILL_SWITCH_OFF`    | `true`                        | when true, kill switch must be off before live submits; **no UI surface today** |
 
 ## Try it locally
 
@@ -598,29 +616,35 @@ Secrets are never returned in full.
 4. Flip `BROKER_PROVIDER=topstep` and restart. Webhooks now dry-run.
    The dashboard shows the built payload but nothing leaves the
    building.
-5. To arm demo/sim execution later, open `/settings/broker`,
-   scroll to **Topstep Demo Execution**, type `DEMO_ONLY` into the
-   confirmation field, and click **Enable Demo Execution**. That
-   flips:
+5. To arm demo/sim execution later, open the Dashboard, change the
+   execution mode dropdown to `demo`, and click **Apply**. That flips:
    - `EXECUTION_MODE=demo`
    - `ENABLE_TOPSTEP_ORDER_EXECUTION=true`
    - `TOPSTEP_EXECUTION_CONFIRM=DEMO_ONLY`
 
-   `ENABLE_LIVE_TRADING` stays false (locked). Click **Disable
-   Demo Execution** to return to dry-run.
+   `ENABLE_LIVE_TRADING` stays false (locked). Click **Disengage** to
+   return to dry-run.
 6. Recommended first demo test: 1 contract of MES (`MES1!`).
+7. To arm live/funded execution, select `live` in the Execution card
+   mode dropdown and complete the live-engagement modal — type
+   `engage`, tick the account acknowledgement, click **Engage Live
+   Execution**. The card flips to **Live Armed** and webhooks now
+   route to the funded account.
 
 ## Secrets / safety reminders
 
 - **Never share or commit API keys or tokens.** `.env` is gitignored.
   `TOPSTEP_API_KEY` and `TOPSTEP_TOKEN` are masked in the dashboard
   and in API responses.
-- **Dry-run is the default** Topstep behavior. Demo execution is
-  disabled out of the box and the dashboard arm action requires the
-  `DEMO_ONLY` confirmation token.
-- Live/funded execution stays locked until a future phase. There is
-  no path through the dashboard to enable it in this build, and the
-  arm endpoint refuses if `EXECUTION_MODE=live` or
-  `ENABLE_LIVE_TRADING=true`.
-- The copier, MCP server, bracket orders, and the dashboard overhaul
+- **Dry-run is the default** Topstep behavior. Demo and live execution
+  both require explicit arming through the Dashboard.
+- **Live/funded execution is implemented and is real.** Once the
+  live-engagement flow succeeds, webhooks route to your real Topstep
+  funded account through `/api/Order/place`. Verify
+  `LIVE_MAX_CONTRACTS_PER_TRADE`, `LIVE_ALLOWED_SYMBOLS`, and
+  `LIVE_REQUIRE_KILL_SWITCH_OFF` directly in SQLite before arming —
+  none has a UI edit surface today (see
+  [`docs/operational_audit_2026-05-21.md`](operational_audit_2026-05-21.md)
+  Section 1 critical findings 1–3).
+- The copier, MCP server, bracket orders, and the SignalR user hub
   are explicitly out of scope here.
