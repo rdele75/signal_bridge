@@ -30,3 +30,4 @@ runtime/*.pid
 .idea/
 .vscode/
 *.swp
+signalbridge.db
