@@ -41,6 +41,36 @@ log = logging.getLogger("signalbridge.webhook")
 # downstream (e.g. ``missing_or_invalid_price`` from the paper broker).
 REQUIRED_FIELDS = ("secret", "symbol", "action")
 
+# Timeframe keys accepted on the alert payload, in priority order.
+# ``timeframe`` is the historical SignalBridge key; ``interval`` matches
+# TradingView's native ``{{interval}}`` placeholder; ``tf`` is a common
+# shorthand operators use in hand-rolled alert templates. The first
+# non-empty, normalisable value wins so operators don't have to pick
+# one spelling.
+_TIMEFRAME_KEYS = ("timeframe", "interval", "tf")
+
+
+def extract_timeframe(payload: dict[str, Any]) -> Optional[str]:
+    """Read the timeframe from a webhook payload, accepting common
+    field-name variants.
+
+    Returns the first non-empty value found among the supported keys
+    (``timeframe`` / ``interval`` / ``tf``), normalised via
+    ``normalize_timeframe``. Returns ``None`` if no key has a usable
+    value — the risk-engine timeframe-lock decision treats ``None`` as
+    a missing-timeframe rejection (with an actionable hint).
+    """
+    if not isinstance(payload, dict):
+        return None
+    for key in _TIMEFRAME_KEYS:
+        raw = payload.get(key)
+        if raw is None or raw == "":
+            continue
+        normalized = normalize_timeframe(raw)
+        if normalized:
+            return normalized
+    return None
+
 
 class WebhookHandler:
     def __init__(
@@ -280,7 +310,11 @@ class WebhookHandler:
             price=price,
             order_id=alert.order_id,
             comment=alert.comment,
-            timeframe=normalize_timeframe(alert.timeframe),
+            # Read the timeframe from the raw payload so we accept
+            # operator-friendly aliases (interval / tf) in addition to
+            # the strict ``timeframe`` field the Pydantic alert model
+            # exposes.
+            timeframe=extract_timeframe(raw_payload),
             alert_contracts=alert_contracts_parsed,
             strategy_managed_risk=strategy_managed,
             raw=raw_payload,
@@ -406,7 +440,7 @@ class WebhookHandler:
             price=parsed.price,
             order_id=parsed.order_id,
             comment=parsed.comment,
-            timeframe=normalize_timeframe(raw_payload.get("timeframe")),
+            timeframe=extract_timeframe(raw_payload),
             alert_contracts=parsed.qty,
             strategy_managed_risk=strategy_managed,
             raw=raw_payload,
@@ -479,7 +513,7 @@ class WebhookHandler:
             price=parsed.price,
             order_id=parsed.order_id,
             comment=parsed.comment,
-            timeframe=normalize_timeframe(raw_payload.get("timeframe")),
+            timeframe=extract_timeframe(raw_payload),
             alert_contracts=parsed.qty,
             strategy_managed_risk=bool(self.settings.strategy_managed_risk),
             raw=raw_payload,
@@ -550,7 +584,7 @@ class WebhookHandler:
                 if self.symbol_map is not None
                 else parsed.symbol
             ),
-            timeframe=normalize_timeframe(raw_payload.get("timeframe")),
+            timeframe=extract_timeframe(raw_payload),
         )
         log.info(
             "XIZNIT stop_update_received symbol=%s stop=%s",
@@ -598,6 +632,14 @@ class WebhookHandler:
     ) -> WebhookResponse:
         decision = self.risk.evaluate(signal)
         if not decision.accepted:
+            # Compose the journal / response rejection_reason as
+            # ``<reason>: <detail>`` when the risk engine attached a
+            # hint. Tests that match the bare reason should use
+            # ``startswith`` — this keeps a single column carrying
+            # both the machine-readable label and the operator hint.
+            composed_reason = decision.reason or "rejected"
+            if decision.detail:
+                composed_reason = f"{composed_reason}: {decision.detail}"
             self.journal.record_signal(
                 source=signal.source,
                 strategy=signal.strategy,
@@ -608,7 +650,7 @@ class WebhookHandler:
                 order_id=signal.order_id,
                 raw_payload=raw_payload,
                 decision="rejected",
-                rejection_reason=decision.reason,
+                rejection_reason=composed_reason,
                 execution_mode=self.broker.execution_mode,
                 execution_result=self._risk_sizing_envelope(
                     signal, extra=extra_execution_metadata
@@ -621,12 +663,12 @@ class WebhookHandler:
                 "REJECTED symbol=%s action=%s reason=%s",
                 signal.symbol,
                 signal.action,
-                decision.reason,
+                composed_reason,
             )
             return WebhookResponse(
                 accepted=False,
                 decision="rejected",
-                rejection_reason=decision.reason,
+                rejection_reason=composed_reason,
             )
 
         if isinstance(self.broker, TopstepBroker):

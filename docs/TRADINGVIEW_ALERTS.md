@@ -231,7 +231,34 @@ will fire the webhook once. Watch `logs/signalbridge.log` and
 
 ---
 
-## 7. Common rejection reasons
+## 7. Timeframe field
+
+When `ENABLE_TIMEFRAME_LOCK=true` (set on the
+[Risk page](risk.md) — *off by default*), every alert must carry a
+timeframe value that matches one of the entries in
+`ALLOWED_TIMEFRAMES`. Otherwise the alert is rejected as
+`missing_timeframe` (or `timeframe_not_allowed`).
+
+**SignalBridge accepts three key names**, in priority order:
+
+| Key | Why it exists | Example |
+| --- | --- | --- |
+| `timeframe` | Historical SignalBridge key. | `"timeframe": "5"` |
+| `interval` | TradingView's native placeholder is `{{interval}}`. **Recommended.** | `"interval": "{{interval}}"` |
+| `tf` | Common shorthand in hand-rolled templates. | `"tf": "5"` |
+
+If multiple keys are present, the leftmost non-empty value wins.
+The recommended spelling for new alerts is **`"interval": "{{interval}}"`**
+— TradingView substitutes the placeholder automatically, and the
+key name matches its own template variable.
+
+If `ENABLE_TIMEFRAME_LOCK=false`, the timeframe field is optional and
+SignalBridge does not enforce a value. Older alerts that predate the
+lock continue to work unchanged.
+
+---
+
+## 8. Common rejection reasons
 
 | Reason | Fix |
 | --- | --- |

@@ -34,6 +34,10 @@ FLAT_ACTIONS = {"EXIT", "COVER"}
 class RiskDecision:
     accepted: bool
     reason: Optional[str] = None
+    # Optional actionable hint for the operator. Composed into the
+    # ``rejection_reason`` in the journal / webhook response when set
+    # so the operator sees *how to fix it*, not just *what failed*.
+    detail: Optional[str] = None
 
 
 def normalize_action(raw_action: str) -> Optional[str]:
@@ -164,7 +168,16 @@ class RiskEngine:
         if s.enable_timeframe_lock:
             incoming = normalize_timeframe(signal.timeframe)
             if incoming is None:
-                return RiskDecision(False, "missing_timeframe")
+                return RiskDecision(
+                    False,
+                    "missing_timeframe",
+                    detail=(
+                        "timeframe required when timeframe lock is "
+                        "enabled — include 'interval' (or 'timeframe' "
+                        "/ 'tf') in the alert JSON, e.g. "
+                        '"interval": "{{interval}}"'
+                    ),
+                )
             allowed = [t for t in (normalize_timeframe(a) for a in s.allowed_timeframes) if t]
             if incoming not in allowed:
                 allowed_str = ",".join(allowed) if allowed else "(empty)"

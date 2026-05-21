@@ -114,10 +114,18 @@ def test_lock_disabled_passes_without_timeframe(tmp_path):
 
 
 def test_lock_enabled_rejects_missing_timeframe(tmp_path):
+    """A missing timeframe is rejected with the bare ``missing_timeframe``
+    reason — the operator-facing hint is attached via ``detail`` and
+    composed into the journal/response by the webhook handler."""
     risk, _ = _build(tmp_path, enable_timeframe_lock=True, allowed_timeframes=["1"])
     d = risk.evaluate(_signal(timeframe=None))
     assert d.accepted is False
     assert d.reason == "missing_timeframe"
+    # The detail spells out which keys the operator should send.
+    assert d.detail is not None
+    assert "interval" in d.detail
+    assert "timeframe" in d.detail
+    assert "tf" in d.detail
 
 
 def test_lock_enabled_accepts_string_one(tmp_path):
@@ -184,7 +192,13 @@ def test_webhook_lock_enabled_rejects_missing(client):
     r = client.post("/webhooks/tradingview", json=payload)
     body = r.json()
     assert body["accepted"] is False
-    assert body["rejection_reason"] == "missing_timeframe"
+    # The webhook composes ``<reason>: <detail>``. ``startswith`` keeps
+    # the machine-readable prefix stable while letting the detail
+    # carry the operator-facing hint.
+    assert body["rejection_reason"].startswith("missing_timeframe"), (
+        body["rejection_reason"]
+    )
+    assert "interval" in body["rejection_reason"]
 
 
 def test_webhook_lock_enabled_accepts_quoted_one(client):
@@ -195,6 +209,69 @@ def test_webhook_lock_enabled_accepts_quoted_one(client):
     )
     body = r.json()
     assert body["accepted"] is True
+
+
+def test_webhook_lock_accepts_interval_field(client):
+    """TradingView's native ``{{interval}}`` placeholder lands in the
+    alert as the ``interval`` key. The webhook must accept it as a
+    timeframe source without the operator having to rename anything."""
+    _enable_lock(client, "5")
+    payload = make_alert(order_id="tf_interval_field", timeframe=None)
+    payload.pop("timeframe", None)
+    payload["interval"] = "5"
+    r = client.post("/webhooks/tradingview", json=payload)
+    body = r.json()
+    assert body["accepted"] is True, body
+
+
+def test_webhook_lock_accepts_tf_field(client):
+    """``tf`` is the common shorthand operators reach for in hand-
+    rolled alert templates — accept it too."""
+    _enable_lock(client, "15")
+    payload = make_alert(order_id="tf_tf_field", timeframe=None)
+    payload.pop("timeframe", None)
+    payload["tf"] = "15"
+    r = client.post("/webhooks/tradingview", json=payload)
+    body = r.json()
+    assert body["accepted"] is True, body
+
+
+def test_webhook_lock_timeframe_priority_first_wins(client):
+    """When multiple keys are present, ``timeframe`` wins (priority
+    order: timeframe > interval > tf). If timeframe is the disallowed
+    value but interval would have been allowed, the alert is
+    rejected — proves priority is honoured."""
+    _enable_lock(client, "5")
+    payload = make_alert(order_id="tf_priority")
+    payload["timeframe"] = "60"   # not in allowed list
+    payload["interval"] = "5"     # would be allowed, but loses
+    payload["tf"] = "5"
+    r = client.post("/webhooks/tradingview", json=payload)
+    body = r.json()
+    assert body["accepted"] is False, body
+    assert "timeframe_not_allowed" in body["rejection_reason"]
+    assert "got 60" in body["rejection_reason"]
+
+
+def test_webhook_lock_falls_through_to_interval_when_timeframe_missing(client):
+    """If ``timeframe`` is absent, ``interval`` becomes the source."""
+    _enable_lock(client, "5")
+    payload = make_alert(order_id="tf_fallback_interval")
+    payload.pop("timeframe", None)
+    payload["interval"] = "5"
+    r = client.post("/webhooks/tradingview", json=payload)
+    assert r.json()["accepted"] is True
+
+
+def test_webhook_lock_falls_through_to_tf_when_others_missing(client):
+    """If both ``timeframe`` and ``interval`` are absent, ``tf`` is
+    used."""
+    _enable_lock(client, "5")
+    payload = make_alert(order_id="tf_fallback_tf")
+    payload.pop("timeframe", None)
+    payload["tf"] = "5"
+    r = client.post("/webhooks/tradingview", json=payload)
+    assert r.json()["accepted"] is True
 
 
 def test_webhook_lock_enabled_accepts_unquoted_one(client):
