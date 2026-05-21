@@ -32,7 +32,7 @@
   <div class="card">
     <div class="card-label">Max contracts / trade</div>
     <div class="card-value lg">{{ risk.max_contracts_per_trade }}</div>
-    <div class="card-sub">hard cap — always enforced</div>
+    <div class="card-sub">hard cap — applies in Test and Armed</div>
   </div>
   <div class="card">
     <div class="card-label">Max open positions</div>
@@ -126,7 +126,7 @@
                name="max_contracts_per_trade"
                value="{{ risk.max_contracts_per_trade }}">
         <p class="muted mt-1">
-          Hard cap. Always enforced, even when the strategy manages sizing.
+          Hard cap. Applied uniformly in Test and Armed states.
         </p>
       </div>
       <div class="form-row">
@@ -176,6 +176,37 @@
         <code>60</code> for 1-hour, <code>D</code> for daily.
       </p>
     </div>
+
+    <h3 class="mt-6">Allowed symbols</h3>
+    <p class="muted mb-4">
+      Two allowlists. The general list is checked in every execution
+      state (Off / Test / Armed). The Armed list is a stricter subset
+      checked only when execution is Armed — its entries must also
+      appear in the general list.
+    </p>
+    <div class="grid grid-2">
+      <div class="form-row">
+        <label for="allowed_symbols">Allowed symbols (all states)</label>
+        <input type="text" id="allowed_symbols" name="allowed_symbols"
+               value="{{ risk.allowed_symbols_csv }}"
+               placeholder="MES1!,MNQ1!,NQ1!,ES1!">
+        <p class="muted mt-1">
+          Comma-separated TradingView tickers. Signals for symbols
+          outside this list are rejected before they reach the broker.
+        </p>
+      </div>
+      <div class="form-row">
+        <label for="allowed_symbols_armed">Allowed symbols when armed</label>
+        <input type="text" id="allowed_symbols_armed" name="allowed_symbols_armed"
+               value="{{ risk.allowed_symbols_armed_csv }}"
+               placeholder="MES1!,MNQ1!">
+        <p class="muted mt-1">
+          Symbols allowed when execution is Armed. Strict subset of the
+          general allowed-symbols list. Default: <code>MES1!,MNQ1!</code>.
+        </p>
+      </div>
+    </div>
+
     <div class="btn-row">
       <button type="submit" class="btn btn-primary">Save risk settings</button>
     </div>
@@ -190,9 +221,13 @@
   <p class="mb-4">Status:
     <span id="ks-status-badge"
           class="badge {{ 'badge-bad' if kill_switch_active else 'badge-good' }}">
-      {{ 'active — all signals blocked' if kill_switch_active
-         else 'off — signals can flow' }}
+      {{ 'active — blocks new Armed orders' if kill_switch_active
+         else 'off — Armed orders can flow' }}
     </span>
+  </p>
+  <p class="muted">
+    The kill switch is only consulted when execution is Armed. Off and
+    Test states ignore it.
   </p>
   <div class="btn-row">
     <button id="btn-ks-enable" class="btn btn-danger">Activate kill switch</button>
@@ -220,16 +255,15 @@
   apply();
 })();
 
-// Apply kill-switch state to the badge + buttons without reloading. The
-// raw JSON output stays visible in the <pre> for debugging.
+// Apply kill-switch state to the badge + buttons without reloading.
 function _applyKsState(active) {
   const badge = document.getElementById('ks-status-badge');
   if (badge) {
     badge.classList.toggle('badge-bad', !!active);
     badge.classList.toggle('badge-good', !active);
     badge.textContent = active
-      ? 'active — all signals blocked'
-      : 'off — signals can flow';
+      ? 'active — blocks new Armed orders'
+      : 'off — Armed orders can flow';
   }
   const btnEnable = document.getElementById('btn-ks-enable');
   const btnDisable = document.getElementById('btn-ks-disable');
@@ -252,8 +286,6 @@ async function call(path) {
 document.getElementById('btn-ks-enable').addEventListener('click', () => call('/api/kill-switch/enable'));
 document.getElementById('btn-ks-disable').addEventListener('click', () => call('/api/kill-switch/disable'));
 
-// The topbar kill-switch button (base.html) dispatches this when it
-// toggles. Mirror the change so this page's badge stays in sync.
 document.addEventListener('signalbridge:kill-switch-change', (ev) => {
   if (ev && ev.detail) _applyKsState(!!ev.detail.active);
 });

@@ -16,6 +16,7 @@
       <thead>
         <tr>
           <th>Time</th>
+          <th>Mode</th>
           <th>Symbol</th>
           <th>Action</th>
           <th class="num">Qty</th>
@@ -23,13 +24,17 @@
           <th>Decision</th>
           <th>Rejection reason</th>
           <th>Order ID</th>
-          <th>Broker</th>
         </tr>
       </thead>
       <tbody>
         {% for s in signals %}
         <tr class="row-{{ s.decision }}">
           <td class="mono muted">{{ s.received_at }}</td>
+          <td>
+            {% set _mode = s.execution_mode or 'off' %}
+            {% set _mode_class = 'badge-good' if _mode == 'armed' else ('badge-info' if _mode == 'test' else 'badge-paper') %}
+            <span class="badge {{ _mode_class }} plain">{{ _mode }}</span>
+          </td>
           <td><strong>{{ s.symbol or '—' }}</strong>{% if s.broker_symbol and s.broker_symbol != s.symbol %} <span class="muted">→ {{ s.broker_symbol }}</span>{% endif %}</td>
           <td>{{ s.action or '—' }}</td>
           <td class="num">{{ s.contracts if s.contracts is not none else '—' }}</td>
@@ -43,11 +48,6 @@
           </td>
           <td class="muted">{{ s.rejection_reason or '' }}</td>
           <td class="mono">{{ s.order_id or '—' }}</td>
-          <td>
-            {% if s.broker_provider %}
-              <span class="badge {{ 'badge-paper' if s.broker_provider == 'paper' else 'badge-warn' }} plain">{{ s.broker_provider }}</span>
-            {% else %}—{% endif %}
-          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -58,6 +58,12 @@
       <div class="mobile-card-row">
         <dl>
           <dt>Time</dt><dd class="mono muted">{{ s.received_at }}</dd>
+          <dt>Mode</dt>
+          <dd>
+            {% set _mode = s.execution_mode or 'off' %}
+            {% set _mode_class = 'badge-good' if _mode == 'armed' else ('badge-info' if _mode == 'test' else 'badge-paper') %}
+            <span class="badge {{ _mode_class }} plain">{{ _mode }}</span>
+          </dd>
           <dt>Symbol</dt>
           <dd>
             <strong>{{ s.symbol or '—' }}</strong>
@@ -80,12 +86,6 @@
             <dt>Reason</dt><dd class="muted">{{ s.rejection_reason }}</dd>
           {% endif %}
           <dt>Order ID</dt><dd class="mono">{{ s.order_id or '—' }}</dd>
-          <dt>Broker</dt>
-          <dd>
-            {% if s.broker_provider %}
-              <span class="badge {{ 'badge-paper' if s.broker_provider == 'paper' else 'badge-warn' }} plain">{{ s.broker_provider }}</span>
-            {% else %}—{% endif %}
-          </dd>
         </dl>
       </div>
     {% endfor %}
@@ -98,7 +98,7 @@
 <section class="section">
   <div class="section-head">
     <h2>Recent closed trades <span class="muted">({{ closed_trades|length }})</span></h2>
-    <span class="hint">paper-mode fills only</span>
+    <span class="hint">populated from Topstep fill reconciliation (todo)</span>
   </div>
   {% if closed_trades %}
   <div class="table-wrap table-scroll hide-on-mobile">

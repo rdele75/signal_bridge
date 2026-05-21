@@ -12,42 +12,8 @@
   </div>
 {% endif %}
 
-{# ---- Execution controls relocation pointer ---- #}
-<section class="card section" id="execution-relocation">
-  <div class="card-row">
-    <div>
-      <div class="card-label">Execution controls</div>
-      <div class="card-value sm">
-        Execution controls moved to <a href="/">Dashboard → Execution card</a>.
-      </div>
-      <div class="card-sub">
-        Mode select, demo/live arming, kill switch, and exit-all live there now.
-      </div>
-    </div>
-    <a href="/" class="btn">Open Dashboard</a>
-  </div>
-</section>
-
-{# ---- Top status cards ---- #}
-<section class="grid grid-2 section">
-  <div class="card">
-    <div class="card-label">Selected broker provider</div>
-    <div class="card-value">
-      {% if configured_provider == 'paper' %}
-        <span class="badge badge-paper plain">{{ configured_provider }}</span>
-      {% else %}
-        <span class="badge badge-warn plain">{{ configured_provider }}</span>
-      {% endif %}
-    </div>
-    <div class="card-sub">
-      {% if restart_required %}
-        active: <code>{{ active_broker_provider }}</code> · <span class="warn">restart to switch</span>
-      {% else %}
-        active adapter
-      {% endif %}
-    </div>
-  </div>
-
+{# ---- Top status card. Execution state lives on the Dashboard. ---- #}
+<section class="section">
   <div class="card">
     <div class="card-label">Broker connection</div>
     <div class="card-value">
@@ -58,6 +24,7 @@
       {% else %}
         <span id="broker-connection-badge" class="badge badge-bad plain">offline</span>
       {% endif %}
+      <span class="badge badge-warn plain ml-1">topstep</span>
     </div>
     <div id="broker-connection-message" class="card-sub">{{ broker_status.broker_message or '—' }}</div>
   </div>
@@ -140,57 +107,44 @@
 {% endif %}
 </div>
 
-{# ---- Broker / execution selection form (account configuration only) ---- #}
+{# ---- Account selection + credentials. Execution state lives on
+       the Dashboard; this form only owns the broker connection. ---- #}
 <section class="card section">
   <details class="collapsible" open>
     <summary class="section-head collapsible-toggle">
-      <h3>Broker / execution selection</h3>
-      <span class="hint">click to expand · broker provider + credentials · saved to SQLite</span>
+      <h3>Topstep account &amp; credentials</h3>
+      <span class="hint">click to expand · saved to SQLite</span>
     </summary>
     <div class="collapsible-body">
       <p class="muted mb-4">
-        Execution mode (paper / demo / live) lives on the
-        <a href="/">Dashboard Execution card</a>. This form is for the
-        broker connection and the selected account only.
+        Execution state (Off / Test / Armed) lives on the
+        <a href="/">Dashboard Execution card</a>. This form configures
+        the Topstep connection and the selected account.
       </p>
       <form method="post" action="/settings/broker" class="form">
-        <div class="grid grid-2">
-          <div class="form-row">
-            <label for="broker_provider">Broker provider</label>
-            <select id="broker_provider" name="broker_provider">
-              {% for p in provider_options %}
-                <option value="{{ p }}" {% if p == configured_provider %}selected{% endif %}>{{ p }}</option>
-              {% endfor %}
-            </select>
-            <p class="muted mt-1">paper executes; topstep is read-only/dry-run.</p>
-          </div>
-          <div class="form-row">
-            <label for="selected_account_id">Selected account ID</label>
-            <select id="selected_account_id" name="selected_account_id" data-account-dropdown>
-              <option value="">— per-provider default —</option>
-              {% if selected_account_id_raw %}
-                <option value="{{ selected_account_id_raw }}" selected>
-                  {{ selected_account_id_raw }} (current)
-                </option>
-              {% endif %}
-            </select>
-            <p class="muted mt-1">
-              Empty → use the per-provider default. Use <em>Fetch accounts</em> below to populate live Topstep accounts.
-              Saving updates <code>SELECTED_ACCOUNT_ID</code> and (for topstep) <code>TOPSTEP_ACCOUNT_ID</code>.
-            </p>
-            {% if configured_provider == 'topstep' and not selected_account_id_raw %}
-              <p class="banner warn mt-1">
-                Connect to Topstep first using the credentials below,
-                then select an account.
-              </p>
+        <div class="form-row">
+          <label for="selected_account_id">Selected account ID</label>
+          <select id="selected_account_id" name="selected_account_id" data-account-dropdown>
+            <option value="">— none —</option>
+            {% if selected_account_id_raw %}
+              <option value="{{ selected_account_id_raw }}" selected>
+                {{ selected_account_id_raw }} (current)
+              </option>
             {% endif %}
-          </div>
+          </select>
+          <p class="muted mt-1">
+            The Topstep account orders will hit when execution is
+            Armed. Use <em>Fetch accounts</em> below to populate the
+            dropdown. Saving updates <code>SELECTED_ACCOUNT_ID</code>
+            and <code>TOPSTEP_ACCOUNT_ID</code> together.
+          </p>
+          {% if not selected_account_id_raw %}
+            <p class="banner warn mt-1">
+              Connect to Topstep first using the credentials below,
+              then fetch and select an account.
+            </p>
+          {% endif %}
         </div>
-
-        {# Execution mode is intentionally hidden here — the dashboard
-           owns the mode toggle. Submitting this form preserves the
-           current mode by sending it back unchanged. #}
-        <input type="hidden" name="execution_mode" value="{{ configured_execution_mode }}" />
 
         <h3 class="mt-6">Topstep / TopstepX (ProjectX) credentials</h3>
         <p class="muted mb-4">
@@ -202,7 +156,7 @@
             <label for="topstep_username">TopstepX username</label>
             <input id="topstep_username" name="topstep_username"
                    type="text" maxlength="256" autocomplete="off"
-                   placeholder="your TopstepX username"
+                   placeholder="your TopstepX login email"
                    value="{{ topstep.username }}" />
           </div>
           <div class="form-row">
@@ -238,12 +192,12 @@
     <span class="hint">probes the loaded adapter</span>
   </div>
   <p class="muted mb-4">
-    Paper always returns <span class="good">ok</span>.
-    Topstep runs a real <code>/api/Auth/loginKey</code> + <code>/api/Account/search</code> against ProjectX —
+    Topstep runs a real <code>/api/Auth/loginKey</code> +
+    <code>/api/Account/search</code> against ProjectX —
     no orders are placed.
   </p>
   <div class="btn-row mobile-actions">
-    <button id="btn-test" class="btn btn-primary">Test {{ active_broker_provider }} connection</button>
+    <button id="btn-test" class="btn btn-primary">Test topstep connection</button>
     <button id="btn-topstep-auth" class="btn">Test Topstep auth</button>
     <button id="btn-topstep-accounts" class="btn">Fetch accounts</button>
   </div>

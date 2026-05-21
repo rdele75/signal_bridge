@@ -7,44 +7,53 @@
 <p class="subtitle">Live status of your local trading bridge.</p>
 
 {# ---- Execution card.
-       Compact: title + mode dropdown + Apply + account line +
-       Disengage / Exit-All / Smoke Test. No top-right meta cluster,
-       no redundant status pill — the selected mode is already the
-       canonical state. Live arming uses a dedicated modal with the
-       typed "engage" phrase and an account acknowledgement. #}
+       One card, three states. The mode dropdown drives state
+       transitions; Apply POSTs to /api/execution/{state}. No
+       confirmation tokens, no engagement modal. The selected
+       Topstep account determines what the orders actually hit. #}
 <section class="section">
   <div class="card execution-card execution-{{ exec_card_state }}"
        id="exec-card"
        data-execution-state="{{ exec_card_state }}"
-       data-execution-mode="{{ execution_mode }}"
+       data-execution-mode="{{ execution.state }}"
        data-broker-provider="{{ broker_provider }}"
        data-selected-account-id="{{ selected_account_id or '' }}"
        data-selected-account-name="{{ broker_account_card.selected_account_name or '' }}"
-       data-execution-armed="{{ 'true' if (demo_execution.is_armed or live_execution.is_armed) else 'false' }}"
-       data-live-confirm-phrase="{{ live_execution.confirm_phrase }}">
+       data-funded-badge="{{ execution.funded_badge or '' }}">
     <div class="execution-card-inner">
       <div class="execution-card-head">
         <h3 class="execution-card-title">Execution</h3>
         <span class="execution-status-text" id="execution-status-text">
           {{ exec_card_label }}
+          {% if execution.funded_badge == 'funded' %}
+            <span class="badge badge-warn plain ml-1" id="execution-funded-badge">Funded</span>
+          {% elif execution.funded_badge == 'eval' %}
+            <span class="badge badge-info plain ml-1" id="execution-funded-badge">Eval</span>
+          {% elif execution.funded_badge == 'unknown' %}
+            <span class="badge plain ml-1" id="execution-funded-badge">unknown</span>
+          {% endif %}
         </span>
       </div>
 
-      {# No mode-preview chip — operator decision, do not re-add. #}
       <form id="form-execution-apply" class="execution-mode-form">
         <label for="execution_mode_select" class="execution-mode-label">
           Execution mode
         </label>
         <select id="execution_mode_select" name="execution_mode"
                 class="dark-select">
-          <option value="paper" {% if execution_mode == 'paper' %}selected{% endif %}>Execution Test</option>
-          <option value="live"  {% if execution_mode == 'live'  %}selected{% endif %}>live</option>
+          {% for opt in execution_mode_options %}
+            <option value="{{ opt }}"
+                    {% if execution.state == opt %}selected{% endif %}>
+              {{ opt|capitalize }}
+            </option>
+          {% endfor %}
         </select>
         <button type="submit" class="btn btn-primary" id="btn-execution-apply">
           <span class="btn-label">Apply</span>
           <span class="btn-spinner" aria-hidden="true" hidden></span>
         </button>
       </form>
+
       <div class="execution-account">
         <span class="execution-account-label">Account:</span>
         {% if selected_account_id %}
@@ -53,15 +62,18 @@
             <span class="execution-account-name">/ {{ mask_value(broker_account_card.selected_account_name) }}</span>
           {% endif %}
         {% else %}
-          <span class="muted">no account selected</span>
+          <span class="muted">no account selected — pick one in <a href="/settings/broker">Broker</a></span>
         {% endif %}
       </div>
 
+      {% if execution.armed_blockers %}
+        <p class="muted execution-disengage-note">
+          Cannot Arm:
+          <code>{{ execution.armed_blockers|join('; ') }}</code>
+        </p>
+      {% endif %}
+
       <div class="execution-actions mobile-actions">
-        <button type="button" id="btn-disable-exec" class="btn"
-                {% if not (demo_execution.is_armed or live_execution.is_armed) %}hidden{% endif %}>
-          Disengage
-        </button>
         <button type="button" id="btn-flatten-all" class="btn"
                 {% if not broker_open_position_count %}disabled title="No open positions to flatten"{% endif %}>
           Flatten All Positions
@@ -76,14 +88,16 @@
           </span>
         {% else %}
           <span class="execution-kill-switch-indicator badge-warn"
-                title="ENABLE_KILL_SWITCH=false in config — the emergency-stop button will not block trades. Set ENABLE_KILL_SWITCH=true and restart to re-enable.">
+                title="ENABLE_KILL_SWITCH=false in config — the kill switch is disabled entirely. Set ENABLE_KILL_SWITCH=true and restart to re-enable.">
             kill switch disabled (config)
           </span>
         {% endif %}
       </div>
 
       <p class="muted execution-disengage-note">
-        Disengage stops new orders; does not close existing positions.
+        Off journals signals but submits nothing.
+        Test builds the broker payload without POSTing.
+        Armed submits to the selected Topstep account.
       </p>
 
       <div id="execution-feedback" class="execution-feedback" hidden
@@ -94,10 +108,6 @@
         <pre id="execution-feedback-raw" class="output execution-feedback-raw"></pre>
       </details>
 
-      {# Per-leg flatten outcome. Populated by the JS after a confirmed
-         flatten POST. One row per attempted close (success or
-         failure), with an aggregate summary at the top. Auto-dismisses
-         after 8s or on outside click; X button dismisses immediately. #}
       <div id="flatten-results-panel" class="flatten-results-panel"
            hidden role="status" aria-live="polite">
         <button type="button" class="flatten-results-close"
@@ -109,73 +119,9 @@
   </div>
 </section>
 
-{# ---- Live execution engagement modal.
-       Hidden by default. Opens when the operator picks "live" in the
-       mode dropdown and clicks Save / Apply. Requires the exact
-       confirmation phrase + an account acknowledgement check. After
-       submit, the card runs an engagement animation while the verify
-       endpoint and the enable endpoint settle. #}
-<div id="live-execution-modal" class="execution-modal" hidden
-     aria-hidden="true" role="dialog"
-     aria-labelledby="live-execution-modal-title">
-  <div class="execution-modal-backdrop" data-close-modal></div>
-  <div class="execution-modal-panel" role="document">
-    <h3 id="live-execution-modal-title" class="execution-modal-title">
-      Live Execution Warning
-    </h3>
-    <p class="execution-modal-copy">
-      You are about to enable live/funded order routing for the
-      selected Topstep account. Orders may route to a real funded
-      account. Confirm only if you understand the risk.
-    </p>
-    <p class="execution-modal-account">
-      Account:
-      {{ mask_value(selected_account_id or '—', dom_id='live-modal-account-id') }}
-      {% if broker_account_card.selected_account_name %}
-        <span class="muted">/</span>
-        {{ mask_value(broker_account_card.selected_account_name, dom_id='live-modal-account-name') }}
-      {% endif %}
-    </p>
-    <p class="muted execution-modal-reveal-hint">
-      click the account info above to reveal
-    </p>
-    <p class="execution-modal-instructions">
-      Type <code>{{ live_execution.confirm_phrase }}</code> and check
-      the box to confirm live execution.
-    </p>
-    <form id="form-live-engage" class="execution-modal-form">
-      <label for="live_confirm_phrase">
-        Confirmation phrase
-      </label>
-      <input id="live_confirm_phrase" name="confirm" type="text"
-             class="dark-input"
-             autocomplete="off"
-             placeholder="{{ live_execution.confirm_phrase }}" />
-      <label class="execution-modal-ack">
-        <input id="live_account_ack" type="checkbox" name="account_ack" />
-        I acknowledge orders will hit account
-        <code>{{ selected_account_id or '—' }}</code>
-        <span class="muted">/</span>
-        {{ broker_account_card.selected_account_name or 'unnamed' }}
-        — this is a funded/live Topstep account.
-      </label>
-      <div class="execution-modal-actions">
-        <button type="button" class="btn" data-close-modal>Cancel</button>
-        <button type="submit" id="btn-engage-live" class="btn btn-danger">
-          Engage Live Execution
-        </button>
-      </div>
-      <pre id="live-engage-out" class="output" hidden></pre>
-    </form>
-  </div>
-</div>
-
-{# ---- Smoke-test soft-confirm modal.
-       Opens on Smoke Test click. No typed-phrase / ack box — same
-       soft-confirm pattern as the Flatten modal. The confirm button
-       inside fires the test; its theming and the body copy adapt to
-       whether execution is armed (real broker order) or not (safe
-       preview). #}
+{# ---- Smoke-test confirm modal. Builds a 1-contract MES test order
+       through /api/execution/submit-test-order. Never submits.
+       Works regardless of the current execution state. #}
 <div id="smoke-confirm-modal" class="execution-modal" hidden
      aria-hidden="true" role="dialog"
      aria-labelledby="smoke-confirm-modal-title">
@@ -184,13 +130,12 @@
     <h3 id="smoke-confirm-modal-title" class="execution-modal-title">
       Smoke Test
     </h3>
-    <p class="execution-modal-copy" id="smoke-confirm-modal-copy">
-      Submits a 1-contract entry + exit via the broker. No persistent
-      position. Used to verify execution plumbing.
+    <p class="execution-modal-copy">
+      Builds a 1-contract <code>MES1!</code> BUY order through the
+      Topstep adapter and validates the ProjectX payload. No order is
+      submitted to ProjectX regardless of the current execution state.
     </p>
     <p class="execution-modal-account">
-      Mode: <code id="smoke-confirm-modal-mode">{{ execution_mode }}</code>
-      <span class="muted">·</span>
       Account: {{ mask_value(selected_account_id or '—') }}
       {% if broker_account_card.selected_account_name %}
         <span class="muted">/</span>
@@ -200,17 +145,14 @@
     <div class="execution-modal-actions">
       <button type="button" class="btn" data-close-modal>Cancel</button>
       <button type="button" id="btn-smoke-confirm" class="btn btn-primary">
-        Yes, run smoke test
+        Run smoke test
       </button>
     </div>
   </div>
 </div>
 
-{# ---- Soft-confirm flatten modal.
-       Opens when the operator clicks "Flatten All Positions". Fetches
-       open positions, shows a summary, and only fires the flatten POST
-       on a deliberate click of "Yes, flatten now". No phrase typing —
-       confidence is built from showing exactly what will close. #}
+{# ---- Soft-confirm flatten modal. Fetches open positions, shows a
+       summary, and only fires the flatten POST on deliberate click. #}
 <div id="flatten-modal" class="execution-modal" hidden
      aria-hidden="true" role="dialog"
      aria-labelledby="flatten-modal-title">
@@ -220,9 +162,9 @@
       Flatten All Positions
     </h3>
     <p class="execution-modal-copy">
-      This will submit a closing market order for every open position
-      on the selected broker account. Each close is independent —
-      partial failures are reported per leg.
+      Submits a closing market order for every open position on the
+      selected Topstep account. Requires Armed mode — Off and Test
+      refuse the call.
     </p>
     <div id="flatten-modal-positions" class="execution-modal-positions">
       <p class="muted">loading open positions…</p>
@@ -237,13 +179,10 @@
   </div>
 </div>
 
-{# ---- Toast container. JS targets ``#execution-toast`` and toggles
-       enter/exit classes for the slide-in/out animation. #}
 <div id="execution-toast" class="execution-toast" role="status"
      aria-live="polite" hidden></div>
 
-{# Trading session + broker status at a glance. Mode/broker also live
-   in the Execution card above — these stay for the at-a-glance row. #}
+{# Trading session + broker status at a glance. #}
 <section class="grid grid-3 section">
   <div class="card">
     <div class="card-label">Trading session</div>
@@ -269,12 +208,10 @@
   </div>
 
   <div class="card">
-    <div class="card-label">Broker provider</div>
+    <div class="card-label">Broker</div>
     <div class="card-value">
       <span id="summary-broker-provider"
-            class="badge {{ 'badge-paper' if broker_provider == 'paper' else 'badge-warn' }} plain">
-        {{ broker_provider }}
-      </span>
+            class="badge badge-warn plain">topstep</span>
       {% if broker_connected %}
         <span id="summary-broker-conn" class="badge badge-good">connected</span>
       {% elif broker_not_implemented %}
@@ -289,51 +226,24 @@
   </div>
 </section>
 
-{# Account snapshot UI removed. The at-a-glance broker status above
-   already shows connection state + selected account; backend
-   endpoints /api/realtime/state, /api/broker/positions, and
-   /api/broker/orders remain available. Detailed account/orders/
-   positions views live under Metrics → Past orders and
-   /settings/broker. #}
-
-{# Ticker Watch — honest placeholder.
-   Realtime price feed (ProjectX market hub) is not implemented yet.
-   The card carries no broken controls; it just shows the future-state
-   note so the operator isn't surprised by a static value. #}
-<section class="section">
-  <div class="card ticker-watch-placeholder" id="ticker-watch-card">
-    <div class="card-row">
-      <div class="card-label">Ticker Watch</div>
-      <span class="badge badge-warn plain">not connected</span>
-    </div>
-    <div class="ticker-watch-body">
-      <p class="ticker-watch-headline">
-        Ticker Watch is not connected yet.
-      </p>
-      <p class="muted">
-        Realtime price feed will be added through ProjectX market data
-        later.
-      </p>
-    </div>
-  </div>
-</section>
-
-{# Per-day counters + performance summary. #}
+{# Per-day counters + performance summary. Filtered to Armed
+   submissions only — Test/Off signals stay out of the dashboard
+   stat cards by design. #}
 <section class="grid grid-3 section">
   <div class="card">
-    <div class="card-label">Trades today</div>
+    <div class="card-label">Armed trades today</div>
     <div class="card-value lg">{{ trades_today }}</div>
-    <div class="card-sub">accepted signals</div>
+    <div class="card-sub">accepted Armed signals</div>
   </div>
   <div class="card">
     <div class="card-label">Accepted today</div>
     <div class="card-value lg good">{{ accepted_today }}</div>
-    <div class="card-sub">passed risk + broker</div>
+    <div class="card-sub">passed risk + broker (Armed)</div>
   </div>
   <div class="card">
     <div class="card-label">Rejected today</div>
     <div class="card-value lg {{ 'bad' if rejected_today else 'muted' }}">{{ rejected_today }}</div>
-    <div class="card-sub">blocked by risk</div>
+    <div class="card-sub">blocked by risk (Armed)</div>
   </div>
 </section>
 
@@ -365,14 +275,12 @@
   </div>
 </section>
 
-{# Open Orders — restyled to look like the old Recent Paper Orders block.
-   The separate Recent Paper Orders section has been removed because it
-   was redundant. #}
+{# Open Orders. #}
 <section class="section">
   <div class="card">
     <div class="card-row">
       <div class="card-label">Open orders</div>
-      <span class="hint">latest 10 from the active adapter</span>
+      <span class="hint">latest 10 from Topstep</span>
     </div>
     {% if recent_orders %}
       <div class="table-wrap table-scroll hide-on-mobile mt-2">
@@ -409,32 +317,10 @@
           </tbody>
         </table>
       </div>
-      <div class="mobile-card-list show-on-mobile mt-2">
-        {% for o in recent_orders %}
-          <div class="mobile-card-row">
-            <dl>
-              <dt>Time</dt><dd class="mono">{{ o.received_at }}</dd>
-              <dt>Symbol</dt><dd><strong>{{ o.symbol or '—' }}</strong></dd>
-              <dt>Action</dt><dd>{{ o.action or '—' }}</dd>
-              <dt>Qty</dt><dd>{{ o.contracts if o.contracts is not none else '—' }}</dd>
-              <dt>Price</dt><dd>{{ '%.4f' % o.price if o.price is not none else '—' }}</dd>
-              <dt>Decision</dt>
-              <dd>
-                {% if o.decision == 'accepted' %}
-                  <span class="badge badge-good">accepted</span>
-                {% else %}
-                  <span class="badge badge-bad">{{ o.decision or 'rejected' }}</span>
-                {% endif %}
-              </dd>
-              <dt>Order ID</dt><dd class="mono">{{ o.order_id or '—' }}</dd>
-            </dl>
-          </div>
-        {% endfor %}
-      </div>
     {% elif recent_orders_not_implemented %}
-      <div class="empty"><strong>n/a</strong>active provider does not expose order history yet</div>
+      <div class="empty"><strong>n/a</strong>broker does not expose order history yet</div>
     {% else %}
-      <div class="empty"><strong>no orders yet</strong>fire a TradingView alert to populate</div>
+      <div class="empty"><strong>no orders yet</strong>arm and fire a TradingView alert to populate</div>
     {% endif %}
   </div>
 </section>
@@ -456,6 +342,9 @@
           <span class="badge badge-good">accepted</span>
         {% else %}
           <span class="badge badge-bad">rejected</span>
+        {% endif %}
+        {% if last_signal.execution_mode %}
+          <span class="badge badge-info plain ml-1">{{ last_signal.execution_mode }}</span>
         {% endif %}
         {% if last_signal.rejection_reason %}
           <span class="muted ml-1">{{ last_signal.rejection_reason }}</span>
@@ -485,466 +374,74 @@
 </section>
 
 <script>
-// ---- Dashboard Execution card ----
-//
-// JS init guards: every getElementById that targets a conditionally-
-// rendered element MUST be null-checked before .addEventListener is
-// called. A single null reference aborts the rest of the script and
-// silently disables every later handler — including the Apply button.
-// If you remove a helper function, grep for ALL its call sites before
-// committing; a stale reference produces a ReferenceError with the
-// same fatal effect.
-//
-// The whole init block is wrapped in try/catch so a single broken
-// reference can't silently disable unrelated handlers.
+// Execution-card JS. Single state machine: Off / Test / Armed.
+// Apply POSTs to /api/execution/{state}. Failures surface inline.
 (function () {
   try {
-  var card = document.getElementById('exec-card');
-  if (!card) return;
+    var card = document.getElementById('exec-card');
+    if (!card) return;
 
-  var modeForm = document.getElementById('form-execution-apply');
-  var modeSelect = document.getElementById('execution_mode_select');
-  var applyBtn = document.getElementById('btn-execution-apply');
-  var applySpinner = applyBtn && applyBtn.querySelector('.btn-spinner');
-  var statusText = document.getElementById('execution-status-text');
-  var feedback = document.getElementById('execution-feedback');
-  var feedbackDetail = document.getElementById('execution-feedback-detail');
-  var feedbackRaw = document.getElementById('execution-feedback-raw');
-  var disableBtn = document.getElementById('btn-disable-exec');
-  var flattenBtn = document.getElementById('btn-flatten-all');
-  var flattenModal = document.getElementById('flatten-modal');
-  var flattenConfirmBtn = document.getElementById('btn-flatten-confirm');
-  var flattenPositionsEl = document.getElementById('flatten-modal-positions');
-  var smokeBtn = document.getElementById('btn-smoke-test');
-  var smokeConfirmModal = document.getElementById('smoke-confirm-modal');
-  var smokeConfirmBtn = document.getElementById('btn-smoke-confirm');
-  var smokeConfirmCopy = document.getElementById('smoke-confirm-modal-copy');
-  var smokeConfirmMode = document.getElementById('smoke-confirm-modal-mode');
-  var initialMode = card.dataset.executionMode || 'paper';
-  var liveModal = document.getElementById('live-execution-modal');
-  var liveForm = document.getElementById('form-live-engage');
-  var liveConfirmInput = document.getElementById('live_confirm_phrase');
-  var liveAckInput = document.getElementById('live_account_ack');
-  var livePhrase = card.dataset.liveConfirmPhrase || 'engage';
-  var toastEl = document.getElementById('execution-toast');
+    var modeForm = document.getElementById('form-execution-apply');
+    var modeSelect = document.getElementById('execution_mode_select');
+    var applyBtn = document.getElementById('btn-execution-apply');
+    var applySpinner = applyBtn && applyBtn.querySelector('.btn-spinner');
+    var statusText = document.getElementById('execution-status-text');
+    var feedback = document.getElementById('execution-feedback');
+    var feedbackDetail = document.getElementById('execution-feedback-detail');
+    var feedbackRaw = document.getElementById('execution-feedback-raw');
+    var flattenBtn = document.getElementById('btn-flatten-all');
+    var flattenModal = document.getElementById('flatten-modal');
+    var flattenConfirmBtn = document.getElementById('btn-flatten-confirm');
+    var flattenPositionsEl = document.getElementById('flatten-modal-positions');
+    var smokeBtn = document.getElementById('btn-smoke-test');
+    var smokeConfirmModal = document.getElementById('smoke-confirm-modal');
+    var smokeConfirmBtn = document.getElementById('btn-smoke-confirm');
+    var toastEl = document.getElementById('execution-toast');
 
-  var STATE_CLASSES = [
-    'execution-dry-run',
-    'execution-demo',
-    'execution-live-locked',
-    'execution-live-engaging',
-    'execution-live-armed',
-    'execution-live-disengaging',
-    'execution-kill-switch-active',
-    'execution-disabled',
-    'execution-transitioning',
-  ];
+    var STATE_CLASSES = [
+      'execution-off', 'execution-test', 'execution-armed',
+      'execution-kill-switch-active',
+    ];
 
-  // Sync the cosmetic surfaces driven by /api/status without touching
-  // the freshly-animated execution-state classes. The caller is
-  // responsible for setState() / setStatusText() — this just updates
-  // the data attrs the rest of the script reads, the mode select, the
-  // summary badges below the card, and the in-card kill-switch hint.
-  // We deliberately do NOT update the execution-account block: the
-  // selected account only changes on the broker page, and that flow
-  // refreshes the card via a full server roundtrip on its own.
-  function refreshFromStatus(payload) {
-    if (!payload) return;
-    if (typeof payload.execution_mode === 'string') {
-      card.dataset.executionMode = payload.execution_mode;
-      if (modeSelect) {
-        modeSelect.value = payload.execution_mode;
-        initialMode = payload.execution_mode;
-      }
-      syncSmokeVisibility();
+    function setBusy(busy) {
+      if (!applyBtn) return;
+      applyBtn.disabled = !!busy;
+      if (applySpinner) applySpinner.hidden = !busy;
     }
-    if (typeof payload.broker_provider === 'string') {
-      card.dataset.brokerProvider = payload.broker_provider;
-      var provBadge = document.getElementById('summary-broker-provider');
-      if (provBadge) {
-        provBadge.classList.toggle('badge-paper', payload.broker_provider === 'paper');
-        provBadge.classList.toggle('badge-warn', payload.broker_provider !== 'paper');
-        provBadge.textContent = payload.broker_provider;
-      }
-    }
-    card.dataset.selectedAccountId = payload.selected_account_id || '';
-    var appBadge = document.getElementById('summary-app-status');
-    if (appBadge) {
-      appBadge.classList.toggle('badge-bad', !!payload.kill_switch_active);
-      appBadge.classList.toggle('badge-good', !payload.kill_switch_active);
-      appBadge.textContent = payload.kill_switch_active ? 'halted' : 'running';
-    }
-    var connBadge = document.getElementById('summary-broker-conn');
-    if (connBadge) {
-      connBadge.classList.remove('badge-good', 'badge-warn', 'badge-bad');
-      if (payload.broker_connected) {
-        connBadge.classList.add('badge-good');
-        connBadge.textContent = 'connected';
-      } else {
-        // /api/status doesn't separate "offline" from "not implemented".
-        // Preserve "not implemented" when the prior render set it, since
-        // a non-connected broker that the dashboard knows is scaffolded
-        // shouldn't suddenly read "offline".
-        var wasNotImplemented = connBadge.textContent.trim() === 'not implemented';
-        if (wasNotImplemented) {
-          connBadge.classList.add('badge-warn');
-          connBadge.textContent = 'not implemented';
+
+    function showFeedback(message, kind, rawBody) {
+      if (!feedback) return;
+      feedback.hidden = !message;
+      feedback.textContent = message || '';
+      feedback.className = 'execution-feedback'
+        + (kind ? ' execution-feedback-' + kind : '');
+      if (feedbackDetail && feedbackRaw) {
+        if (rawBody) {
+          feedbackRaw.textContent = typeof rawBody === 'string'
+            ? rawBody
+            : JSON.stringify(rawBody, null, 2);
+          feedbackDetail.hidden = false;
         } else {
-          connBadge.classList.add('badge-bad');
-          connBadge.textContent = 'offline';
+          feedbackRaw.textContent = '';
+          feedbackDetail.hidden = true;
+          feedbackDetail.open = false;
         }
       }
     }
-    var ksInd = card.querySelector('.execution-kill-switch-indicator');
-    if (ksInd) {
-      ksInd.classList.toggle('active', !!payload.kill_switch_active);
-      ksInd.textContent = 'kill switch ' +
-        (payload.kill_switch_active ? 'active' : 'off');
+
+    function clearFeedback() { showFeedback('', null, null); }
+
+    function setState(state) {
+      STATE_CLASSES.forEach(function (c) { card.classList.remove(c); });
+      card.classList.add('execution-' + state);
+      card.dataset.executionState = state;
     }
-  }
 
-  function fetchStatus() {
-    return fetch('/api/status', { credentials: 'same-origin' })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (body) { refreshFromStatus(body); return body; })
-      .catch(function () { return null; });
-  }
-
-  // Mirror header kill-switch toggles without forcing a refetch — the
-  // base.html toggle already knows the truth from its POST response.
-  document.addEventListener('signalbridge:kill-switch-change', function (ev) {
-    if (!ev || !ev.detail) return;
-    var active = !!ev.detail.active;
-    var appBadge = document.getElementById('summary-app-status');
-    if (appBadge) {
-      appBadge.classList.toggle('badge-bad', active);
-      appBadge.classList.toggle('badge-good', !active);
-      appBadge.textContent = active ? 'halted' : 'running';
-    }
-    var ksInd = card.querySelector('.execution-kill-switch-indicator');
-    if (ksInd) {
-      ksInd.classList.toggle('active', active);
-      ksInd.textContent = 'kill switch ' + (active ? 'active' : 'off');
-    }
-  });
-
-  var _statusFadeTimer = null;
-  function setStatusText(label, opts) {
-    if (!statusText || !label) return;
-    var current = (statusText.textContent || '').trim();
-    if (current === label.trim()) return;
-    // Fade out, swap, fade back in — keeps the swap feeling deliberate.
-    if (_statusFadeTimer) { window.clearTimeout(_statusFadeTimer); _statusFadeTimer = null; }
-    statusText.classList.add('execution-status-transitioning');
-    _statusFadeTimer = window.setTimeout(function () {
-      statusText.textContent = label;
-      statusText.classList.remove('execution-status-transitioning');
-      if (opts && opts.armed) {
-        statusText.classList.add('execution-live-armed-enter');
-        // After the flash-in settles, swap to the persistent solid-
-        // green class so the status text stays calm-armed (no
-        // infinite color pulse — the red card border is the
-        // be-careful cue; the text staying solid green communicates
-        // armed-and-healthy).
-        window.setTimeout(function () {
-          statusText.classList.remove('execution-live-armed-enter');
-          statusText.classList.add('execution-status-armed-solid');
-        }, 1600);
-      } else {
-        statusText.classList.remove('execution-live-armed-enter');
-        statusText.classList.remove('execution-status-armed-solid');
-      }
-    }, 220);
-  }
-
-  // Cross-fade the account line whenever the card's identity flips
-  // between dry-run and live-armed. The status text already has its
-  // own fade via setStatusText() — this matches it for the account
-  // block so the two move together. Brief 180ms ease both ways.
-  var _accountFadeTimer = null;
-  function crossFadeAccountIfNeeded(prevState, newState) {
-    var accountEl = card.querySelector('.execution-account');
-    if (!accountEl) return;
-    var crossesIdentity = (
-      (newState === 'dry-run' &&
-        (prevState === 'live-armed' || prevState === 'live-disengaging')) ||
-      (newState === 'live-armed' &&
-        (prevState === 'dry-run' || prevState === 'live-engaging'))
-    );
-    if (!crossesIdentity) return;
-    if (_accountFadeTimer) {
-      window.clearTimeout(_accountFadeTimer);
-      _accountFadeTimer = null;
-    }
-    accountEl.classList.add('execution-account-transitioning');
-    _accountFadeTimer = window.setTimeout(function () {
-      accountEl.classList.remove('execution-account-transitioning');
-      _accountFadeTimer = null;
-    }, 180);
-  }
-
-  // Disengage is only meaningful when execution is armed (demo or live
-  // — including the in-flight engage/disengage states so the button
-  // doesn't blink out mid-transition). Hidden in dry-run, live-locked,
-  // kill-switch-active, and any unknown state.
-  var DISENGAGE_VISIBLE_STATES = [
-    'demo', 'live-armed', 'live-engaging', 'live-disengaging',
-  ];
-  function setDisengageVisible(state) {
-    if (!disableBtn) return;
-    disableBtn.hidden = DISENGAGE_VISIBLE_STATES.indexOf(state) === -1;
-  }
-
-  function setState(state) {
-    var prevState = card.dataset.executionState;
-    STATE_CLASSES.forEach(function (cls) { card.classList.remove(cls); });
-    // Briefly add a transition helper so border/shadow fades cleanly.
-    card.classList.add('execution-transitioning');
-    card.classList.add('execution-' + state);
-    card.dataset.executionState = state;
-    // Persistent armed-checkmark hook on the status label.
-    if (statusText) {
-      if (state === 'live-armed') {
-        statusText.classList.add('execution-status-check-visible');
-      } else {
-        statusText.classList.remove('execution-status-check-visible');
-        // Disarmed → drop the solid-green text class too so the next
-        // state's color isn't shadowed by stale armed styling.
-        statusText.classList.remove('execution-status-armed-solid');
-      }
-    }
-    setDisengageVisible(state);
-    crossFadeAccountIfNeeded(prevState, state);
-    window.setTimeout(function () {
-      card.classList.remove('execution-transitioning');
-    }, 350);
-  }
-
-  // ---- Toast helper. Slides in, holds, slides out. Idempotent — a
-  // new toast cancels any in-flight enter/exit cycle. Pauses the
-  // auto-dismiss while the operator hovers or focuses the toast so
-  // important messages can be read without sprinting. ----
-  var _toastTimers = [];
-  var _toastPaused = false;
-  function clearToastTimers() {
-    _toastTimers.forEach(function (t) { window.clearTimeout(t); });
-    _toastTimers = [];
-  }
-  function _scheduleToastExit(holdMs) {
-    if (_toastPaused) return;
-    _toastTimers.push(window.setTimeout(function () {
-      if (_toastPaused) {
-        // Paused mid-hold: just keep the enter state, reschedule on
-        // mouseleave.
-        return;
-      }
-      toastEl.classList.remove('execution-toast-enter');
-      toastEl.classList.add('execution-toast-exit');
-      _toastTimers.push(window.setTimeout(function () {
-        toastEl.classList.remove('execution-toast-exit');
-        toastEl.hidden = true;
-      }, 360));
-    }, holdMs));
-  }
-  function showToast(message, kind) {
-    if (!toastEl || !message) return;
-    clearToastTimers();
-    _toastPaused = false;
-    toastEl.textContent = message;
-    toastEl.classList.remove('toast-bad', 'toast-info', 'execution-toast-exit');
-    if (kind === 'bad') toastEl.classList.add('toast-bad');
-    else if (kind === 'info') toastEl.classList.add('toast-info');
-    toastEl.hidden = false;
-    // Force a reflow so the enter transition actually runs.
-    void toastEl.offsetWidth;
-    toastEl.classList.add('execution-toast-enter');
-    _scheduleToastExit(2200);
-  }
-  if (toastEl) {
-    var resumeHoldMs = 1500;
-    function pauseToast() {
-      _toastPaused = true;
-      clearToastTimers();
-    }
-    function resumeToast() {
-      if (!_toastPaused) return;
-      _toastPaused = false;
-      if (toastEl.hidden) return;
-      // Briefly hold after the operator moves away so the message
-      // isn't yanked the instant the cursor leaves.
-      _scheduleToastExit(resumeHoldMs);
-    }
-    toastEl.addEventListener('mouseenter', pauseToast);
-    toastEl.addEventListener('mouseleave', resumeToast);
-    toastEl.addEventListener('focusin', pauseToast);
-    toastEl.addEventListener('focusout', resumeToast);
-  }
-
-  function setBusy(busy) {
-    if (!applyBtn) return;
-    applyBtn.disabled = !!busy;
-    if (applySpinner) applySpinner.hidden = !busy;
-  }
-
-  function showFeedback(message, kind, rawBody) {
-    if (!feedback) return;
-    feedback.hidden = !message;
-    feedback.textContent = message || '';
-    feedback.className = 'execution-feedback'
-      + (kind ? ' execution-feedback-' + kind : '');
-    if (feedbackDetail && feedbackRaw) {
-      if (rawBody) {
-        feedbackRaw.textContent = typeof rawBody === 'string'
-          ? rawBody
-          : JSON.stringify(rawBody, null, 2);
-        feedbackDetail.hidden = false;
-      } else {
-        feedbackRaw.textContent = '';
-        feedbackDetail.hidden = true;
-        feedbackDetail.open = false;
-      }
-    }
-  }
-
-  function clearFeedback() { showFeedback('', null, null); }
-
-  // The single Smoke Test button is always visible. The modal body
-  // copy + confirm-button theming adapt to whether execution is armed,
-  // and the underlying endpoint either submits a real BUY/SELL pair
-  // (armed) or builds preview-only payloads (not armed).
-  function syncSmokeVisibility() {
-    if (!smokeBtn) return;
-    smokeBtn.hidden = false;
-  }
-
-  function openLiveModal() {
-    if (!liveModal) return;
-    liveModal.hidden = false;
-    liveModal.setAttribute('aria-hidden', 'false');
-    if (liveConfirmInput) {
-      liveConfirmInput.value = '';
-      window.setTimeout(function () { liveConfirmInput.focus(); }, 0);
-    }
-    if (liveAckInput) liveAckInput.checked = false;
-  }
-
-  function closeLiveModal() {
-    if (!liveModal) return;
-    liveModal.hidden = true;
-    liveModal.setAttribute('aria-hidden', 'true');
-    // Revert the dropdown to whatever was actually saved on the server.
-    if (modeSelect) modeSelect.value = initialMode;
-    syncSmokeVisibility();
-  }
-
-  if (liveModal) {
-    liveModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
-      el.addEventListener('click', function () { closeLiveModal(); });
-    });
-    document.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape' && !liveModal.hidden) closeLiveModal();
-    });
-  }
-
-  // No mode-preview chip — operator decision, do not re-add.
-  // Dropdown change still syncs Smoke Test visibility.
-  if (modeSelect) {
-    modeSelect.addEventListener('change', function () {
-      syncSmokeVisibility();
-    });
-  }
-
-  function applyMode(mode) {
-    setBusy(true);
-    clearFeedback();
-    var wasLive = card.dataset.executionState === 'live-armed';
-    setStatusText(mode === 'paper'
-      ? (wasLive ? 'Disengaging live…' : 'Applying Execution Test…')
-      : 'Applying…');
-    // Smooth live → dry-run transition: red border retreats while we
-    // call the backend; the final dry-run state lands after the fade
-    // settles.
-    if (mode === 'paper' && wasLive) {
-      setState('live-disengaging');
-    }
-    return fetch('/api/execution/apply-mode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: mode }),
-    })
-      .then(function (r) {
-        return r.json().then(function (body) {
-          return { ok: r.ok, body: body };
-        });
-      })
-      .then(function (resp) {
-        setBusy(false);
-        if (resp.ok && resp.body && resp.body.ok) {
-          if (mode === 'paper') {
-            // Hold the disengage animation visible long enough to be
-            // legible, then fade in the dry-run state + breathing.
-            var holdMs = wasLive ? 1500 : 200;
-            window.setTimeout(function () {
-              setState('dry-run');
-              card.classList.add('execution-dryrun-enter');
-              window.setTimeout(function () {
-                card.classList.remove('execution-dryrun-enter');
-                card.classList.add('execution-dryrun-active');
-              }, 1400);
-              setStatusText('Execution Test');
-              if (wasLive) {
-                showToast('Live execution disengaged', 'info');
-              }
-              // No success toast — the card's state change is the
-              // signal. Only failure paths still raise showFeedback.
-              card.dataset.executionArmed = 'false';
-              // Sync the rest of the UI from the server's truth after
-              // the dry-run-enter animation has had time to register.
-              window.setTimeout(function () { fetchStatus(); },
-                wasLive ? 1100 : 400);
-            }, holdMs);
-          } else {
-            // Non-paper apply path (defensive — the modal intercepts
-            // live, but a future "demo" mode would land here). Pull
-            // /api/status to mirror whatever the server just persisted.
-            window.setTimeout(function () { fetchStatus(); }, 400);
-          }
-        } else {
-          var reason = (resp.body && (resp.body.message || resp.body.status))
-            || 'apply failed';
-          showFeedback('Failed: ' + reason, 'bad', resp.body);
-          setStatusText('Apply failed');
-        }
-      })
-      .catch(function (err) {
-        setBusy(false);
-        showFeedback('Failed: ' + err, 'bad', null);
-        setStatusText('Apply failed');
-      });
-  }
-
-  if (modeForm && modeSelect) {
-    modeForm.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var picked = modeSelect.value;
-      if (picked === 'live') {
-        setStatusText('Live verification required');
-        openLiveModal();
-        return;
-      }
-      applyMode(picked);
-    });
-  }
-
-  if (disableBtn) {
-    disableBtn.addEventListener('click', function () {
-      if (!window.confirm('Disengage execution? This returns the app to a safe Execution Test state.')) return;
+    function applyMode(mode) {
       setBusy(true);
       clearFeedback();
-      var wasLive = card.dataset.executionState === 'live-armed';
-      setStatusText(wasLive ? 'Disengaging live…' : 'Disengaging…');
-      if (wasLive) setState('live-disengaging');
-      fetch('/api/execution/disable', { method: 'POST' })
+      var path = '/api/execution/' + mode;
+      return fetch(path, { method: 'POST', credentials: 'same-origin' })
         .then(function (r) {
           return r.json().then(function (body) {
             return { ok: r.ok, body: body };
@@ -953,528 +450,196 @@
         .then(function (resp) {
           setBusy(false);
           if (resp.ok && resp.body && resp.body.ok) {
-            var holdMs = wasLive ? 1500 : 200;
-            window.setTimeout(function () {
-              setState('dry-run');
-              card.classList.add('execution-dryrun-enter');
-              window.setTimeout(function () {
-                card.classList.remove('execution-dryrun-enter');
-                card.classList.add('execution-dryrun-active');
-              }, 1400);
-              setStatusText('Execution Test');
-              if (wasLive) {
-                showToast('Live execution disengaged', 'info');
+            setState(mode);
+            if (statusText) {
+              // Preserve any funded/eval badge already in the label
+              var badge = document.getElementById('execution-funded-badge');
+              statusText.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+              if (badge && mode === 'armed') {
+                statusText.appendChild(document.createTextNode(' '));
+                statusText.appendChild(badge);
               }
-              // No success toast — the card's state change is the
-              // signal. Only failure paths still raise showFeedback.
-              // Card transitioned to dry-run; arm flag is now false and
-              // the smoke-execute button should hide.
-              card.dataset.executionArmed = 'false';
-              // Sync the rest of the UI from the server's truth without
-              // reloading — keeps the dry-run-enter animation visible.
-              window.setTimeout(function () { fetchStatus(); },
-                wasLive ? 1100 : 400);
-            }, holdMs);
-          } else {
-            var reason = (resp.body && (resp.body.message || resp.body.status))
-              || 'disengage failed';
-            showFeedback('Failed: ' + reason, 'bad', resp.body);
-            setStatusText('Disengage failed');
+            }
+            card.dataset.executionMode = mode;
+            return;
           }
+          var reason = (resp.body && (resp.body.message || resp.body.status))
+            || 'apply failed';
+          showFeedback('Failed: ' + reason, 'bad', resp.body);
+          // Revert dropdown to the server's actual state.
+          if (modeSelect) modeSelect.value = card.dataset.executionMode || 'off';
         })
         .catch(function (err) {
           setBusy(false);
           showFeedback('Failed: ' + err, 'bad', null);
-          setStatusText('Disengage failed');
+          if (modeSelect) modeSelect.value = card.dataset.executionMode || 'off';
         });
-    });
-  }
-
-  if (flattenBtn) {
-    flattenBtn.addEventListener('click', function () {
-      openFlattenModal();
-    });
-  }
-
-  function escapeHTML(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  function renderFlattenPositions(positions) {
-    if (!flattenPositionsEl) return 0;
-    var rows = (positions || []).filter(function (p) { return p && p.size; });
-    if (rows.length === 0) {
-      flattenPositionsEl.innerHTML =
-        '<p class="muted">no open positions to flatten</p>';
-      return 0;
     }
-    var total = 0;
-    var html = '<ul class="execution-modal-position-list">';
-    rows.forEach(function (p) {
-      var label = p.symbol || p.contractId || p.contract_id || '(unknown)';
-      var size = parseInt(p.size, 10) || 0;
-      total += Math.abs(size);
-      var dir = '';
-      if (p.type === 1) dir = 'LONG';
-      else if (p.type === 2) dir = 'SHORT';
-      html += '<li><code>' + escapeHTML(label) + '</code> · '
-        + escapeHTML(String(size)) + ' contract' + (size === 1 ? '' : 's')
-        + (dir ? ' · ' + dir : '') + '</li>';
-    });
-    html += '</ul>';
-    html += '<p class="muted">total: '
-      + total + ' contract' + (total === 1 ? '' : 's')
-      + ' across ' + rows.length + ' position' + (rows.length === 1 ? '' : 's')
-      + '</p>';
-    flattenPositionsEl.innerHTML = html;
-    return rows.length;
-  }
 
-  function openFlattenModal() {
-    if (!flattenModal) return;
-    flattenModal.hidden = false;
-    flattenModal.setAttribute('aria-hidden', 'false');
-    if (flattenConfirmBtn) flattenConfirmBtn.disabled = true;
-    if (flattenPositionsEl) {
-      flattenPositionsEl.innerHTML =
-        '<p class="muted">loading open positions…</p>';
-    }
-    fetch('/api/broker/positions', { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
-      .then(function (body) {
-        var count = 0;
-        if (body && body.ok && Array.isArray(body.positions)) {
-          count = renderFlattenPositions(body.positions);
-        } else if (flattenPositionsEl) {
-          flattenPositionsEl.innerHTML =
-            '<p class="banner warn">' +
-            escapeHTML((body && (body.message || body.status))
-              || 'could not load positions') +
-            '</p>';
-        }
-        if (flattenConfirmBtn) flattenConfirmBtn.disabled = (count === 0);
-      })
-      .catch(function (err) {
-        if (flattenPositionsEl) {
-          flattenPositionsEl.innerHTML =
-            '<p class="banner warn">' + escapeHTML(String(err)) + '</p>';
-        }
-        if (flattenConfirmBtn) flattenConfirmBtn.disabled = true;
+    if (modeForm && modeSelect) {
+      modeForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        applyMode(modeSelect.value);
       });
-  }
-
-  function closeFlattenModal() {
-    if (!flattenModal) return;
-    flattenModal.hidden = true;
-    flattenModal.setAttribute('aria-hidden', 'true');
-  }
-
-  if (flattenModal) {
-    flattenModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
-      el.addEventListener('click', function () { closeFlattenModal(); });
-    });
-    document.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape' && !flattenModal.hidden) closeFlattenModal();
-    });
-  }
-
-  var flattenResultsPanel = document.getElementById('flatten-results-panel');
-  var flattenResultsSummary = document.getElementById('flatten-results-summary');
-  var flattenResultsLegs = document.getElementById('flatten-results-legs');
-  var flattenResultsCloseBtn = document.getElementById('flatten-results-close');
-  var flattenResultsTimer = null;
-  var flattenResultsOutsideHandler = null;
-
-  function clearFlattenResultsTimers() {
-    if (flattenResultsTimer) {
-      window.clearTimeout(flattenResultsTimer);
-      flattenResultsTimer = null;
     }
-    if (flattenResultsOutsideHandler) {
-      document.removeEventListener('click', flattenResultsOutsideHandler, true);
-      flattenResultsOutsideHandler = null;
-    }
-  }
 
-  function hideFlattenResults() {
-    clearFlattenResultsTimers();
-    if (flattenResultsPanel) flattenResultsPanel.hidden = true;
-  }
-
-  function legRow(leg) {
-    var icon = leg.ok ? '✓' : '✗';
-    var badge = leg.ok ? 'badge-good' : 'badge-bad';
-    var size = (leg.size == null) ? '' :
-      (' — ' + leg.size + ' contract' + (leg.size === 1 ? '' : 's'));
-    var sym = leg.symbol || leg.contract_id || '(unknown)';
-    var verb = leg.ok ? 'closed' : 'failed';
-    var detail = '';
-    if (leg.ok && leg.order_id) {
-      detail = ' (orderId ' + escapeHTML(String(leg.order_id)) + ')';
-    } else if (!leg.ok && leg.message) {
-      detail = ': ' + escapeHTML(leg.message);
+    // Flatten flow. Lifts open positions via /api/broker/positions,
+    // confirms with the operator, fires /api/broker/flatten-all.
+    function escapeHTML(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
-    return (
-      '<li class="flatten-leg-row">' +
-      '<span class="badge ' + badge + ' plain">' + icon + '</span>' +
-      ' <code>' + escapeHTML(sym) + '</code>' + escapeHTML(size) +
-      ' — ' + verb + detail +
-      '</li>'
-    );
-  }
-
-  function showFlattenResults(body) {
-    if (!flattenResultsPanel) return;
-    clearFlattenResultsTimers();
-    var legs = (body && Array.isArray(body.legs)) ? body.legs : [];
-    var status = body && body.status;
-    var message = (body && body.message) || '';
-    var infoOnly = (
-      status === 'not_in_live_mode' || status === 'no_open_positions'
-    );
-    var summaryClass;
-    if (status === 'flattened') {
-      summaryClass = 'badge-good';
-    } else if (status === 'partial' || status === 'failed') {
-      summaryClass = 'badge-bad';
-    } else if (infoOnly) {
-      summaryClass = 'badge-info';
-    } else {
-      summaryClass = 'badge-warn';
-    }
-    var summaryHtml = (
-      '<span class="badge ' + summaryClass + ' plain">'
-      + escapeHTML(status || 'unknown') + '</span> '
-      + escapeHTML(message)
-    );
-    if (flattenResultsSummary) flattenResultsSummary.innerHTML = summaryHtml;
-    if (flattenResultsLegs) {
-      if (infoOnly || legs.length === 0) {
-        flattenResultsLegs.innerHTML = '';
-      } else {
-        flattenResultsLegs.innerHTML = legs.map(legRow).join('');
+    function renderFlattenPositions(positions) {
+      if (!flattenPositionsEl) return 0;
+      var rows = (positions || []).filter(function (p) { return p && p.size; });
+      if (rows.length === 0) {
+        flattenPositionsEl.innerHTML =
+          '<p class="muted">no open positions to flatten</p>';
+        return 0;
       }
+      var total = 0;
+      var html = '<ul class="execution-modal-position-list">';
+      rows.forEach(function (p) {
+        var label = p.symbol || p.contractId || p.contract_id || '(unknown)';
+        var size = parseInt(p.size, 10) || 0;
+        total += Math.abs(size);
+        var dir = '';
+        if (p.type === 1) dir = 'LONG';
+        else if (p.type === 2) dir = 'SHORT';
+        html += '<li><code>' + escapeHTML(label) + '</code> · '
+          + escapeHTML(String(size)) + ' contract' + (size === 1 ? '' : 's')
+          + (dir ? ' · ' + dir : '') + '</li>';
+      });
+      html += '</ul>';
+      html += '<p class="muted">total: ' + total + ' across '
+        + rows.length + ' position(s)</p>';
+      flattenPositionsEl.innerHTML = html;
+      return rows.length;
     }
-    flattenResultsPanel.hidden = false;
-    flattenResultsTimer = window.setTimeout(hideFlattenResults, 8000);
-    // Outside click also dismisses. Capture-phase so the listener
-    // catches the original target before the toggling code runs.
-    flattenResultsOutsideHandler = function (ev) {
-      if (!flattenResultsPanel.contains(ev.target)) hideFlattenResults();
-    };
-    // Defer attaching the outside-click handler so the click that
-    // opened the panel doesn't immediately close it.
-    window.setTimeout(function () {
-      if (flattenResultsOutsideHandler) {
-        document.addEventListener(
-          'click', flattenResultsOutsideHandler, true
-        );
+    function openFlattenModal() {
+      if (!flattenModal) return;
+      flattenModal.hidden = false;
+      if (flattenConfirmBtn) flattenConfirmBtn.disabled = true;
+      if (flattenPositionsEl) {
+        flattenPositionsEl.innerHTML =
+          '<p class="muted">loading open positions…</p>';
       }
-    }, 0);
-  }
-
-  if (flattenResultsCloseBtn) {
-    flattenResultsCloseBtn.addEventListener('click', hideFlattenResults);
-  }
-
-  // Disable + tooltip the Flatten button when positions go to zero
-  // (or back-enable it when they return). The initial state is set
-  // server-side via Jinja; this handles dynamic updates after the
-  // operator performs a flatten or executes a smoke test.
-  function setFlattenButtonEnabled(hasPositions) {
-    if (!flattenBtn) return;
-    if (hasPositions) {
-      flattenBtn.disabled = false;
-      flattenBtn.removeAttribute('title');
-    } else {
-      flattenBtn.disabled = true;
-      flattenBtn.setAttribute('title', 'No open positions to flatten');
-    }
-  }
-
-  if (flattenConfirmBtn) {
-    flattenConfirmBtn.addEventListener('click', function () {
-      flattenConfirmBtn.disabled = true;
-      clearFeedback();
-      showFeedback('Flattening…', 'info', null);
-      fetch('/api/broker/flatten-all', { method: 'POST' })
+      fetch('/api/broker/positions', { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
         .then(function (body) {
-          closeFlattenModal();
-          clearFeedback();
-          if (body && body.not_implemented) {
-            showFeedback(
-              (body.provider || 'broker') + ': flatten not implemented yet.',
-              'warn',
-              body
-            );
-            return;
+          var count = 0;
+          if (body && body.ok && Array.isArray(body.positions)) {
+            count = renderFlattenPositions(body.positions);
+          } else if (flattenPositionsEl) {
+            flattenPositionsEl.innerHTML =
+              '<p class="banner warn">' +
+              escapeHTML((body && (body.message || body.status))
+                || 'could not load positions') +
+              '</p>';
           }
-          // Any successful close zeroes (some or all) positions —
-          // disable the button until a fresh status reflects a new
-          // open position. If status==partial / failed we leave it
-          // enabled so the operator can retry.
-          if (body && body.status === 'flattened') {
-            setFlattenButtonEnabled(false);
-          }
-          showFlattenResults(body || {});
+          if (flattenConfirmBtn) flattenConfirmBtn.disabled = (count === 0);
         })
         .catch(function (err) {
-          closeFlattenModal();
-          showFeedback('Flatten failed: ' + err, 'bad', null);
-        });
-    });
-  }
-
-  function runSmokeTest(execute, confirmation) {
-    if (!smokeBtn) return;
-    smokeBtn.disabled = true;
-    clearFeedback();
-    showFeedback(
-      execute ? 'Submitting smoke entry + exit…' : 'Running Execution Test smoke test…',
-      'info',
-      null
-    );
-    fetch('/api/topstep/smoke-test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol: 'MES1!',
-        contracts: 1,
-        execute: !!execute,
-        confirmation: confirmation || '',
-      }),
-    })
-      .then(function (r) {
-        return r.json().then(function (body) {
-          return { ok: r.ok, body: body };
-        });
-      })
-      .then(function (resp) {
-        smokeBtn.disabled = false;
-        var body = resp.body || {};
-        if (resp.ok && body.ok && !body.execute) {
-          showFeedback(
-            'Execution Test smoke test passed — entry payload built, exit payload built. No broker order sent.',
-            'ok',
-            body
-          );
-          return;
-        }
-        if (resp.ok && body.ok && body.execute) {
-          var entryId = (body.entry_response && (body.entry_response.broker_order_id
-            || body.entry_response.order_id)) || '—';
-          var exitId = (body.exit_response && (body.exit_response.broker_order_id
-            || body.exit_response.order_id)) || '—';
-          showFeedback(
-            'Smoke test executed — entry ' + entryId + ', exit ' + exitId + '.',
-            'ok',
-            body
-          );
-          return;
-        }
-        // Failure path.
-        var firstBad = (body.checks || []).find(function (c) { return !c.ok; });
-        var hint = firstBad
-          ? firstBad.name + (firstBad.detail ? ' (' + firstBad.detail + ')' : '')
-          : (body && (body.message || body.status)) || 'failed';
-        showFeedback('Smoke test failed: ' + hint, 'bad', body);
-      })
-      .catch(function (err) {
-        smokeBtn.disabled = false;
-        showFeedback('Smoke test failed: ' + err, 'bad', null);
-      });
-  }
-
-  // Unified Smoke Test flow: click opens a soft-confirm modal. The
-  // modal copy + confirm-button theme adapt to whether execution is
-  // armed. Confirm → fire runSmokeTest with the right execute flag.
-  function isExecutionArmed() {
-    return card.dataset.executionArmed === 'true';
-  }
-
-  function syncSmokeConfirmModal() {
-    if (!smokeConfirmModal || !smokeConfirmBtn) return;
-    var armed = isExecutionArmed();
-    var mode = (modeSelect && modeSelect.value) || 'paper';
-    if (smokeConfirmMode) smokeConfirmMode.textContent = mode;
-    if (smokeConfirmCopy) {
-      smokeConfirmCopy.textContent = armed
-        ? 'Submits a 1-contract entry + exit via the broker. No '
-          + 'persistent position. Used to verify execution plumbing.'
-        : 'Builds and validates entry + exit payloads only — no '
-          + 'broker order is submitted. Arm execution from this card '
-          + 'first to test the full broker round-trip.';
-    }
-    smokeConfirmBtn.classList.remove('btn-primary', 'btn-danger');
-    smokeConfirmBtn.classList.add(
-      mode === 'live' && armed ? 'btn-danger' : 'btn-primary'
-    );
-  }
-
-  function openSmokeConfirmModal() {
-    if (!smokeConfirmModal) return;
-    syncSmokeConfirmModal();
-    smokeConfirmModal.hidden = false;
-    smokeConfirmModal.setAttribute('aria-hidden', 'false');
-  }
-
-  function closeSmokeConfirmModal() {
-    if (!smokeConfirmModal) return;
-    smokeConfirmModal.hidden = true;
-    smokeConfirmModal.setAttribute('aria-hidden', 'true');
-  }
-
-  if (smokeConfirmModal) {
-    smokeConfirmModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
-      el.addEventListener('click', function () { closeSmokeConfirmModal(); });
-    });
-    document.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape' && !smokeConfirmModal.hidden) closeSmokeConfirmModal();
-    });
-  }
-
-  if (smokeBtn) {
-    smokeBtn.addEventListener('click', function () {
-      openSmokeConfirmModal();
-    });
-  }
-
-  if (smokeConfirmBtn) {
-    smokeConfirmBtn.addEventListener('click', function () {
-      closeSmokeConfirmModal();
-      var armed = isExecutionArmed();
-      runSmokeTest(armed, armed ? 'smoke' : '');
-    });
-  }
-
-  // ---- Live engagement: verify → animate → enable ----
-  function runLiveEngagement() {
-    var phrase = (liveConfirmInput && liveConfirmInput.value) || '';
-    var ack = !!(liveAckInput && liveAckInput.checked);
-    // Compare case-insensitively — variations like ENGAGE, engage,
-    // Engage are all accepted. The server-side gate uses a separate
-    // fixed token (settings-driven), so relaxing case here is a UX
-    // gate, not a security gate.
-    if (phrase.trim().toLowerCase() !== livePhrase.trim().toLowerCase()) {
-      showFeedback(
-        'Failed: confirmation phrase must equal ' + livePhrase + ' (case-insensitive).',
-        'bad',
-        null
-      );
-      setStatusText('Live verification required');
-      return;
-    }
-    if (!ack) {
-      showFeedback(
-        'Failed: you must check the account acknowledgement box.',
-        'bad',
-        null
-      );
-      setStatusText('Live verification required');
-      return;
-    }
-    clearFeedback();
-    setBusy(true);
-    setStatusText('Authorizing account…');
-    setState('live-engaging');
-    var animationStart = Date.now();
-    var minDurationMs = 3000;
-
-    function finishEngagement(success, body) {
-      var elapsed = Date.now() - animationStart;
-      var wait = Math.max(0, minDurationMs - elapsed);
-      window.setTimeout(function () {
-        setBusy(false);
-        if (success) {
-          setState('live-armed');
-          setStatusText('Live armed', { armed: true });
-          // One-shot success glow shimmer overlay.
-          card.classList.add('execution-live-success-flash');
-          window.setTimeout(function () {
-            card.classList.remove('execution-live-success-flash');
-          }, 1300);
-          // Toast replaces the abrupt inline success banner.
-          showToast('Live execution armed', 'ok');
-          // Keep the checkmark up after the entry animation finishes.
-          if (statusText) {
-            window.setTimeout(function () {
-              statusText.classList.add('execution-status-check-visible');
-            }, 1500);
+          if (flattenPositionsEl) {
+            flattenPositionsEl.innerHTML =
+              '<p class="banner warn">' + escapeHTML(String(err)) + '</p>';
           }
-          // Card is armed: reflect it on the dataset so the smoke-
-          // execute button surfaces and any other "armed" gates pass.
-          card.dataset.executionArmed = 'true';
-          // Sync the surrounding UI (summary badges + mode select) from
-          // the server's truth instead of reloading. The success-flash
-          // overlay finishes its 1.2s animation around the same time;
-          // the armed pulse keyframe loop continues uninterrupted
-          // because setState('live-armed') has already applied the
-          // class and the class isn't removed by the sync.
-          window.setTimeout(function () { fetchStatus(); }, 2200);
-        } else {
-          setState('live-locked');
-          var reason = (body && (body.message || body.status))
-            || 'live execution refused';
-          var gates = (body && body.failed_gates) || [];
-          if (gates.length) reason += ' — ' + gates.join(', ');
-          setStatusText('Live verification required');
-          showFeedback('Failed: ' + reason, 'bad', body);
-        }
-      }, wait);
+        });
+    }
+    function closeFlattenModal() {
+      if (!flattenModal) return;
+      flattenModal.hidden = true;
+    }
+    if (flattenBtn) {
+      flattenBtn.addEventListener('click', openFlattenModal);
+    }
+    if (flattenModal) {
+      flattenModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
+        el.addEventListener('click', closeFlattenModal);
+      });
+    }
+    if (flattenConfirmBtn) {
+      flattenConfirmBtn.addEventListener('click', function () {
+        flattenConfirmBtn.disabled = true;
+        fetch('/api/broker/flatten-all', { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (body) {
+            closeFlattenModal();
+            showFeedback(
+              (body && body.message) || 'flatten complete',
+              body && body.ok ? 'ok' : 'bad',
+              body
+            );
+          })
+          .catch(function (err) {
+            closeFlattenModal();
+            showFeedback('Flatten failed: ' + err, 'bad', null);
+          });
+      });
     }
 
-    fetch('/api/topstep/live-execution/verify', { method: 'POST' })
-      .then(function (r) { return r.json(); })
-      .then(function (verifyBody) {
-        if (!verifyBody || !verifyBody.ok) {
-          finishEngagement(false, verifyBody || { ok: false, message: 'verify failed' });
-          return;
-        }
-        setStatusText('Confirming selected account…');
-        return fetch('/api/topstep/live-execution/enable', {
+    // Smoke-test flow. Single button → confirm modal → POST.
+    function openSmokeModal() {
+      if (!smokeConfirmModal) return;
+      smokeConfirmModal.hidden = false;
+    }
+    function closeSmokeModal() {
+      if (!smokeConfirmModal) return;
+      smokeConfirmModal.hidden = true;
+    }
+    if (smokeBtn) smokeBtn.addEventListener('click', openSmokeModal);
+    if (smokeConfirmModal) {
+      smokeConfirmModal.querySelectorAll('[data-close-modal]').forEach(function (el) {
+        el.addEventListener('click', closeSmokeModal);
+      });
+    }
+    if (smokeConfirmBtn) {
+      smokeConfirmBtn.addEventListener('click', function () {
+        closeSmokeModal();
+        clearFeedback();
+        showFeedback('Running smoke test…', 'info', null);
+        fetch('/api/execution/submit-test-order', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: phrase, account_ack: ack }),
+          body: JSON.stringify({ symbol: 'MES1!', action: 'BUY', contracts: 1 }),
         })
-          .then(function (r) { return r.json(); })
-          .then(function (enableBody) {
-            finishEngagement(!!(enableBody && enableBody.ok), enableBody);
+          .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+          .then(function (resp) {
+            var body = resp.body || {};
+            if (resp.ok && body.ok) {
+              showFeedback(
+                'Smoke test built: side ' + (body.side != null ? body.side : '—')
+                  + ', size ' + (body.size != null ? body.size : '—') + '.',
+                'ok',
+                body
+              );
+            } else {
+              showFeedback(
+                'Smoke test failed: ' + (body.message || body.status || 'unknown'),
+                'bad',
+                body
+              );
+            }
+          })
+          .catch(function (err) {
+            showFeedback('Smoke test failed: ' + err, 'bad', null);
           });
-      })
-      .catch(function (err) {
-        finishEngagement(false, { ok: false, message: 'engagement failed: ' + err });
       });
-  }
+    }
 
-  if (liveForm) {
-    liveForm.addEventListener('submit', function (e) {
-      e.preventDefault();
-      if (liveModal) {
-        liveModal.hidden = true;
-        liveModal.setAttribute('aria-hidden', 'true');
+    // Kill switch event from base.html mirror: refresh app-status badge.
+    document.addEventListener('signalbridge:kill-switch-change', function (ev) {
+      if (!ev || !ev.detail) return;
+      var active = !!ev.detail.active;
+      var badge = document.getElementById('summary-app-status');
+      if (badge) {
+        badge.classList.toggle('badge-bad', active);
+        badge.classList.toggle('badge-good', !active);
+        badge.textContent = active ? 'halted' : 'running';
       }
-      runLiveEngagement();
     });
-  }
-
-  syncSmokeVisibility();
-
-  // If the server rendered the card already armed, keep the persistent
-  // checkmark visible so the operator sees the confirmation cue even
-  // after the page reload that follows engagement.
-  if (statusText && card.dataset.executionState === 'live-armed') {
-    statusText.classList.add('execution-status-check-visible');
-  }
   } catch (e) {
-    // Defensive: a single bad reference (e.g. a stale call site
-    // pointing at a helper that was deleted in a later commit) used
-    // to silently disable every handler in this block, including
-    // the Apply button. Log instead of crashing so the rest of the
-    // page keeps working and the next debug session can find the
-    // error in the browser console.
     console.error('SignalBridge dashboard init failed:', e);
   }
 })();
