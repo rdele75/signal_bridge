@@ -99,52 +99,103 @@ COLLAPSED_LEGACY_KEYS: frozenset[str] = frozenset(
 )
 
 # Keys whose change can be applied to the in-memory Settings instance
-# without a restart. Provider switches and bind-address changes do not
-# take effect until the app restarts, because the broker adapter and
-# uvicorn binding are constructed once at startup.
+# without a restart.
+#
+# Each entry below carries the runtime read site that proves the
+# hot-reload claim — verified against the post-polish codebase
+# (2026-05-21). Audit rule: every key here must be either (a) re-read
+# from ``Settings`` on every signal / request, or (b) actively pushed
+# onto the live broker by a settings POST handler. Keys that fail
+# both tests belong in ``RESTART_REQUIRED``.
 RUNTIME_APPLICABLE: frozenset[str] = frozenset(
     {
+        # Read per-signal in app/webhook.py (`self.settings.execution_mode`)
+        # and pushed onto broker.execution_mode in app/main.py
+        # `_set_execution_mode_and_apply`.
         "EXECUTION_MODE",
+        # Read per-request via `settings.resolved_account_id`; the
+        # /api/topstep/select-account handler mirrors it onto
+        # broker.account_id (app/main.py).
         "SELECTED_ACCOUNT_ID",
+        # Read per-webhook in app/webhook.py:217 (`self.settings.webhook_secret`).
         "TRADINGVIEW_WEBHOOK_SECRET",
+        # Read per-signal in app/risk_engine.py:169 (`s.allowed_symbols`).
         "ALLOWED_SYMBOLS",
+        # Read per-signal in app/risk_engine.py:176
+        # (`s.allowed_symbols_armed`); also mirrored onto the live broker
+        # by the /settings/risk POST handler.
         "ALLOWED_SYMBOLS_ARMED",
+        # Read per-signal in app/risk_engine.py:210
+        # (`s.max_contracts_per_trade`); also mirrored onto the broker.
         "MAX_CONTRACTS_PER_TRADE",
+        # Read per-signal in app/webhook.py:311 (`self.settings.strategy_managed_risk`).
         "STRATEGY_MANAGED_RISK",
+        # Read per-signal in app/webhook.py:312 (`self.settings.fixed_contracts_per_trade`).
         "FIXED_CONTRACTS_PER_TRADE",
+        # Read per-signal in app/risk_engine.py:223 (`s.max_daily_loss`).
         "MAX_DAILY_LOSS",
+        # Read per-signal in app/risk_engine.py:247 (`s.max_open_positions`).
         "MAX_OPEN_POSITIONS",
+        # Read per-signal in app/risk_engine.py:217 (`s.enable_longs`).
         "ENABLE_LONGS",
+        # Read per-signal in app/risk_engine.py:219 (`s.enable_shorts`).
         "ENABLE_SHORTS",
+        # Read per-signal in app/risk_engine.py:233
+        # (`s.duplicate_order_cooldown_seconds`).
         "DUPLICATE_ORDER_COOLDOWN_SECONDS",
+        # Read per-signal in app/risk_engine.py:186 (`s.enable_timeframe_lock`).
         "ENABLE_TIMEFRAME_LOCK",
+        # Read per-signal in app/risk_engine.py:199 (`s.allowed_timeframes`).
         "ALLOWED_TIMEFRAMES",
-        # Topstep credentials are read by the adapter on each call, so
-        # changes don't need a restart to take effect on the next test
-        # connection / API call. The active broker instance still needs
-        # a restart if BROKER_PROVIDER changes (which post-collapse it
-        # never should).
+        # Topstep credentials live as instance attrs on the running
+        # TopstepBroker. The /settings/broker POST handler calls
+        # signal_router.refresh_topstep_credentials(broker, settings)
+        # to mirror these onto the live broker (and to wipe the cached
+        # token + canTrade cache so the next API call re-authenticates).
+        # The dashboard form covers USERNAME / API_KEY / ACCOUNT_ID /
+        # ENV; BASE_URL / WS_URL aren't editable from any UI today, so
+        # changes to them via env require a restart, but if they were
+        # written directly to the settings table the same refresh path
+        # would pick them up.
         "TOPSTEP_USERNAME",
         "TOPSTEP_API_KEY",
         "TOPSTEP_ACCOUNT_ID",
         "TOPSTEP_ENV",
         "TOPSTEP_BASE_URL",
         "TOPSTEP_WS_URL",
+        # Token + expiry are written by the broker after a successful
+        # /loginKey via the token sink (app/signal_router.py:28). They
+        # round-trip through the running broker on every refresh.
         "TOPSTEP_TOKEN",
         "TOPSTEP_TOKEN_EXPIRES_AT",
+        # Read per-request in /api/broker/order-history at
+        # app/main.py:726-727 (`settings.order_history_lookback_days` /
+        # `settings.order_history_limit`).
         "ORDER_HISTORY_LOOKBACK_DAYS",
         "ORDER_HISTORY_LIMIT",
+        # Read per-request in /api/realtime/state at app/main.py:792-796
+        # and rendered to the dashboard JS; no background subscription
+        # is started or stopped, so the next poll cycle picks up the
+        # change.
         "ENABLE_TOPSTEP_REALTIME",
         "TOPSTEP_REALTIME_MODE",
         "TOPSTEP_REALTIME_POLL_SECONDS",
-        # Auth settings take effect on the next login attempt — no
-        # restart needed because check_credentials reads them per-call.
+        # Auth settings — read per-call in app/auth.py:126 + :135 by
+        # check_credentials. No login session caches the values.
         "ADMIN_USERNAME",
         "ADMIN_PASSWORD_HASH",
     }
 )
 
 # Keys that require a restart to fully take effect.
+#
+# APP_HOST / APP_PORT are baked into the uvicorn bind at process start
+# (run.sh / sbctl); changing them in SQLite is persisted but the
+# running server keeps its original socket. BROKER_PROVIDER selects
+# which adapter is constructed in signal_router.build_broker once at
+# startup — post-collapse the only allowed value is ``topstep``, so
+# the operator never needs to change this, but if they did it would
+# need a restart to swap adapters.
 RESTART_REQUIRED: frozenset[str] = frozenset(
     {"APP_HOST", "APP_PORT", "BROKER_PROVIDER"}
 )
