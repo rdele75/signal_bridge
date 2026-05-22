@@ -353,6 +353,36 @@ def test_win_rate_helper(tmp_path: Path):
     assert rate == "66.7%"
 
 
+def test_format_dollar_pnl_helper():
+    """``_format_dollar_pnl`` renders ``+$X.XX`` / ``-$X.XX`` / ``N/A``
+    matching the dashboard polling JS exactly so a hard-load and a
+    poll-driven refresh of the same number can't disagree."""
+    assert dashboard_mod._format_dollar_pnl(0.0, closed_count=0) == "N/A"
+    assert dashboard_mod._format_dollar_pnl(12.5, closed_count=0) == "N/A"
+    assert dashboard_mod._format_dollar_pnl(0.0, closed_count=1) == "+$0.00"
+    assert dashboard_mod._format_dollar_pnl(12.5, closed_count=2) == "+$12.50"
+    assert dashboard_mod._format_dollar_pnl(-3.125, closed_count=4) == "-$3.12"
+
+
+def test_metrics_summary_exposes_daily_pnl_dollars(tmp_path: Path):
+    """``metrics_summary`` includes ``daily_pnl_dollars`` and a pre-
+    formatted ``daily_pnl_display`` so the dashboard hard-load and
+    the /api/metrics poll both speak in dollars."""
+    j = Journal(tmp_path / "metrics.db")
+    j.record_closed_trade(
+        symbol="MES1!", side="long", contracts=1,
+        entry_price=5000.0, exit_price=5002.0,
+        realized_pnl_points=2.0, broker_provider="topstep",
+    )
+    summary = dashboard_mod.metrics_summary(journal=j)
+    assert "daily_pnl_dollars" in summary
+    assert "daily_pnl_display" in summary
+    # 2.0 pts * $1.25 (MES1!) = $2.50
+    assert summary["daily_pnl_dollars"] == 2.5
+    assert summary["daily_pnl_display"] == "+$2.50"
+    assert summary["total_dollars"] == 2.5
+
+
 def test_total_points_percentage_helper(tmp_path: Path):
     j = Journal(tmp_path / "tpp.db")
     assert dashboard_mod.total_points_percentage(j) == "N/A"

@@ -254,7 +254,7 @@
 <section class="grid grid-3 section">
   <div class="card">
     <div class="card-label">P&amp;L</div>
-    <div class="card-value lg {{ 'good' if daily_pnl > 0 else ('bad' if daily_pnl < 0 else '') }}"
+    <div class="card-value lg {{ 'good' if daily_pnl_dollars > 0 else ('bad' if daily_pnl_dollars < 0 else '') }}"
          id="stat-daily-pnl">
       {{ daily_pnl_display }}
     </div>
@@ -887,14 +887,16 @@
         trd.textContent = body.accepted_today;
       }
 
-      // P&L — formatted client-side from raw daily_pnl. Server uses
-      // "{:+.2f} pts" when closed_total > 0, otherwise "N/A".
+      // P&L — formatted client-side from raw daily_pnl_dollars (the
+      // dollar sum the reconciliation paths persist per closed trade).
+      // Mirrors _format_dollar_pnl on the server: "+$X.XX" / "-$X.XX"
+      // with at least one closed trade, otherwise "N/A".
       var pnl = document.getElementById('stat-daily-pnl');
       var closedSub = document.getElementById('stat-closed-total');
-      if (pnl && typeof body.daily_pnl !== 'undefined' && typeof body.closed_total !== 'undefined') {
-        var rawPnl = Number(body.daily_pnl);
+      if (pnl && typeof body.daily_pnl_dollars !== 'undefined' && typeof body.closed_total !== 'undefined') {
+        var rawPnl = Number(body.daily_pnl_dollars);
         var display = body.closed_total > 0
-          ? (rawPnl >= 0 ? '+' : '') + rawPnl.toFixed(2) + ' pts'
+          ? (rawPnl >= 0 ? '+$' : '-$') + Math.abs(rawPnl).toFixed(2)
           : 'N/A';
         pnl.textContent = display;
         pnl.classList.toggle('good', body.closed_total > 0 && rawPnl > 0);

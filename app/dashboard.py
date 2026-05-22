@@ -81,6 +81,20 @@ def win_rate(journal: Journal, *, min_trades: int = 3) -> str:
     return f"{(wins / total) * 100:.1f}%"
 
 
+def _format_dollar_pnl(value: float, *, closed_count: int) -> str:
+    """Format today's realized dollar P&L for the dashboard card.
+
+    Mirrors the shape the polling JS produces client-side: a signed
+    ``$X.XX`` when there's at least one closed trade, ``N/A``
+    otherwise. The sign is explicit on positives so a winning day
+    isn't easy to misread as a small loss.
+    """
+    if not closed_count or closed_count <= 0:
+        return "N/A"
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}${abs(value):.2f}"
+
+
 def total_points_percentage(journal: Journal) -> str:
     """Total points expressed against the gross points traded.
 
@@ -159,10 +173,11 @@ def dashboard_summary(
     last_signal = journal.latest_signal()
     last_rejection = journal.latest_signal(decision="rejected")
     daily_pnl = journal.get_daily_pnl()
+    daily_pnl_dollars = journal.get_daily_pnl_dollars()
     closed = journal.closed_trade_stats()
 
-    pnl_display = (
-        f"{daily_pnl:+.2f} pts" if closed["total"] > 0 else "N/A"
+    pnl_display = _format_dollar_pnl(
+        daily_pnl_dollars, closed_count=closed["total"]
     )
 
     configured_provider = settings.resolved_provider
@@ -226,6 +241,7 @@ def dashboard_summary(
         "last_signal": _signal_for_display(last_signal),
         "last_rejection": _signal_for_display(last_rejection),
         "daily_pnl": daily_pnl,
+        "daily_pnl_dollars": daily_pnl_dollars,
         "daily_pnl_display": pnl_display,
         "closed_trade_total": closed["total"],
         "win_rate": win_rate(journal),
@@ -366,6 +382,7 @@ def metrics_summary(
 ) -> dict[str, Any]:
     closed = journal.closed_trade_stats()
     series = profit_series(journal, limit=100)
+    daily_pnl_dollars = journal.get_daily_pnl_dollars()
     return {
         "accepted_today": journal.count_today(decision="accepted"),
         "rejected_today": journal.count_today(decision="rejected"),
@@ -378,9 +395,14 @@ def metrics_summary(
         "closed_wins": closed["wins"],
         "closed_losses": closed["losses"],
         "total_points": closed["total_points"],
+        "total_dollars": closed.get("total_dollars", 0.0),
         "win_rate": win_rate(journal),
         "total_points_percentage": total_points_percentage(journal),
         "daily_pnl": journal.get_daily_pnl(),
+        "daily_pnl_dollars": daily_pnl_dollars,
+        "daily_pnl_display": _format_dollar_pnl(
+            daily_pnl_dollars, closed_count=closed["total"]
+        ),
         "profit_series": series,
         "profit_chart": _profit_chart(series),
         "past_orders": past_orders_summary(broker=broker, journal=journal),
