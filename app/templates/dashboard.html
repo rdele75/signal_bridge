@@ -254,14 +254,15 @@
 <section class="grid grid-3 section">
   <div class="card">
     <div class="card-label">P&amp;L</div>
-    <div class="card-value lg {{ 'good' if daily_pnl > 0 else ('bad' if daily_pnl < 0 else '') }}">
+    <div class="card-value lg {{ 'good' if daily_pnl > 0 else ('bad' if daily_pnl < 0 else '') }}"
+         id="stat-daily-pnl">
       {{ daily_pnl_display }}
     </div>
-    <div class="card-sub">closed trades: {{ closed_trade_total }}</div>
+    <div class="card-sub" id="stat-closed-total">closed trades: {{ closed_trade_total }}</div>
   </div>
   <div class="card">
     <div class="card-label">Win rate</div>
-    <div class="card-value lg {{ 'muted' if win_rate == 'N/A' else '' }}">{{ win_rate }}</div>
+    <div class="card-value lg {{ 'muted' if win_rate == 'N/A' else '' }}" id="stat-win-rate">{{ win_rate }}</div>
     <div class="card-sub">
       {% if win_rate == 'N/A' %}
         not enough closed trades yet
@@ -272,7 +273,8 @@
   </div>
   <div class="card">
     <div class="card-label">Total points %</div>
-    <div class="card-value lg {{ 'muted' if total_points_percentage == 'N/A' else '' }}">
+    <div class="card-value lg {{ 'muted' if total_points_percentage == 'N/A' else '' }}"
+         id="stat-total-points">
       {{ total_points_percentage }}
     </div>
     <div class="card-sub">net points per closed trade</div>
@@ -883,6 +885,37 @@
       // accepted-today bucket). Reuse the same value here.
       if (trd && typeof body.accepted_today !== 'undefined') {
         trd.textContent = body.accepted_today;
+      }
+
+      // P&L — formatted client-side from raw daily_pnl. Server uses
+      // "{:+.2f} pts" when closed_total > 0, otherwise "N/A".
+      var pnl = document.getElementById('stat-daily-pnl');
+      var closedSub = document.getElementById('stat-closed-total');
+      if (pnl && typeof body.daily_pnl !== 'undefined' && typeof body.closed_total !== 'undefined') {
+        var rawPnl = Number(body.daily_pnl);
+        var display = body.closed_total > 0
+          ? (rawPnl >= 0 ? '+' : '') + rawPnl.toFixed(2) + ' pts'
+          : 'N/A';
+        pnl.textContent = display;
+        pnl.classList.toggle('good', body.closed_total > 0 && rawPnl > 0);
+        pnl.classList.toggle('bad',  body.closed_total > 0 && rawPnl < 0);
+      }
+      if (closedSub && typeof body.closed_total !== 'undefined') {
+        closedSub.textContent = 'closed trades: ' + body.closed_total;
+      }
+
+      // Win rate — already formatted server-side as "65.0%" or "N/A".
+      var winRate = document.getElementById('stat-win-rate');
+      if (winRate && typeof body.win_rate !== 'undefined') {
+        winRate.textContent = body.win_rate;
+        winRate.classList.toggle('muted', body.win_rate === 'N/A');
+      }
+
+      // Total points % — already formatted server-side.
+      var totalPts = document.getElementById('stat-total-points');
+      if (totalPts && typeof body.total_points_percentage !== 'undefined') {
+        totalPts.textContent = body.total_points_percentage;
+        totalPts.classList.toggle('muted', body.total_points_percentage === 'N/A');
       }
     }
 
