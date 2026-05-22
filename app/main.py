@@ -247,6 +247,11 @@ def create_app() -> FastAPI:
     # Broker built first so the risk engine can consult it during
     # max_open_positions evaluation (H3).
     broker = build_broker(settings, journal, settings_store=settings_store)
+    # Periodic close-trade reconciliation backstops the reactive
+    # daemon spawned per-submit. It also catches positions opened
+    # directly in TopstepX. Daemon thread → no shutdown hook needed.
+    if isinstance(broker, TopstepBroker):
+        broker.start_periodic_reconciliation()
     risk = RiskEngine(
         settings=settings,
         journal=journal,

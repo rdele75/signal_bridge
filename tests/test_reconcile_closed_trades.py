@@ -401,3 +401,129 @@ def test_armed_exit_round_trip_writes_closed_trade(tmp_path, monkeypatch):
     # MES1! @ $1.25/pt × 6 pts × 1 contract = $7.50
     assert row["realized_pnl_dollars"] == 7.5
     assert row["topstep_order_id"] == "9001"
+
+
+# ---------------------------------------------------------------------------
+# Periodic reconciliation (D3)
+# ---------------------------------------------------------------------------
+
+
+def _make_armed_broker(journal: Journal) -> TopstepBroker:
+    b = _make_broker(journal)
+    b.execution_mode = "armed"
+    return b
+
+
+def _stub_history(broker: TopstepBroker, orders: list[dict],
+                  monkeypatch) -> None:
+    def _fake_history(self, *, start_timestamp=None, end_timestamp=None,
+                      lookback_days=None, limit=None):  # noqa: ARG001
+        return {"ok": True, "provider": "topstep", "orders": orders}
+    monkeypatch.setattr(broker.__class__, "get_order_history", _fake_history)
+
+
+def test_periodic_reconcile_skips_when_execution_off(tmp_path: Path):
+    """No fills should be reconciled while execution is off — the
+    operator hasn't armed; nothing should be opening or closing."""
+    j = Journal(tmp_path / "j.db")
+    broker = _make_broker(j)  # execution_mode defaults to armed in factory
+    broker.execution_mode = "off"
+    assert broker.periodic_reconcile_once() == 0
+
+
+def test_periodic_reconcile_dedupes_against_existing_close(
+    tmp_path: Path, monkeypatch
+):
+    """A fill the reactive path already recorded must not get a second
+    closed_trades row from the periodic sweep."""
+    j = Journal(tmp_path / "j.db")
+    _seed_entry(j, symbol="MES1!", action="BUY", price=5000.0)
+    j.record_closed_trade(
+        symbol="MES1!", side="long", contracts=1,
+        entry_price=5000.0, exit_price=5002.0,
+        realized_pnl_points=2.0,
+        broker_provider="topstep", topstep_order_id="9001",
+    )
+    broker = _make_armed_broker(j)
+    _stub_history(broker, [{
+        "orderId": "9001", "filledPrice": 5002.0, "size": 1, "side": 1,
+        "contractId": "CON.F.US.MES.M26",
+    }], monkeypatch)
+    assert broker.periodic_reconcile_once() == 0
+    assert len(j.list_recent_closed_trades(limit=5)) == 1
+
+
+def test_periodic_reconcile_records_orphan_fill(
+    tmp_path: Path, monkeypatch
+):
+    """A close that the reactive path missed (network blip, missed
+    /api/Order/search lookup) gets picked up by the periodic poll
+    and recorded with the correct dollar P&L."""
+    j = Journal(tmp_path / "j.db")
+    # Seed both an entry and the broker_symbol mapping by also writing
+    # the entry signal carrying broker_symbol so _resolve_symbol_for_order
+    # can map the contractId back to MES1!.
+    j.record_signal(
+        source="tradingview", strategy="orb", symbol="MES1!",
+        action="BUY", contracts=1, price=5000.0, order_id=None,
+        raw_payload={}, decision="accepted", rejection_reason=None,
+        execution_mode="armed", broker_provider="topstep",
+        broker_symbol="CON.F.US.MES.M26",
+    )
+    broker = _make_armed_broker(j)
+    _stub_history(broker, [{
+        "orderId": "9007", "filledPrice": 5005.0, "size": 1, "side": 1,
+        "contractId": "CON.F.US.MES.M26",
+    }], monkeypatch)
+    recorded = broker.periodic_reconcile_once()
+    assert recorded == 1
+    rows = j.list_recent_closed_trades(limit=5)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["topstep_order_id"] == "9007"
+    assert row["symbol"] == "MES1!"
+    assert row["entry_price"] == 5000.0
+    assert row["exit_price"] == 5005.0
+    assert row["realized_pnl_points"] == 5.0
+    assert row["realized_pnl_dollars"] == 6.25  # 5 pts * $1.25
+
+
+def test_periodic_reconcile_skips_unfilled_orders(
+    tmp_path: Path, monkeypatch
+):
+    """A working order (no filledPrice yet) is not yet a fill and
+    should not be recorded."""
+    j = Journal(tmp_path / "j.db")
+    _seed_entry(j, symbol="MES1!", action="BUY", price=5000.0)
+    broker = _make_armed_broker(j)
+    _stub_history(broker, [{
+        "orderId": "9008", "filledPrice": None, "size": 1, "side": 1,
+        "contractId": "CON.F.US.MES.M26",
+    }], monkeypatch)
+    assert broker.periodic_reconcile_once() == 0
+
+
+def test_periodic_reconcile_skips_orphan_with_no_open_entry(
+    tmp_path: Path, monkeypatch
+):
+    """A fill with no matching open entry — operator opened a
+    position directly in TopstepX before SignalBridge knew about
+    it — stays unrecorded (the periodic poll does not fabricate
+    a synthetic entry)."""
+    j = Journal(tmp_path / "j.db")
+    broker = _make_armed_broker(j)
+    _stub_history(broker, [{
+        "orderId": "9009", "filledPrice": 5002.0, "size": 1, "side": 1,
+        "contractId": "CON.F.US.MES.M26",
+    }], monkeypatch)
+    assert broker.periodic_reconcile_once() == 0
+
+
+def test_start_periodic_reconciliation_is_idempotent(tmp_path: Path):
+    j = Journal(tmp_path / "j.db")
+    broker = _make_armed_broker(j)
+    t1 = broker.start_periodic_reconciliation(interval_seconds=3600)
+    t2 = broker.start_periodic_reconciliation(interval_seconds=3600)
+    assert t1 is not None
+    assert t2 is None
+    broker.stop_periodic_reconciliation()

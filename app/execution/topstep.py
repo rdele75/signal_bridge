@@ -1411,6 +1411,217 @@ class TopstepBroker(BrokerBase):
         }
 
     # ------------------------------------------------------------------
+    # Periodic close-trade reconciliation
+    #
+    # Backstops the reactive path (which races a 2-3s sleep against
+    # /api/Order/search latency). Every ~60s the loop fetches the
+    # last 5 minutes of order history and reconciles any filled
+    # closing-side order whose id isn't already in ``closed_trades``.
+    # This also catches positions opened directly on TopstepX — the
+    # operator can open a manual trade, exit it, and the periodic
+    # poll will surface the close in the dashboard's P&L card.
+    # ------------------------------------------------------------------
+
+    DEFAULT_PERIODIC_RECONCILE_INTERVAL_SECONDS: int = 60
+    PERIODIC_RECONCILE_LOOKBACK_MINUTES: int = 5
+
+    def start_periodic_reconciliation(
+        self,
+        *,
+        interval_seconds: Optional[int] = None,
+    ) -> Optional[threading.Thread]:
+        """Spawn the daemon that periodically reconciles Topstep fills.
+
+        Returns the started thread, or ``None`` when there's no
+        journal wired in (tests, or a broker constructed without
+        one). Safe to call more than once: subsequent calls return
+        ``None`` if a loop is already running.
+        """
+        if self.journal is None:
+            log.debug("periodic reconcile not started: no journal")
+            return None
+        if getattr(self, "_periodic_reconcile_thread", None) is not None:
+            return None
+        self._periodic_reconcile_stop = threading.Event()
+        interval = int(
+            interval_seconds
+            or self.DEFAULT_PERIODIC_RECONCILE_INTERVAL_SECONDS
+        )
+        thread = threading.Thread(
+            target=self._periodic_reconcile_loop,
+            args=(interval,),
+            daemon=True,
+            name="signalbridge-periodic-reconcile",
+        )
+        self._periodic_reconcile_thread = thread
+        thread.start()
+        log.info(
+            "signalbridge periodic_reconcile started interval_seconds=%d "
+            "lookback_minutes=%d",
+            interval,
+            self.PERIODIC_RECONCILE_LOOKBACK_MINUTES,
+        )
+        return thread
+
+    def stop_periodic_reconciliation(self) -> None:
+        """Signal the daemon to stop and clear the handle. The thread
+        is daemon so the process can exit without waiting on it; this
+        is mostly for tests."""
+        evt = getattr(self, "_periodic_reconcile_stop", None)
+        if evt is not None:
+            evt.set()
+        self._periodic_reconcile_thread = None
+
+    def _periodic_reconcile_loop(self, interval_seconds: int) -> None:
+        stop = getattr(self, "_periodic_reconcile_stop", None)
+        if stop is None:
+            return
+        # Run once at startup, then back off on the interval. The
+        # ``wait`` returns True if stop was set — terminate cleanly.
+        while True:
+            try:
+                self.periodic_reconcile_once()
+            except Exception:  # pragma: no cover - daemon thread guard
+                log.warning(
+                    "signalbridge periodic_reconcile loop crashed",
+                    exc_info=True,
+                )
+            if stop.wait(interval_seconds):
+                return
+
+    def periodic_reconcile_once(self) -> int:
+        """Single sweep of the periodic reconciliation logic. Returns
+        the number of new ``closed_trades`` rows written this sweep
+        (useful for tests).
+
+        Skips when execution is off (no orders can be opening or
+        closing). Always logs a one-line summary at INFO level when
+        new closes are reconciled so an operator can grep
+        ``periodic_reconcile`` in the log to audit activity.
+        """
+        if self.journal is None:
+            return 0
+        if (self.execution_mode or "off").lower() == "off":
+            return 0
+        start_ts = (
+            datetime.now(timezone.utc)
+            - timedelta(minutes=self.PERIODIC_RECONCILE_LOOKBACK_MINUTES)
+        ).isoformat()
+        end_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            history = self.get_order_history(
+                start_timestamp=start_ts, end_timestamp=end_ts
+            )
+        except Exception:  # pragma: no cover - defensive
+            log.warning(
+                "signalbridge periodic_reconcile get_order_history raised",
+                exc_info=True,
+            )
+            return 0
+        if not history.get("ok"):
+            log.warning(
+                "signalbridge periodic_reconcile fetch not_ok status=%s",
+                history.get("status"),
+            )
+            return 0
+        recorded = 0
+        for row in history.get("orders") or []:
+            if not isinstance(row, dict):
+                continue
+            order_id = row.get("orderId")
+            if not order_id:
+                continue
+            if row.get("filledPrice") is None:
+                # No fill yet — skip silently.
+                continue
+            order_id_str = str(order_id)
+            if self.journal.closed_trade_exists_for_order_id(order_id_str):
+                continue
+            symbol = self._resolve_symbol_for_order(row)
+            if symbol is None:
+                continue
+            entry = self.journal.find_open_entry_for_symbol(symbol)
+            if entry is None:
+                # No open entry to pair with — either this is an
+                # opening order (which we don't record) or it's a
+                # close from a position opened directly in TopstepX
+                # before SignalBridge had a chance to journal it. We
+                # don't fabricate an entry; the close stays unmatched.
+                continue
+            synthetic = self._synthesize_close_signal(
+                row=row, symbol=symbol, fallback_entry=entry
+            )
+            self._record_reconciled_close(
+                signal=synthetic,
+                broker_order_id=order_id_str,
+                fill=row,
+                source="periodic",
+            )
+            recorded += 1
+        if recorded:
+            log.info(
+                "signalbridge periodic_reconcile recorded=%d closes",
+                recorded,
+            )
+        return recorded
+
+    def _resolve_symbol_for_order(
+        self, row: dict[str, Any]
+    ) -> Optional[str]:
+        """Map a normalized order row back to a TradingView ticker.
+
+        The journal stores signals keyed on the TradingView symbol
+        (``MES1!``) but Topstep orders carry the ProjectX contractId
+        (``CON.F.US.MES.M26``). We look up the most-recent accepted
+        entry whose ``broker_symbol`` matches and return its symbol.
+        Returns ``None`` when no match can be inferred — the periodic
+        loop logs nothing and moves on; the dashboard simply won't
+        reflect the orphan.
+        """
+        contract_id = row.get("contractId")
+        if not contract_id or self.journal is None:
+            return None
+        with self.journal._lock, self.journal._conn() as conn:
+            cur = conn.execute(
+                """
+                SELECT symbol FROM signals
+                WHERE broker_symbol = ? AND symbol IS NOT NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (contract_id,),
+            )
+            r = cur.fetchone()
+            return r["symbol"] if r else None
+
+    def _synthesize_close_signal(
+        self,
+        *,
+        row: dict[str, Any],
+        symbol: str,
+        fallback_entry: dict[str, Any],
+    ) -> NormalizedSignal:
+        """Build a minimal ``NormalizedSignal`` for the recorder. The
+        periodic poll doesn't see the original webhook signal — it
+        only has the order row and the prior entry it's pairing with.
+        """
+        contracts = int(row.get("size") or fallback_entry.get("contracts") or 1)
+        return NormalizedSignal(
+            source="topstep-periodic",
+            strategy=None,
+            symbol=symbol,
+            broker_symbol=row.get("contractId"),
+            exchange=None,
+            action="COVER",  # closing action; direction comes from entry
+            contracts=contracts,
+            price=row.get("filledPrice"),
+            order_id=str(row.get("orderId") or ""),
+            comment="periodic reconciliation",
+            timeframe=None,
+            raw={},
+        )
+
+    # ------------------------------------------------------------------
     # Reactive close-trade reconciliation
     #
     # Topstep doesn't fill orders synchronously in the /api/Order/place
