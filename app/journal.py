@@ -60,10 +60,14 @@ CREATE TABLE IF NOT EXISTS closed_trades (
     entry_price REAL,
     exit_price REAL,
     realized_pnl_points REAL NOT NULL DEFAULT 0,
-    broker_provider TEXT
+    realized_pnl_dollars REAL,
+    broker_provider TEXT,
+    topstep_order_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_closed_trades_closed_at ON closed_trades(closed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_closed_trades_topstep_order_id
+    ON closed_trades(topstep_order_id) WHERE topstep_order_id IS NOT NULL;
 """
 
 
@@ -153,6 +157,31 @@ class Journal:
             ):
                 if col not in existing:
                     conn.execute(ddl)
+            closed_cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(closed_trades)")
+            }
+            for col, ddl in (
+                (
+                    "realized_pnl_dollars",
+                    "ALTER TABLE closed_trades ADD COLUMN realized_pnl_dollars REAL",
+                ),
+                (
+                    "topstep_order_id",
+                    "ALTER TABLE closed_trades ADD COLUMN topstep_order_id TEXT",
+                ),
+            ):
+                if col not in closed_cols:
+                    conn.execute(ddl)
+            # The unique index is declared in _SCHEMA but partial indexes
+            # weren't supported on every prior SQLite; ensure it exists
+            # after ALTERing in the column.
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "idx_closed_trades_topstep_order_id "
+                "ON closed_trades(topstep_order_id) "
+                "WHERE topstep_order_id IS NOT NULL"
+            )
 
     # ----- Signal log -----
 
@@ -286,53 +315,37 @@ class Journal:
             row = cur.fetchone()
             return float(row["realized_pnl"]) if row else 0.0
 
-    def get_daily_pnl_dollars(self) -> float:
-        """Return today's realized P&L converted to dollars per
-        instrument's point value.
+    def get_daily_pnl_dollars(
+        self, trade_date: Optional[str] = None
+    ) -> float:
+        """Sum today's ``realized_pnl_dollars`` from ``closed_trades``.
 
-        Iterates today's ``closed_trades`` (UTC window aligned to the
-        configured trading-day timezone), multiplies each row's
-        ``realized_pnl_points`` by the per-instrument dollar value
-        from ``INSTRUMENT_POINT_VALUES_USD``, and returns the sum.
+        The per-instrument USD multiplier is applied at reconciliation
+        time (see ``app/execution/topstep.py``'s reactive and periodic
+        close-trade paths) and persisted on each row, so this method
+        is a straight SQL ``SUM`` over the trading-day window. Rows
+        for symbols missing from ``INSTRUMENT_POINT_VALUES_USD`` land
+        with ``realized_pnl_dollars=NULL`` and are silently excluded
+        from the total — the WARNING is emitted once per close at
+        reconciliation time so the operator can extend the table.
 
-        Symbols missing from the table contribute ``0.0`` and emit a
-        single WARNING per unknown symbol per call — the daily-loss
-        cap will under-count for those instruments, which is the safe
-        direction for the operator to notice in the logs and fix by
-        extending the table rather than for the cap to enforce the
-        wrong number silently.
+        ``trade_date`` is accepted for parity with ``get_daily_pnl``
+        but the window is always derived from today's boundary in
+        the configured trading-day timezone.
         """
-        from .risk_engine import INSTRUMENT_POINT_VALUES_USD
-
+        del trade_date  # signature parity with get_daily_pnl
         start_utc, end_utc = self._today_utc_window()
         with self._lock, self._conn() as conn:
             cur = conn.execute(
                 """
-                SELECT symbol, COALESCE(SUM(realized_pnl_points), 0.0) AS pts
+                SELECT COALESCE(SUM(realized_pnl_dollars), 0.0) AS total
                 FROM closed_trades
                 WHERE closed_at >= ? AND closed_at < ?
-                GROUP BY symbol
                 """,
                 (start_utc, end_utc),
             )
-            rows = [(r["symbol"], float(r["pts"] or 0.0)) for r in cur.fetchall()]
-
-        total_dollars = 0.0
-        for symbol, points in rows:
-            multiplier = INSTRUMENT_POINT_VALUES_USD.get(symbol, 0.0)
-            if multiplier == 0.0 and points != 0.0:
-                log.warning(
-                    "get_daily_pnl_dollars: no point value for symbol %r — "
-                    "today's %.4f points contributes $0 to the daily loss "
-                    "cap. Add %r to INSTRUMENT_POINT_VALUES_USD in "
-                    "app/risk_engine.py if you trade it.",
-                    symbol,
-                    points,
-                    symbol,
-                )
-                continue
-            total_dollars += points * multiplier
-        return total_dollars
+            row = cur.fetchone()
+            return float(row["total"] or 0.0) if row else 0.0
 
     def add_daily_pnl(self, amount: float, trade_date: Optional[str] = None) -> None:
         if trade_date is None:
@@ -359,16 +372,42 @@ class Journal:
         entry_price: Optional[float],
         exit_price: Optional[float],
         realized_pnl_points: float,
+        realized_pnl_dollars: Optional[float] = None,
         broker_provider: Optional[str] = None,
+        topstep_order_id: Optional[str] = None,
     ) -> int:
+        # Auto-derive the dollar P&L from points × per-instrument
+        # multiplier when the caller didn't supply one. Symbols not in
+        # the multiplier table land with NULL and a one-shot WARNING so
+        # the operator can extend it. The dashboard's dollar P&L card
+        # and the daily-loss cap both read this column, so the single
+        # write here keeps the two surfaces in sync.
+        if realized_pnl_dollars is None:
+            from .risk_engine import INSTRUMENT_POINT_VALUES_USD
+
+            multiplier = INSTRUMENT_POINT_VALUES_USD.get(symbol)
+            if multiplier is None:
+                if realized_pnl_points != 0.0:
+                    log.warning(
+                        "record_closed_trade: no point value for symbol %r "
+                        "— %.4f points won't contribute to dollar P&L or "
+                        "the daily-loss cap. Add %r to "
+                        "INSTRUMENT_POINT_VALUES_USD in app/risk_engine.py.",
+                        symbol,
+                        realized_pnl_points,
+                        symbol,
+                    )
+            else:
+                realized_pnl_dollars = float(realized_pnl_points) * float(multiplier)
         with self._lock, self._conn() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO closed_trades (
                     closed_at, symbol, side, contracts,
                     entry_price, exit_price, realized_pnl_points,
-                    broker_provider
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    realized_pnl_dollars, broker_provider,
+                    topstep_order_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _utcnow_iso(),
@@ -378,10 +417,31 @@ class Journal:
                     entry_price,
                     exit_price,
                     float(realized_pnl_points),
+                    (
+                        float(realized_pnl_dollars)
+                        if realized_pnl_dollars is not None
+                        else None
+                    ),
                     broker_provider,
+                    topstep_order_id,
                 ),
             )
             return int(cur.lastrowid)
+
+    def closed_trade_exists_for_order_id(self, topstep_order_id: str) -> bool:
+        """True iff a ``closed_trades`` row already carries this Topstep
+        order id. Used by both the reactive (post-submit) and periodic
+        reconciliation paths to avoid double-recording the same fill.
+        Returns False when the id is empty so callers can pass through
+        legacy paper-trade closes that have no broker order id."""
+        if not topstep_order_id:
+            return False
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                "SELECT 1 FROM closed_trades WHERE topstep_order_id = ? LIMIT 1",
+                (str(topstep_order_id),),
+            )
+            return cur.fetchone() is not None
 
     def list_recent_closed_trades(self, *, limit: int = 50) -> list[dict[str, Any]]:
         with self._lock, self._conn() as conn:
@@ -399,7 +459,8 @@ class Journal:
                     COUNT(*)               AS total,
                     SUM(CASE WHEN realized_pnl_points > 0 THEN 1 ELSE 0 END) AS wins,
                     SUM(CASE WHEN realized_pnl_points < 0 THEN 1 ELSE 0 END) AS losses,
-                    COALESCE(SUM(realized_pnl_points), 0) AS total_points
+                    COALESCE(SUM(realized_pnl_points), 0) AS total_points,
+                    COALESCE(SUM(realized_pnl_dollars), 0) AS total_dollars
                 FROM closed_trades
                 """
             )
@@ -408,11 +469,13 @@ class Journal:
             wins = int(row["wins"] or 0)
             losses = int(row["losses"] or 0)
             total_points = float(row["total_points"] or 0.0)
+            total_dollars = float(row["total_dollars"] or 0.0)
             return {
                 "total": total,
                 "wins": wins,
                 "losses": losses,
                 "total_points": total_points,
+                "total_dollars": total_dollars,
             }
 
     # ----- Reporting / dashboard aggregations -----
