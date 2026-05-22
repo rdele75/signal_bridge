@@ -333,6 +333,17 @@ class TopstepBroker(BrokerBase):
     def authenticate(self) -> dict[str, Any]:
         if not self._has_required_credentials():
             return self._missing_credentials_envelope()
+        # Short-circuit: if we have a valid cached token, reuse it.
+        # Without this, every /api/broker/status poll re-auths against
+        # /api/Auth/loginKey — wasteful given the 5s dashboard polling.
+        if self._is_token_valid():
+            return {
+                "ok": True,
+                "status": "cached",
+                "token": self.token,
+                "token_expires_at": self.token_expires_at,
+                "credentials": self._credentials_summary(),
+            }
 
         # Belt-and-braces: __init__ already strips, but if a caller mutated
         # the attrs directly we still want to send a clean payload.
