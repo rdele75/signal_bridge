@@ -66,8 +66,6 @@ CREATE TABLE IF NOT EXISTS closed_trades (
 );
 
 CREATE INDEX IF NOT EXISTS idx_closed_trades_closed_at ON closed_trades(closed_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_closed_trades_topstep_order_id
-    ON closed_trades(topstep_order_id) WHERE topstep_order_id IS NOT NULL;
 """
 
 
