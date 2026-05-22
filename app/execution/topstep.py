@@ -37,14 +37,19 @@ flips state atomically.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 import httpx
 
 from ..schemas import ExecutionResult, NormalizedSignal
 from .broker_base import BrokerBase
 from .topstep_order_builder import build_market_order_payload
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance
+    from ..journal import Journal
 
 
 log = logging.getLogger("signalbridge.broker.topstep")
@@ -141,6 +146,7 @@ class TopstepBroker(BrokerBase):
         max_contracts_per_trade: int = 1,
         kill_switch_active: bool = False,
         kill_switch_enabled: bool = True,
+        journal: Optional["Journal"] = None,
     ) -> None:
         # Strip credentials on load: stray whitespace in the dashboard /
         # .env was the cause of phantom errorCode=3 responses that worked
@@ -175,6 +181,11 @@ class TopstepBroker(BrokerBase):
         self.max_contracts_per_trade = int(max_contracts_per_trade or 1)
         self.kill_switch_active = bool(kill_switch_active)
         self.kill_switch_enabled = bool(kill_switch_enabled)
+        # Journal handle is optional so test harnesses can construct
+        # the adapter without one. When set, ``submit_market_order``
+        # spawns a daemon thread on each EXIT/COVER to look up the
+        # fill via ``/api/Order/search`` and persist a closed_trade.
+        self.journal: Optional["Journal"] = journal
 
     # ------------------------------------------------------------------
     # Credential helpers
@@ -1348,6 +1359,12 @@ class TopstepBroker(BrokerBase):
         )
 
         if http_status == 200 and success_flag and order_id is not None:
+            # Spawn a daemon thread to look up the fill from
+            # /api/Order/search and persist a closed_trades row when
+            # the submitted order was an EXIT/COVER. The thread does
+            # NOT block the webhook response — submission acks in the
+            # foreground; reconciliation runs in the background.
+            self._spawn_fill_reconcile_thread(signal, str(order_id))
             return {
                 "ok": True,
                 "accepted": True,
@@ -1392,6 +1409,271 @@ class TopstepBroker(BrokerBase):
                 "errorMessage": error_message,
             },
         }
+
+    # ------------------------------------------------------------------
+    # Reactive close-trade reconciliation
+    #
+    # Topstep doesn't fill orders synchronously in the /api/Order/place
+    # response — the placed order acks with an orderId, then the fill
+    # surfaces on /api/Order/search 1-2s later. To populate the
+    # dashboard's P&L card the moment a close trade settles, every
+    # armed EXIT/COVER submission spawns a daemon thread that polls
+    # the order back and pairs it FIFO against the oldest unmatched
+    # entry signal for the symbol. The periodic poll (D3) backstops
+    # this path so transient API failures don't permanently lose a
+    # close.
+    # ------------------------------------------------------------------
+
+    # Actions whose successful fill closes an existing position. SELL
+    # is excluded here — the SignalBridge risk engine treats SELL as a
+    # short-entry, not a long-exit, so a SELL submission opens a short
+    # rather than closing a long. EXIT and COVER are the unambiguous
+    # close-side actions.
+    _CLOSING_ACTIONS: frozenset[str] = frozenset({"EXIT", "COVER"})
+
+    def _spawn_fill_reconcile_thread(
+        self, signal: NormalizedSignal, broker_order_id: str
+    ) -> Optional[threading.Thread]:
+        """Spawn the daemon that reconciles a Topstep fill into the
+        journal's ``closed_trades`` table. Returns the started thread
+        for tests; in production the result is ignored.
+
+        Skips the spawn (and logs at DEBUG) when:
+        * the signal isn't a close-side action,
+        * no journal was wired into the adapter,
+        * the broker order id is empty.
+        """
+        if self.journal is None:
+            log.debug(
+                "reconcile skip: no journal handle (order_id=%s)",
+                broker_order_id,
+            )
+            return None
+        if not broker_order_id:
+            return None
+        action = (signal.action or "").upper()
+        if action not in self._CLOSING_ACTIONS:
+            return None
+        thread = threading.Thread(
+            target=self._reconcile_fill_after_submit,
+            args=(signal, broker_order_id),
+            daemon=True,
+            name=f"signalbridge-reconcile-{broker_order_id}",
+        )
+        thread.start()
+        return thread
+
+    def _reconcile_fill_after_submit(
+        self, signal: NormalizedSignal, broker_order_id: str
+    ) -> None:
+        """Background body of the reactive reconciliation thread.
+
+        Sleeps briefly to let Topstep reflect the fill, fetches recent
+        orders, pairs the fill with an open entry, and records a
+        ``closed_trades`` row. Never raises — exceptions are logged so
+        a daemon thread can't crash the process.
+        """
+        try:
+            self._do_reconcile(signal, broker_order_id, attempt=1)
+        except Exception:  # pragma: no cover - daemon thread guard
+            log.warning(
+                "signalbridge closed_trade reconciliation crashed for "
+                "order_id=%s",
+                broker_order_id,
+                exc_info=True,
+            )
+
+    def _do_reconcile(
+        self,
+        signal: NormalizedSignal,
+        broker_order_id: str,
+        *,
+        attempt: int,
+    ) -> None:
+        """Single reconciliation attempt. Sleeps, fetches, pairs, writes.
+
+        ``attempt`` is 1 on the initial run and 2 on the retry. The
+        retry uses a longer sleep to give Topstep more time to reflect
+        a slow fill. After attempt 2 with no fill, the periodic poll
+        will pick it up later.
+        """
+        sleep_seconds = 2.0 if attempt == 1 else 3.0
+        time.sleep(sleep_seconds)
+        if self.journal is None:  # pragma: no cover - guarded above
+            return
+        if self.journal.closed_trade_exists_for_order_id(broker_order_id):
+            return
+        fill = self._lookup_recent_fill(broker_order_id)
+        if fill is None:
+            if attempt < 2:
+                self._do_reconcile(signal, broker_order_id, attempt=attempt + 1)
+                return
+            log.warning(
+                "signalbridge closed_trade fill_not_found order_id=%s "
+                "symbol=%s — periodic poll will retry",
+                broker_order_id,
+                signal.symbol,
+            )
+            return
+        self._record_reconciled_close(
+            signal=signal,
+            broker_order_id=broker_order_id,
+            fill=fill,
+            source="reactive",
+        )
+
+    def _lookup_recent_fill(
+        self, broker_order_id: str
+    ) -> Optional[dict[str, Any]]:
+        """Return the normalized order row matching ``broker_order_id``
+        from a ``/api/Order/search`` window covering the last 2 minutes,
+        or ``None`` on miss/error. Errors are logged at WARNING — the
+        periodic poll will retry. ``filledPrice`` may still be missing
+        when Topstep hasn't reflected the fill yet; callers should
+        treat a row without a fill price as a miss too.
+        """
+        start_ts = (
+            datetime.now(timezone.utc) - timedelta(minutes=2)
+        ).isoformat()
+        end_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            history = self.get_order_history(
+                start_timestamp=start_ts, end_timestamp=end_ts
+            )
+        except Exception:  # pragma: no cover - defensive
+            log.warning(
+                "signalbridge closed_trade get_order_history raised "
+                "order_id=%s",
+                broker_order_id,
+                exc_info=True,
+            )
+            return None
+        if not history.get("ok"):
+            log.warning(
+                "signalbridge closed_trade search_orders not_ok "
+                "order_id=%s status=%s",
+                broker_order_id,
+                history.get("status"),
+            )
+            return None
+        for row in history.get("orders") or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("orderId") or "") != broker_order_id:
+                continue
+            fill_price = row.get("filledPrice")
+            if fill_price is None:
+                continue
+            return row
+        return None
+
+    def _record_reconciled_close(
+        self,
+        *,
+        signal: NormalizedSignal,
+        broker_order_id: str,
+        fill: dict[str, Any],
+        source: str,
+    ) -> None:
+        """Pair ``fill`` with an open entry signal and persist a
+        ``closed_trades`` row. ``source`` is just a log token so the
+        operator can ``grep`` reactive vs. periodic activity.
+        """
+        from ..risk_engine import INSTRUMENT_POINT_VALUES_USD
+
+        if self.journal is None:  # pragma: no cover - guarded
+            return
+        symbol = signal.symbol
+        entry = self.journal.find_open_entry_for_symbol(symbol)
+        if entry is None:
+            log.warning(
+                "signalbridge closed_trade no_open_entry symbol=%s "
+                "order_id=%s source=%s — fill is unmatched",
+                symbol,
+                broker_order_id,
+                source,
+            )
+            return
+        try:
+            exit_price = float(fill.get("filledPrice"))
+        except (TypeError, ValueError):
+            log.warning(
+                "signalbridge closed_trade bad_fill_price order_id=%s "
+                "value=%r",
+                broker_order_id,
+                fill.get("filledPrice"),
+            )
+            return
+        try:
+            entry_price = (
+                float(entry["price"]) if entry.get("price") is not None else None
+            )
+        except (TypeError, ValueError):
+            entry_price = None
+        if entry_price is None:
+            log.warning(
+                "signalbridge closed_trade missing_entry_price order_id=%s "
+                "entry_signal_id=%s — recording with NULL entry_price",
+                broker_order_id,
+                entry.get("id"),
+            )
+        # FIFO sizing: a partial-close shrinks the matched entry's
+        # contract count but the simple model records ONE row per fill
+        # at the smaller of the entry's size and the fill's size. The
+        # periodic poll catches anything the simple path misses (e.g.
+        # multi-leg partials).
+        entry_contracts = int(entry.get("contracts") or 0)
+        fill_size = int(fill.get("size") or 0)
+        if entry_contracts <= 0 or fill_size <= 0:
+            contracts_closed = max(entry_contracts, fill_size, 1)
+        else:
+            contracts_closed = min(entry_contracts, fill_size)
+        entry_action = (entry.get("action") or "").upper()
+        is_long_entry = entry_action in {"BUY", "LONG"}
+        side_label = "long" if is_long_entry else "short"
+        direction = 1.0 if is_long_entry else -1.0
+        if entry_price is None:
+            pnl_points = 0.0
+        else:
+            pnl_points = (exit_price - entry_price) * direction
+        multiplier = INSTRUMENT_POINT_VALUES_USD.get(symbol)
+        pnl_dollars: Optional[float]
+        if multiplier is None:
+            log.warning(
+                "signalbridge closed_trade no_multiplier symbol=%s "
+                "order_id=%s — pnl_dollars=NULL (won't contribute to the "
+                "daily-loss cap or dashboard $ P&L)",
+                symbol,
+                broker_order_id,
+            )
+            pnl_dollars = None
+        else:
+            pnl_dollars = pnl_points * multiplier * contracts_closed
+        self.journal.record_closed_trade(
+            symbol=symbol,
+            side=side_label,
+            contracts=contracts_closed,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            realized_pnl_points=pnl_points,
+            realized_pnl_dollars=pnl_dollars,
+            broker_provider=self.provider,
+            topstep_order_id=broker_order_id,
+        )
+        log.info(
+            "signalbridge closed_trade source=%s symbol=%s side=%s "
+            "contracts=%d entry=%s exit=%.4f pnl_points=%.4f "
+            "pnl_dollars=%s order_id=%s",
+            source,
+            symbol,
+            side_label,
+            contracts_closed,
+            f"{entry_price:.4f}" if entry_price is not None else "n/a",
+            exit_price,
+            pnl_points,
+            f"{pnl_dollars:.2f}" if pnl_dollars is not None else "n/a",
+            broker_order_id,
+        )
 
     # ------------------------------------------------------------------
     # Exit helpers (flatten / cancel)

@@ -237,6 +237,54 @@ class Journal:
             )
             return int(cur.lastrowid)
 
+    # Action labels treated as entry-direction signals (open a position).
+    # EXIT/COVER are exits and are matched against these via FIFO. Stored
+    # uppercase to match the journal's normalized action labels.
+    _ENTRY_ACTIONS: tuple[str, ...] = ("BUY", "SHORT", "SELL")
+
+    def find_open_entry_for_symbol(
+        self, symbol: str
+    ) -> Optional[dict[str, Any]]:
+        """Return the oldest accepted entry signal for ``symbol`` that
+        has not yet been paired with a ``closed_trades`` row.
+
+        Pairing model: closed_trades are recorded in submission order
+        by the reactive + periodic reconciliation paths in the Topstep
+        adapter. Each closed_trade row consumes one entry signal. So
+        the next entry to consume is the (N+1)-th oldest entry, where
+        N is the number of existing closes for the symbol. Returns
+        ``None`` when there's no unmatched entry — the reconciler will
+        log a WARNING and skip recording (a position opened directly
+        on TopstepX, or a position already closed by a prior poll).
+        """
+        if not symbol:
+            return None
+        with self._lock, self._conn() as conn:
+            placeholders = ",".join("?" * len(self._ENTRY_ACTIONS))
+            entries = list(
+                conn.execute(
+                    f"""
+                    SELECT id, received_at, symbol, action, contracts,
+                           price, broker_provider, order_id
+                    FROM signals
+                    WHERE symbol = ? AND decision = 'accepted'
+                      AND UPPER(action) IN ({placeholders})
+                    ORDER BY id ASC
+                    """,
+                    (symbol, *self._ENTRY_ACTIONS),
+                ).fetchall()
+            )
+            if not entries:
+                return None
+            cur = conn.execute(
+                "SELECT COUNT(*) AS c FROM closed_trades WHERE symbol = ?",
+                (symbol,),
+            )
+            closes_count = int(cur.fetchone()["c"])
+            if closes_count >= len(entries):
+                return None
+            return dict(entries[closes_count])
+
     def find_recent_order_id(
         self, order_id: str, *, within_seconds: int
     ) -> Optional[sqlite3.Row]:

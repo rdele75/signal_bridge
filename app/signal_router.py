@@ -42,12 +42,10 @@ def build_broker(
 ) -> BrokerBase:
     """Build the Topstep adapter.
 
-    ``journal`` is accepted for API compatibility with the pre-collapse
-    paper-broker constructor but is unused — Topstep doesn't hydrate
-    in-memory state from the journal. Removing the parameter would
-    ripple through several callers; leaving it costs nothing.
+    ``journal`` is threaded into the adapter so the reactive and
+    periodic close-trade reconciliation paths can persist
+    ``closed_trades`` rows after a fill lands.
     """
-    del journal  # unused post-collapse
     token_sink = (
         _topstep_token_sink(settings, settings_store)
         if settings_store is not None
@@ -68,6 +66,7 @@ def build_broker(
         allowed_symbols=settings.allowed_symbols,
         max_contracts_per_trade=settings.max_contracts_per_trade,
         kill_switch_enabled=settings.enable_kill_switch,
+        journal=journal,
     )
 
 
