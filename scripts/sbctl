@@ -8,11 +8,21 @@
 #   logs/server.out            captured stdout/stderr of the server
 #   logs/signalbridge.log      application logger output (rotated)
 #
-# Commands: start | stop | restart | status | logs | health | audit
+# Commands:
+#   Lifecycle:    start | stop | restart | status
+#   Observe:      logs | tail | health | audit | env
+#   Execution:    mode | arm | disarm | flatten
+#   Testing:      test | smoke
+#   Maintenance:  backup
 #
 # Defaults to host 127.0.0.1 and port 8000. APP_HOST/APP_PORT in .env
 # override; pass --host / --port to override the env. Tailscale Funnel
 # (and any other public proxy) should forward to 127.0.0.1:8000.
+#
+# Admin-API commands (mode/arm/disarm/flatten/smoke) read ADMIN_USERNAME
+# and ADMIN_PASSWORD from .env and authenticate via HTTP Basic. If only
+# ADMIN_PASSWORD_HASH is set, those commands refuse — the dashboard
+# remains the way to drive them.
 set -euo pipefail
 
 # Resolve PROJECT_ROOT from the script's location so `sbctl` works the
@@ -57,6 +67,64 @@ load_env_host_port() {
   HOST_VALUE="${HOST_VALUE%\'}"; HOST_VALUE="${HOST_VALUE#\'}"
   PORT_VALUE="${PORT_VALUE%\"}"; PORT_VALUE="${PORT_VALUE#\"}"
   PORT_VALUE="${PORT_VALUE%\'}"; PORT_VALUE="${PORT_VALUE#\'}"
+}
+
+load_env_admin_auth() {
+  # Reads ADMIN_USERNAME / ADMIN_PASSWORD / ADMIN_PASSWORD_HASH from
+  # .env into shell vars. Used by anything that POSTs to the admin
+  # API. Refuses if only the hash is set, since we can't reconstruct
+  # the plaintext for Basic auth.
+  ADMIN_USERNAME_VALUE="admin"
+  ADMIN_PASSWORD_VALUE=""
+  ADMIN_PASSWORD_HASH_VALUE=""
+  if [ -f "$PROJECT_ROOT/.env" ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        ADMIN_USERNAME=*) ADMIN_USERNAME_VALUE="${line#ADMIN_USERNAME=}" ;;
+        ADMIN_PASSWORD=*) ADMIN_PASSWORD_VALUE="${line#ADMIN_PASSWORD=}" ;;
+        ADMIN_PASSWORD_HASH=*) ADMIN_PASSWORD_HASH_VALUE="${line#ADMIN_PASSWORD_HASH=}" ;;
+      esac
+    done < "$PROJECT_ROOT/.env"
+  fi
+  ADMIN_USERNAME_VALUE="${ADMIN_USERNAME_VALUE%\"}"; ADMIN_USERNAME_VALUE="${ADMIN_USERNAME_VALUE#\"}"
+  ADMIN_USERNAME_VALUE="${ADMIN_USERNAME_VALUE%\'}"; ADMIN_USERNAME_VALUE="${ADMIN_USERNAME_VALUE#\'}"
+  ADMIN_PASSWORD_VALUE="${ADMIN_PASSWORD_VALUE%\"}"; ADMIN_PASSWORD_VALUE="${ADMIN_PASSWORD_VALUE#\"}"
+  ADMIN_PASSWORD_VALUE="${ADMIN_PASSWORD_VALUE%\'}"; ADMIN_PASSWORD_VALUE="${ADMIN_PASSWORD_VALUE#\'}"
+  ADMIN_PASSWORD_HASH_VALUE="${ADMIN_PASSWORD_HASH_VALUE%\"}"; ADMIN_PASSWORD_HASH_VALUE="${ADMIN_PASSWORD_HASH_VALUE#\"}"
+  ADMIN_PASSWORD_HASH_VALUE="${ADMIN_PASSWORD_HASH_VALUE%\'}"; ADMIN_PASSWORD_HASH_VALUE="${ADMIN_PASSWORD_HASH_VALUE#\'}"
+  if [ -z "$ADMIN_PASSWORD_VALUE" ] && [ -n "$ADMIN_PASSWORD_HASH_VALUE" ]; then
+    err "ADMIN_PASSWORD not found in .env and hash is set. Either set ADMIN_PASSWORD or use the dashboard for this operation."
+    return 1
+  fi
+  if [ -z "$ADMIN_PASSWORD_VALUE" ]; then
+    err "ADMIN_PASSWORD not set in .env — cannot authenticate to admin API"
+    return 1
+  fi
+}
+
+load_env_webhook_secret() {
+  WEBHOOK_SECRET_VALUE=""
+  if [ -f "$PROJECT_ROOT/.env" ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        TRADINGVIEW_WEBHOOK_SECRET=*)
+          WEBHOOK_SECRET_VALUE="${line#TRADINGVIEW_WEBHOOK_SECRET=}"
+          ;;
+      esac
+    done < "$PROJECT_ROOT/.env"
+  fi
+  WEBHOOK_SECRET_VALUE="${WEBHOOK_SECRET_VALUE%\"}"; WEBHOOK_SECRET_VALUE="${WEBHOOK_SECRET_VALUE#\"}"
+  WEBHOOK_SECRET_VALUE="${WEBHOOK_SECRET_VALUE%\'}"; WEBHOOK_SECRET_VALUE="${WEBHOOK_SECRET_VALUE#\'}"
+  if [ -z "$WEBHOOK_SECRET_VALUE" ]; then
+    err "TRADINGVIEW_WEBHOOK_SECRET not set in .env"
+    return 1
+  fi
+  case "$WEBHOOK_SECRET_VALUE" in
+    REPLACE_ME*)
+      err "TRADINGVIEW_WEBHOOK_SECRET still has its placeholder value — set a real secret first"
+      return 1
+      ;;
+  esac
 }
 
 read_pid() {
@@ -347,34 +415,464 @@ if live_armed:
 PY
 }
 
+cmd_tail() {
+  # Tail ONLY the structured application log. ``sbctl logs`` already
+  # follows both server.out and signalbridge.log; this one is useful
+  # when server.out is noisy with uvicorn boot output and the operator
+  # only cares about app events.
+  ensure_dirs
+  local n="${1:-50}"
+  case "$n" in
+    ''|*[!0-9]*)
+      err "tail: line count must be a non-negative integer (got '$n')"
+      return 2
+      ;;
+  esac
+  if [ ! -f "$APP_LOG" ]; then
+    info "no app log yet at $APP_LOG"
+    return 0
+  fi
+  info "tailing $APP_LOG (Ctrl+C to stop)"
+  exec tail -n "$n" -F "$APP_LOG"
+}
+
+# --- HTTP helpers used by execution-control commands ---
+
+# Pretty-print JSON to stdout when jq is available, raw otherwise.
+print_json() {
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "$1" | jq . 2>/dev/null || printf '%s\n' "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+# Extract a top-level string field from a JSON blob. Uses jq when
+# available; falls back to a best-effort grep so the script still
+# works on slim hosts. Returns empty string when not found.
+json_field() {
+  local body="$1" key="$2"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$body" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null
+    return
+  fi
+  printf '%s' "$body" \
+    | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+    | head -n 1 \
+    | sed -E "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+# Extract a top-level boolean field from a JSON blob.
+json_bool() {
+  local body="$1" key="$2"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$body" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null
+    return
+  fi
+  if printf '%s' "$body" | grep -qE "\"$key\"[[:space:]]*:[[:space:]]*true"; then
+    echo true
+  elif printf '%s' "$body" | grep -qE "\"$key\"[[:space:]]*:[[:space:]]*false"; then
+    echo false
+  fi
+}
+
+cmd_mode() {
+  local state="${1:-}"
+  case "$state" in
+    off|test|armed) ;;
+    "")
+      err "mode: requires <off|test|armed>"
+      return 2
+      ;;
+    *)
+      err "mode: unknown state '$state' (expected off|test|armed)"
+      return 2
+      ;;
+  esac
+  if ! command -v curl >/dev/null 2>&1; then
+    err "curl is not installed"
+    return 1
+  fi
+  load_env_host_port
+  load_env_admin_auth
+  local url="http://$HOST_VALUE:$PORT_VALUE/api/execution/$state"
+  local resp http_code body
+  resp="$(curl -sS -u "$ADMIN_USERNAME_VALUE:$ADMIN_PASSWORD_VALUE" \
+    -X POST -H "Content-Type: application/json" \
+    -w $'\n%{http_code}' --max-time 10 "$url")" || {
+      err "request to $url failed"
+      return 1
+    }
+  http_code="${resp##*$'\n'}"
+  body="${resp%$'\n'*}"
+  print_json "$body"
+  if [ "$http_code" != "200" ]; then
+    err "HTTP $http_code"
+    return 1
+  fi
+  info "execution_mode now: $state"
+  if [ "$state" = "armed" ]; then
+    local account
+    account="$(json_field "$body" "selected_account_id")"
+    [ -z "$account" ] && account="the selected account"
+    echo "  ⚠️  WARNING: execution is now ARMED. Live orders will submit to Topstep account $account." >&2
+  fi
+}
+
+cmd_arm() { cmd_mode armed; }
+cmd_disarm() { cmd_mode off; }
+
+cmd_test() {
+  # Fire a synthetic webhook through /webhooks/tradingview using the
+  # operator's real shared secret. Useful for smoke-testing the armed
+  # path end-to-end without manual TradingView setup. The order_id is
+  # always unique so retries don't trip the dedup guard.
+  local action="${1:-}"
+  case "$action" in
+    buy|sell) ;;
+    "")
+      err "test: requires <buy|sell> [symbol] [contracts]"
+      return 2
+      ;;
+    *)
+      err "test: unknown action '$action' (expected buy|sell)"
+      return 2
+      ;;
+  esac
+  local symbol="${2:-MES1!}"
+  local contracts="${3:-1}"
+  case "$contracts" in
+    ''|*[!0-9]*)
+      err "test: contracts must be a positive integer (got '$contracts')"
+      return 2
+      ;;
+  esac
+  if ! command -v curl >/dev/null 2>&1; then
+    err "curl is not installed"
+    return 1
+  fi
+  load_env_host_port
+  load_env_webhook_secret
+  local order_id="sbctl-test-${action}-$(date +%s)"
+  local url="http://$HOST_VALUE:$PORT_VALUE/webhooks/tradingview"
+  local body
+  body=$(printf '{"secret":"%s","symbol":"%s","action":"%s","contracts":%s,"order_id":"%s"}' \
+    "$WEBHOOK_SECRET_VALUE" "$symbol" "$action" "$contracts" "$order_id")
+  info "firing $action $symbol x$contracts (order_id=$order_id)"
+  local resp http_code resp_body
+  resp="$(curl -sS -X POST -H "Content-Type: application/json" \
+    --data "$body" -w $'\n%{http_code}' --max-time 15 "$url")" || {
+      err "request to $url failed"
+      return 1
+    }
+  http_code="${resp##*$'\n'}"
+  resp_body="${resp%$'\n'*}"
+  print_json "$resp_body"
+  # Export for smoke summary.
+  TEST_LAST_ORDER_ID="$order_id"
+  TEST_LAST_STATUS="$http_code"
+  TEST_LAST_ACCEPTED="$(json_bool "$resp_body" "accepted")"
+  [ -z "$TEST_LAST_ACCEPTED" ] && TEST_LAST_ACCEPTED="unknown"
+  if [ "$TEST_LAST_ACCEPTED" = "false" ]; then
+    return 1
+  fi
+  if [ "$http_code" != "200" ]; then
+    err "HTTP $http_code"
+    return 1
+  fi
+}
+
+cmd_smoke() {
+  # Round-trip smoke test: buy + sell-to-flatten. Requires armed mode
+  # since the whole point is exercising the live path. Designed to be
+  # the operator equivalent of the dashboard's old "armed test order"
+  # button — a single command that proves submit + close both work.
+  local symbol="${1:-MES1!}"
+  local contracts="${2:-1}"
+  case "$contracts" in
+    ''|*[!0-9]*)
+      err "smoke: contracts must be a positive integer (got '$contracts')"
+      return 2
+      ;;
+  esac
+  if ! command -v curl >/dev/null 2>&1; then
+    err "curl is not installed"
+    return 1
+  fi
+  load_env_host_port
+  load_env_admin_auth
+  local sys_url="http://$HOST_VALUE:$PORT_VALUE/api/system"
+  local sys_body
+  sys_body="$(curl -sS -u "$ADMIN_USERNAME_VALUE:$ADMIN_PASSWORD_VALUE" \
+    --max-time 5 "$sys_url")" || {
+      err "smoke: failed to read $sys_url (is the server running?)"
+      return 1
+    }
+  local current_mode
+  current_mode="$(json_field "$sys_body" "execution_mode")"
+  [ -z "$current_mode" ] && current_mode="unknown"
+  if [ "$current_mode" != "armed" ]; then
+    err "smoke: requires execution_mode=armed (currently $current_mode). Run 'sbctl arm' first."
+    return 1
+  fi
+  local delay="${SBCTL_SMOKE_DELAY:-3}"
+  local buy_id buy_status buy_accepted
+  local sell_id sell_status sell_accepted
+  info "firing BUY..."
+  # Don't let a failed BUY abort the script — we still want to print
+  # the summary so the operator sees both legs. The exit code is
+  # computed at the end from the accepted flags.
+  set +e
+  cmd_test buy "$symbol" "$contracts"
+  local buy_rc=$?
+  set -e
+  buy_id="$TEST_LAST_ORDER_ID"
+  buy_status="$TEST_LAST_STATUS"
+  buy_accepted="$TEST_LAST_ACCEPTED"
+  sleep "$delay"
+  info "firing SELL to flatten..."
+  set +e
+  cmd_test sell "$symbol" "$contracts"
+  local sell_rc=$?
+  set -e
+  sell_id="$TEST_LAST_ORDER_ID"
+  sell_status="$TEST_LAST_STATUS"
+  sell_accepted="$TEST_LAST_ACCEPTED"
+  echo
+  echo "=== smoke summary ==="
+  echo "buy  : order_id=$buy_id http=$buy_status accepted=$buy_accepted"
+  echo "sell : order_id=$sell_id http=$sell_status accepted=$sell_accepted"
+  if [ "$buy_rc" -ne 0 ] || [ "$sell_rc" -ne 0 ]; then
+    return 1
+  fi
+}
+
+cmd_flatten() {
+  # Emergency flatten — closes every open Topstep position via the
+  # broker adapter. The dashboard's red FLATTEN ALL button hits the
+  # same endpoint. Confirms interactively unless -y is passed.
+  local yes="no"
+  if [ "${1:-}" = "-y" ]; then
+    yes="yes"
+    shift
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    err "curl is not installed"
+    return 1
+  fi
+  load_env_host_port
+  load_env_admin_auth
+  if [ "$yes" != "yes" ]; then
+    printf "Flatten ALL positions on the selected Topstep account? (y/N) "
+    local reply=""
+    read -r reply || true
+    case "$reply" in
+      y|Y|yes|YES) ;;
+      *) info "aborted"; return 0 ;;
+    esac
+  fi
+  local url="http://$HOST_VALUE:$PORT_VALUE/api/broker/flatten-all"
+  local resp http_code body
+  resp="$(curl -sS -u "$ADMIN_USERNAME_VALUE:$ADMIN_PASSWORD_VALUE" \
+    -X POST -w $'\n%{http_code}' --max-time 30 "$url")" || {
+      err "flatten request to $url failed"
+      return 1
+    }
+  http_code="${resp##*$'\n'}"
+  body="${resp%$'\n'*}"
+  print_json "$body"
+  if [ "$http_code" != "200" ]; then
+    err "HTTP $http_code"
+    return 1
+  fi
+}
+
+cmd_backup() {
+  # Copy the live SQLite database and .env to an off-host path so a
+  # disk loss doesn't take settings + journal with it. The .env copy
+  # gets 0600 because it contains the webhook secret and broker
+  # creds. Old backups past the retention window are pruned by mtime.
+  local hostname_val
+  hostname_val="$(hostname)"
+  local dest="${1:-}"
+  if [ -z "$dest" ]; then
+    if [ -d "/mnt/nas-configs/$hostname_val/signalbridge" ]; then
+      dest="/mnt/nas-configs/$hostname_val/signalbridge"
+    else
+      dest="$HOME/signalbridge-backups"
+    fi
+  fi
+  mkdir -p "$dest"
+  local ts db_src env_src db_dst env_dst
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  db_src="$PROJECT_ROOT/data/signalbridge.db"
+  env_src="$PROJECT_ROOT/.env"
+  db_dst="$dest/signalbridge-$hostname_val-$ts.db"
+  env_dst="$dest/env-$hostname_val-$ts.env"
+  if [ ! -f "$db_src" ]; then
+    err "database not found at $db_src"
+    return 1
+  fi
+  if [ ! -f "$env_src" ]; then
+    err ".env not found at $env_src"
+    return 1
+  fi
+  cp -p "$db_src" "$db_dst"
+  cp -p "$env_src" "$env_dst"
+  chmod 600 "$env_dst"
+  info "destination: $dest"
+  info "db  : $db_dst ($(du -h "$db_dst" 2>/dev/null | awk '{print $1}'))"
+  info "env : $env_dst ($(du -h "$env_dst" 2>/dev/null | awk '{print $1}'))"
+  # Retention: keep the 30 most recent of each kind by mtime.
+  local pruned=0 idx
+  idx=0
+  while IFS= read -r f; do
+    idx=$((idx + 1))
+    if [ "$idx" -gt 30 ]; then
+      rm -f "$f" && pruned=$((pruned + 1))
+    fi
+  done < <(ls -1t "$dest"/signalbridge-"$hostname_val"-*.db 2>/dev/null || true)
+  idx=0
+  while IFS= read -r f; do
+    idx=$((idx + 1))
+    if [ "$idx" -gt 30 ]; then
+      rm -f "$f" && pruned=$((pruned + 1))
+    fi
+  done < <(ls -1t "$dest"/env-"$hostname_val"-*.env 2>/dev/null || true)
+  if [ "$pruned" -gt 0 ]; then
+    info "pruned $pruned older backup file(s) past 30-copy retention"
+  fi
+}
+
+cmd_env() {
+  # Effective config + binding snapshot. Strictly non-secret — no
+  # passwords, no tokens, no webhook secret values. Use ``audit`` if
+  # you need the broker/execution gate detail.
+  ensure_dirs
+  load_env_host_port
+  echo "=== sbctl env ==="
+  echo "project    : $PROJECT_ROOT"
+  echo "APP_HOST   : $HOST_VALUE"
+  echo "APP_PORT   : $PORT_VALUE"
+  echo "bind       : $HOST_VALUE:$PORT_VALUE"
+  local pid
+  pid="$(read_pid)"
+  if pid_alive "$pid"; then
+    echo "pid        : $pid"
+    if [ -r "/proc/$pid/stat" ] && [ -r "/proc/uptime" ]; then
+      # /proc/$pid/stat field 22 is start time in clock ticks since
+      # boot; combine with /proc/uptime to get a wall-clock age.
+      local starttime clk_tck up age h m sec
+      starttime="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null)"
+      clk_tck="$(getconf CLK_TCK 2>/dev/null || echo 100)"
+      up="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
+      if [ -n "$starttime" ] && [ -n "$up" ] && [ -n "$clk_tck" ]; then
+        age="$(awk -v s="$starttime" -v c="$clk_tck" -v u="$up" \
+          'BEGIN { v = u - s/c; if (v < 0) v = 0; printf "%d", v }')"
+        h=$((age / 3600))
+        m=$(((age % 3600) / 60))
+        sec=$((age % 60))
+        echo "uptime     : ${h}h ${m}m ${sec}s"
+      fi
+    fi
+  else
+    echo "pid        : (not running)"
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    local listener_line
+    listener_line="$(ss -tlnp "sport = :$PORT_VALUE" 2>/dev/null \
+      | awk 'NR>1' | head -n 1 || true)"
+    if [ -n "$listener_line" ]; then
+      echo "listener   : $listener_line"
+    else
+      echo "listener   : (none on port $PORT_VALUE)"
+    fi
+  else
+    echo "listener   : (ss not installed)"
+  fi
+  if command -v tailscale >/dev/null 2>&1; then
+    if tailscale funnel status >/dev/null 2>&1; then
+      echo "--- tailscale funnel ---"
+      tailscale funnel status
+    else
+      echo "tailscale  : (funnel inactive or not configured)"
+    fi
+  else
+    echo "tailscale  : (tailscale CLI not installed)"
+  fi
+  local db_path="$PROJECT_ROOT/data/signalbridge.db"
+  if [ -f "$db_path" ]; then
+    echo "database   : $db_path ($(du -h "$db_path" 2>/dev/null | awk '{print $1}'))"
+  else
+    echo "database   : $db_path (missing)"
+  fi
+  if [ -f "$APP_LOG" ]; then
+    echo "app log    : $APP_LOG ($(du -h "$APP_LOG" 2>/dev/null | awk '{print $1}'))"
+  else
+    echo "app log    : $APP_LOG (none yet)"
+  fi
+  if [ -f "$SERVER_OUT" ]; then
+    echo "server out : $SERVER_OUT ($(du -h "$SERVER_OUT" 2>/dev/null | awk '{print $1}'))"
+  else
+    echo "server out : $SERVER_OUT (none yet)"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 sbctl — SignalBridge control script
 
-Usage:
-  sbctl start      start uvicorn in the background (writes runtime/signalbridge.pid)
-  sbctl stop       stop the running uvicorn
-  sbctl restart    stop then start
-  sbctl status     show pid / port / health
-  sbctl logs       tail logs/server.out and logs/signalbridge.log
-  sbctl health     curl /health and print the response
-  sbctl audit      print broker/execution gate snapshot (no secrets, no tokens)
+Lifecycle:
+  sbctl start              start uvicorn in the background
+  sbctl stop               stop the running uvicorn
+  sbctl restart            stop then start
+  sbctl status             show pid / port / health
 
-Reads APP_HOST / APP_PORT from .env if present; defaults to 127.0.0.1:8000.
+Observability:
+  sbctl logs               tail server.out + signalbridge.log
+  sbctl tail [N]           tail signalbridge.log only (default 50 lines)
+  sbctl health             curl /health
+  sbctl audit              broker/execution gate snapshot
+  sbctl env                effective config & runtime info
+
+Execution control:
+  sbctl mode <off|test|armed>   set execution mode
+  sbctl arm                     shortcut for mode armed
+  sbctl disarm                  shortcut for mode off
+  sbctl flatten [-y]            emergency flatten-all positions
+
+Testing:
+  sbctl test <buy|sell> [symbol] [contracts]   fire one webhook
+  sbctl smoke [symbol] [contracts]              buy + flatten round-trip
+
+Maintenance:
+  sbctl backup [destination]    backup signalbridge.db and .env
+
+Reads APP_HOST / APP_PORT / ADMIN_USERNAME / ADMIN_PASSWORD / TRADINGVIEW_WEBHOOK_SECRET from .env.
 EOF
 }
 
 # ----- entrypoint -----
 
 cmd="${1:-}"
+[ "$#" -gt 0 ] && shift
 case "$cmd" in
   start)   cmd_start ;;
   stop)    cmd_stop ;;
   restart) cmd_restart ;;
   status)  cmd_status ;;
   logs)    cmd_logs ;;
+  tail)    cmd_tail "$@" ;;
   health)  cmd_health ;;
   audit)   cmd_audit ;;
+  env)     cmd_env ;;
+  mode)    cmd_mode "$@" ;;
+  arm)     cmd_arm ;;
+  disarm)  cmd_disarm ;;
+  flatten) cmd_flatten "$@" ;;
+  test)    cmd_test "$@" ;;
+  smoke)   cmd_smoke "$@" ;;
+  backup)  cmd_backup "$@" ;;
   ""|-h|--help|help) usage ;;
   *)
     err "unknown command: $cmd"
